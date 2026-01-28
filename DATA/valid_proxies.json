@@ -1,0 +1,17 @@
+{
+  "valid": [
+    "http://PP_MLXEA0ROCN-country-US:dp81eqnp@evo-pro.porterproxies.com:62345"
+  ],
+  "dead": [],
+  "stats": {
+    "http://PP_MLXEA0ROCN-country-US:dp81eqnp@evo-pro.porterproxies.com:62345": {
+      "success": 1,
+      "fails": 0,
+      "response_time": 0.9763822555541992,
+      "ip": "129.222.126.228",
+      "site": "httpbin (0.98s)",
+      "last_used": 1769538341.8089714
+    }
+  },
+  "last_updated": 1769593091.6991467
+}
