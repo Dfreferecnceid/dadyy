@@ -324,6 +324,10 @@ class ProxyManager:
             self._update_stats(proxy)
             return proxy
 
+    def get_random_proxy(self) -> Optional[str]:
+        """Get a random proxy (compatibility function for old scripts)"""
+        return self.get_proxy_for_user(0, "random")  # Use user_id=0 for system proxy
+
     def _update_stats(self, proxy: str):
         """Update proxy usage statistics"""
         if proxy not in self.proxy_stats:
@@ -541,7 +545,7 @@ class ProxyManager:
 # Global proxy manager instance
 proxy_manager = ProxyManager()
 
-# Helper functions for checker scripts
+# Helper functions for checker scripts - ADDED COMPATIBILITY FUNCTIONS
 def get_proxy_for_user(user_id: int, strategy: str = "random") -> Optional[str]:
     return proxy_manager.get_proxy_for_user(user_id, strategy)
 
@@ -550,6 +554,79 @@ def mark_proxy_success(proxy: str, response_time: float):
 
 def mark_proxy_failed(proxy: str):
     proxy_manager.mark_proxy_failed(proxy)
+
+# NEW: Compatibility functions for old scripts
+def get_random_proxy() -> Optional[str]:
+    """Get random proxy (compatibility function)"""
+    return proxy_manager.get_random_proxy()
+
+def parse_proxy(proxy_str: str) -> Optional[Dict]:
+    """Parse proxy string into components (compatibility function)"""
+    if not proxy_str:
+        return None
+    
+    # Remove http:// prefix if present
+    proxy_str = proxy_str.replace('http://', '').replace('https://', '')
+    
+    # Try different formats
+    # Format: user:pass@host:port
+    match1 = re.match(r'^(.+?):(.+?)@(.+?):(\d+)$', proxy_str)
+    if match1:
+        user, password, host, port = match1.groups()
+        return {
+            'username': user,
+            'password': password,
+            'host': host,
+            'port': int(port)
+        }
+    
+    # Format: host:port:user:pass
+    match2 = re.match(r'^(.+?):(\d+):(.+?):(.+)$', proxy_str)
+    if match2:
+        host, port, user, password = match2.groups()
+        return {
+            'username': user,
+            'password': password,
+            'host': host,
+            'port': int(port)
+        }
+    
+    # Format: host:port (no auth)
+    match3 = re.match(r'^(.+?):(\d+)$', proxy_str)
+    if match3:
+        host, port = match3.groups()
+        return {
+            'username': '',
+            'password': '',
+            'host': host,
+            'port': int(port)
+        }
+    
+    return None
+
+def get_proxy_from_pool() -> Optional[str]:
+    """Get proxy from pool (compatibility function)"""
+    return proxy_manager.get_random_proxy()
+
+def rotate_proxy() -> Optional[str]:
+    """Rotate proxy (compatibility function)"""
+    # This is just an alias for get_random_proxy in the new system
+    return proxy_manager.get_random_proxy()
+
+def test_proxy(proxy_str: str) -> bool:
+    """Test if proxy is working (compatibility function)"""
+    try:
+        proxy_url = proxy_manager.normalize_proxy(proxy_str)
+        if not proxy_url:
+            return False
+        
+        is_valid, _, _, _ = proxy_manager.validate_single_proxy(proxy_str)
+        return is_valid
+    except:
+        return False
+
+# Proxy enabled flag for compatibility
+PROXY_ENABLED = True
 
 # ==============================================
 # NEW COMMAND HANDLERS
