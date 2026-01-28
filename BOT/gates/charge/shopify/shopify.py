@@ -1312,7 +1312,7 @@ class ShopifyChargeChecker:
             }
             
             if self.current_proxy:
-                client_params['proxies'] = {
+                client_params['proxy'] = {
                     'http://': self.current_proxy,
                     'https://': self.current_proxy
                 }
