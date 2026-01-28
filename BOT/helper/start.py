@@ -572,10 +572,14 @@ async def handle_main_callbacks(client, callback_query):
         bin_status = get_command_status("bin")
         sk_status = get_command_status("sk")
         redeem_status = get_command_status("redeem")
-        setpx_status = get_command_status("setpx")
+
+        # Get status for proxy commands (FOR ALL USERS)
+        addpx_status = get_command_status("addpx")
+        rmvpx_status = get_command_status("rmvpx")
+        vpx_status = get_command_status("vpx")
         buy_status = get_command_status("buy")
 
-        # Tools section with command names and dynamic status
+        # Updated tools buttons with proxy commands FOR ALL USERS
         tools_buttons = InlineKeyboardMarkup([
             [
                 InlineKeyboardButton("/info", callback_data="tool_info"),
@@ -591,7 +595,7 @@ async def handle_main_callbacks(client, callback_query):
             ],
             [
                 InlineKeyboardButton("/redeem", callback_data="tool_redeem"),
-                InlineKeyboardButton("/setpx", callback_data="tool_proxy")
+                InlineKeyboardButton("Proxy", callback_data="tool_proxy")
             ],
             [
                 InlineKeyboardButton("/buy", callback_data="buy"),
@@ -627,8 +631,8 @@ async def handle_main_callbacks(client, callback_query):
 ⟐ <b>/redeem</b> - <code>Redeem gift codes</code>
 ⟐ <b>Status:</b> <code>{redeem_status}</code>
 
-⟐ <b>/setpx</b> - <code>Set proxy (PM only)</code>
-⟐ <b>Status:</b> <code>{setpx_status}</code>
+⟐ <b>Proxy Commands</b> - <code>Manage proxy settings (Click Proxy button)</code>
+⟐ <b>Status:</b> <code>Active ✅</code>
 
 ⟐ <b>/buy</b> - <code>Buy premium plans</code>
 ⟐ <b>Status:</b> <code>{buy_status}</code>
@@ -665,8 +669,11 @@ async def handle_main_callbacks(client, callback_query):
                 notused_status = get_command_status("notused")
                 off_status = get_command_status("off")
                 on_status = get_command_status("on")
+                resett_status = get_command_status("resett")
+                pxstats_status = get_command_status("pxstats")
+                rmvall_status = get_command_status("rmvall")
 
-                # Updated admin buttons
+                # Updated admin buttons with ADMIN PROXY COMMANDS
                 admin_buttons = InlineKeyboardMarkup([
                     [
                         InlineKeyboardButton("/plan", callback_data="admin_plan"),
@@ -694,9 +701,14 @@ async def handle_main_callbacks(client, callback_query):
                     ],
                     [
                         InlineKeyboardButton("/on", callback_data="admin_on"),
-                        InlineKeyboardButton("Back", callback_data="home")
+                        InlineKeyboardButton("/resett", callback_data="admin_resett")
                     ],
                     [
+                        InlineKeyboardButton("/pxstats", callback_data="admin_pxstats"),
+                        InlineKeyboardButton("/rmvall", callback_data="admin_rmvall")
+                    ],
+                    [
+                        InlineKeyboardButton("Back", callback_data="home"),
                         InlineKeyboardButton("Close", callback_data="close")
                     ]
                 ])
@@ -712,6 +724,7 @@ async def handle_main_callbacks(client, callback_query):
 ⟐ <b>/ban</b> - <code>Ban user from bot</code> [{ban_status}]
 ⟐ <b>/unban</b> - <code>Unban user</code> [{unban_status}]
 ⟐ <b>/looser</b> - <code>Downgrade user to FREE</code> [{looser_status}]
+⟐ <b>/resett</b> - <code>Reset user credits</code> [{resett_status}]
 
 <b>BIN Management:</b>
 ⟐ <b>/banbin</b> - <code>Ban BIN from usage</code> [{banbin_status}]
@@ -720,6 +733,10 @@ async def handle_main_callbacks(client, callback_query):
 <b>Group Management:</b>
 ⟐ <b>/add</b> - <code>Add group to allowed list</code> [{add_status}]
 ⟐ <b>/rmv</b> - <code>Remove group from allowed list</code> [{rmv_status}]
+
+<b>Proxy Management (Admin Only):</b>
+⟐ <b>/pxstats</b> - <code>Show proxy statistics</code> [{pxstats_status}]
+⟐ <b>/rmvall</b> - <code>Remove all proxies</code> [{rmvall_status}]
 
 <b>Owner Only Commands:</b>
 ⟐ <b>/gc</b> - <code>Generate gift codes</code> [{gc_status}]
@@ -914,22 +931,41 @@ async def handle_tool_callbacks(client, callback_query):
         )
 
     elif data == "tool_proxy":
-        setpx_status = get_command_status("setpx")
-        delpx_status = get_command_status("delpx")
-        getpx_status = get_command_status("getpx")
+        # Get dynamic status for ALL USER PROXY COMMANDS
+        addpx_status = get_command_status("addpx")
+        rmvpx_status = get_command_status("rmvpx")
+        vpx_status = get_command_status("vpx")
 
         await callback_query.message.edit_text(
             f"""<pre>#WAYNE 〔Proxy Commands〕</pre>
 ━━━━━━━━━━━━━
-⟐ <b>Set Proxy</b>: <code>/setpx {{proxy}}</code> [{setpx_status}]
-⟐ <b>Delete Proxy</b>: <code>/delpx</code> [{delpx_status}]
-⟐ <b>Get Proxy</b>: <code>/getpx</code> [{getpx_status}]
-⟐ <b>Formats Supported:</b>
-⟐ <code>{{ip}}:{{port}}:{{user}}:{{pass}}</code>
-⟐ <code>{{user}}:{{pass}}@{{ip}}:{{port}}</code>
-⟐ <code>{{protocol}}://{{user}}:{{pass}}@{{ip}}:{{port}}</code>
+<b>Proxy Management Commands (Available to All Users):</b>
+
+⟐ <b>/addpx</b> - <code>Add a new proxy to the system</code>
+⟐ <b>Status:</b> <code>{addpx_status}</code>
+⟐ <b>Free Users:</b> <code>Authorized groups only</code>
+⟐ <b>Premium Users:</b> <code>Private chat enabled</code>
+
+⟐ <b>/rmvpx</b> - <code>Remove a specific proxy</code>
+⟐ <b>Status:</b> <code>{rmvpx_status}</code>
+⟐ <b>Free Users:</b> <code>Authorized groups only</code>
+⟐ <b>Premium Users:</b> <code>Private chat enabled</code>
+
+⟐ <b>/vpx</b> - <code>View all active proxies</code>
+⟐ <b>Status:</b> <code>{vpx_status}</code>
+⟐ <b>All Users:</b> <code>Available everywhere</code>
+
 ━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Proxy commands work in PM only</code>
+<b>Usage Examples:</b>
+⟐ <code>/addpx ip:port:user:pass</code>
+⟐ <code>/addpx user:pass@ip:port</code>
+⟐ <code>/addpx http://user:pass@ip:port</code>
+⟐ <code>/rmvpx ip:port</code>
+⟐ <code>/vpx</code>
+
+━━━━━━━━━━━━━
+<b>~ Note:</b> <code>Free users can use /addpx and /rmvpx in authorized groups only</code>
+<b>~ Note:</b> <code>Premium users can use proxy commands in private chat</code>
 <b>~ Note:</b> <code>[] shows command status (✅=Active, ❌=Disabled)</code>""",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("Back", callback_data="tools"),
@@ -953,7 +989,7 @@ async def handle_admin_callbacks(client, callback_query):
     user_role = users[user_id].get("role", "Free")
 
     # Check owner-only commands
-    owner_only_commands = ["looser", "gc", "broad", "notused", "off", "on", "add", "rmv"]
+    owner_only_commands = ["looser", "gc", "broad", "notused", "off", "on", "add", "rmv", "resett", "pxstats", "rmvall"]
     command_name = data.replace("admin_", "")
 
     if command_name in owner_only_commands and user_role != "Owner":
@@ -1223,6 +1259,62 @@ async def handle_admin_callbacks(client, callback_query):
 ⟐ <b>Example</b>: <code>/on .sx</code>
 ━━━━━━━━━━━━━
 <b>~ Note:</b> <code>The command will be re-enabled for all users.</code>
+<b>~ Note:</b> <code>Accessible to: Owner Only</code>""",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("Back", callback_data="admins"),
+                 InlineKeyboardButton("Close", callback_data="close")]
+            ])
+        )
+
+    elif data == "admin_resett":
+        status = get_command_status("resett")
+        await callback_query.message.edit_text(
+            f"""<pre>#WAYNE ─[RESET CREDITS]─</pre>
+━━━━━━━━━━━━━
+⟐ <b>Command</b>: <code>/resett</code> or <code>.resett</code>
+⟐ <b>Status</b>: <code>{status}</code>
+⟐ <b>Usage</b>: <code>/resett &lt;username or ID&gt;</code>
+⟐ <b>Example</b>: <code>/resett @username</code>
+⟐ <b>Example</b>: <code>/resett 123456789</code>
+━━━━━━━━━━━━━
+<b>~ Note:</b> <code>This will reset user's credits to their daily amount immediately</code>
+<b>~ Note:</b> <code>Owner/Admin users cannot have their credits reset (they have ∞)</code>
+<b>~ Note:</b> <code>Accessible to: Owner Only</code>""",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("Back", callback_data="admins"),
+                 InlineKeyboardButton("Close", callback_data="close")]
+            ])
+        )
+
+    elif data == "admin_pxstats":
+        status = get_command_status("pxstats")
+        await callback_query.message.edit_text(
+            f"""<pre>#WAYNE ─[PROXY STATISTICS]─</pre>
+━━━━━━━━━━━━━
+⟐ <b>Command</b>: <code>/pxstats</code>
+⟐ <b>Status</b>: <code>{status}</code>
+⟐ <b>Usage</b>: Simply use <code>/pxstats</code>
+⟐ <b>Shows:</b> Proxy count, Active proxies, Last updated, Usage statistics
+━━━━━━━━━━━━━
+<b>~ Note:</b> <code>Shows detailed proxy statistics and usage</code>
+<b>~ Note:</b> <code>Accessible to: Owner & Admin</code>""",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("Back", callback_data="admins"),
+                 InlineKeyboardButton("Close", callback_data="close")]
+            ])
+        )
+
+    elif data == "admin_rmvall":
+        status = get_command_status("rmvall")
+        await callback_query.message.edit_text(
+            f"""<pre>#WAYNE ─[REMOVE ALL PROXIES]─</pre>
+━━━━━━━━━━━━━
+⟐ <b>Command</b>: <code>/rmvall</code>
+⟐ <b>Status</b>: <code>{status}</code>
+⟐ <b>Usage</b>: Simply use <code>/rmvall</code>
+⟐ <b>Warning:</b> This will remove ALL proxies from the system!
+━━━━━━━━━━━━━
+<b>~ Note:</b> <code>This is a destructive operation - cannot be undone</code>
 <b>~ Note:</b> <code>Accessible to: Owner Only</code>""",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("Back", callback_data="admins"),
