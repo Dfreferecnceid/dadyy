@@ -177,6 +177,15 @@ def get_flood_wait_time(error_msg: str) -> int:
         pass
     return 60  # Default 60 seconds
 
+async def safe_bot_stop():
+    """Safely stop the bot if it's connected"""
+    try:
+        if bot.is_connected:
+            await bot.stop()
+            print("🛑 Bot stopped.")
+    except Exception as e:
+        print(f"⚠️ Error stopping bot: {e}")
+
 async def run_bot():
     """Run the Telegram bot with proper error handling"""
     max_retries = 5  # Increased retries for flood wait
@@ -242,15 +251,6 @@ async def run_bot():
             else:
                 raise
 
-async def cleanup_bot():
-    """Cleanup bot connection"""
-    try:
-        if bot.is_connected:
-            await bot.stop()
-            print("🛑 Bot stopped.")
-    except:
-        pass
-
 def save_firewall_state():
     """Save firewall state if available"""
     if firewall:
@@ -260,8 +260,8 @@ def save_firewall_state():
         except Exception as e:
             print(f"⚠️ Could not save firewall state: {e}")
 
-async def main():
-    """Main async entry point"""
+def main():
+    """Main entry point"""
     print("=" * 50)
     print("🤖 BOT STARTUP SEQUENCE")
     print("=" * 50)
@@ -278,28 +278,29 @@ async def main():
     flask_thread.start()
     print("🌐 Flask server started on port 3000")
 
-    # Give Flask a moment to start
-    await asyncio.sleep(2)
-
     # Run the bot
     try:
-        await run_bot()
+        # Create event loop
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        # Run the bot
+        loop.run_until_complete(run_bot())
+        
     except KeyboardInterrupt:
         print("\n👋 Bot stopped by user")
     except Exception as e:
         print(f"❌ Fatal error: {e}")
     finally:
         # Cleanup
-        await cleanup_bot()
+        try:
+            loop = asyncio.get_event_loop()
+            loop.run_until_complete(safe_bot_stop())
+        except:
+            pass
+        
         save_firewall_state()
 
 if __name__ == "__main__":
     nest_asyncio.apply()
-    
-    try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        print("\n👋 Application stopped by user")
-    except Exception as e:
-        print(f"❌ Application error: {e}")
-        sys.exit(1)
+    main()
