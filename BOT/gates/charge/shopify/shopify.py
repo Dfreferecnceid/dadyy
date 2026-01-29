@@ -1,5 +1,5 @@
 # BOT/gates/charge/shopify/shopify.py
-# Shopify Charge Gateway - FIXED SESSION TOKEN EXTRACTION
+# Shopify Charge Gateway - FIXED URL OBJECT ERROR
 
 import json
 import asyncio
@@ -899,9 +899,12 @@ class ShopifyChargeChecker:
                 follow_redirects=True  # IMPORTANT: Follow all redirects to get the actual checkout page
             )
             
+            # Convert response.url to string before slicing
+            final_url = str(response.url)
+            
             self.console_logger.request_details("GET", checkout_url, response.status_code,
                                               time.time() - (self.console_logger.start_time + elapsed),
-                                              f"Final URL: {response.url[:100]}...")
+                                              f"Final URL: {final_url[:100]}...")
             
             if response.status_code not in [200, 201]:
                 self.console_logger.error_detail(f"Failed to load checkout page. Status: {response.status_code}")
@@ -909,7 +912,7 @@ class ShopifyChargeChecker:
             
             html_content = response.text
             self.console_logger.sub_step(7, 1, f"HTML content length: {len(html_content)} chars")
-            self.console_logger.sub_step(7, 2, f"Final URL: {response.url[:150]}...")
+            self.console_logger.sub_step(7, 2, f"Final URL: {final_url[:150]}...")
             
             # Extract session token - IMPROVED PATTERNS
             session_token_patterns = [
@@ -1029,8 +1032,8 @@ class ShopifyChargeChecker:
                 self.console_logger.sub_step(7, 4, "Using default web build ID")
             
             # Also update checkout token from the final URL
-            if '/checkouts/cn/' in response.url:
-                match = re.search(r'/checkouts/cn/([^/]+)', response.url)
+            if '/checkouts/cn/' in final_url:
+                match = re.search(r'/checkouts/cn/([^/]+)', final_url)
                 if match:
                     new_token = match.group(1)
                     if new_token != self.checkout_token:
