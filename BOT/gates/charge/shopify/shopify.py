@@ -677,7 +677,7 @@ class ShopifyChargeChecker:
             return False
     
     async def go_to_checkout(self, client):
-        """Go to checkout page and extract checkout token"""
+        """Go to checkout page and extract checkout token - FIXED VERSION"""
         try:
             elapsed = self.console_logger.step(5, "GO TO CHECKOUT", "Proceeding to checkout")
             
@@ -706,48 +706,126 @@ class ShopifyChargeChecker:
                 'checkout': ''
             }
             
+            # Make the POST request WITHOUT following redirects
             response = await client.post(
                 checkout_url,
                 headers=headers,
                 data=data,
                 cookies=self.cookies,
                 timeout=30.0,
-                follow_redirects=False
+                follow_redirects=False  # Don't follow redirects automatically
             )
             
             self.console_logger.request_details("POST", checkout_url, response.status_code,
                                               time.time() - (self.console_logger.start_time + elapsed),
                                               "Proceeding to checkout")
             
-            if response.status_code == 302:
+            if response.status_code in [302, 303]:
                 location = response.headers.get('location', '')
+                
                 if location:
-                    # Extract checkout token from URL
-                    if '/checkouts/cn/' in location:
-                        match = re.search(r'/checkouts/cn/([^/]+)', location)
-                        if match:
-                            self.checkout_token = match.group(1)
-                            self.console_logger.extracted_data("Checkout Token", self.checkout_token)
+                    # Check if we're being redirected to shop.app (Shopify Pay)
+                    if 'shop.app' in location:
+                        # Extract the checkout token from the URL before shop.app redirect
+                        # Look in the referrer or try to get it from the cart cookie
+                        self.console_logger.sub_step(5, 1, f"Redirected to shop.app: {location[:100]}...")
+                        
+                        # Try to get checkout token from cart cookie
+                        if 'cart' in self.cookies:
+                            cart_value = self.cookies.get('cart', '')
+                            if cart_value:
+                                # Extract checkout token from cart value (format: TOKEN?key=...)
+                                parts = cart_value.split('?')
+                                if parts and parts[0]:
+                                    self.checkout_token = parts[0]
+                                    self.console_logger.extracted_data("Checkout Token from Cookie", self.checkout_token)
+                                    
+                                    # Build the direct checkout URL (skip shop.app)
+                                    direct_checkout_url = f"{self.base_url}/checkouts/cn/{self.checkout_token}/en-us?skip_shop_pay=true&_r={random.randint(100000000000, 999999999999)}"
+                                    self.console_logger.sub_step(5, 2, f"Using direct checkout URL: {direct_checkout_url[:80]}...")
+                                    
+                                    self.console_logger.step(5, "GO TO CHECKOUT", "Checkout token extracted from cookie", "SUCCESS")
+                                    return True, direct_checkout_url
                     
-                    # Add skip_shop_pay parameter
-                    if '?' in location:
-                        location += '&skip_shop_pay=true'
+                    # Normal redirect to merchant domain
+                    elif self.base_url in location:
+                        # Extract checkout token from URL
+                        if '/checkouts/cn/' in location:
+                            match = re.search(r'/checkouts/cn/([^/]+)', location)
+                            if match:
+                                self.checkout_token = match.group(1)
+                                self.console_logger.extracted_data("Checkout Token", self.checkout_token)
+                        
+                        # Add skip_shop_pay parameter to bypass Shopify Pay
+                        if '?' in location:
+                            location += '&skip_shop_pay=true'
+                        else:
+                            location += '?skip_shop_pay=true'
+                        
+                        # Add random parameter to avoid caching
+                        if '?' in location:
+                            location += f'&_r={random.randint(100000000000, 999999999999)}'
+                        else:
+                            location += f'?_r={random.randint(100000000000, 999999999999)}'
+                        
+                        self.console_logger.sub_step(5, 3, f"Redirected to merchant checkout: {location[:80]}...")
+                        self.console_logger.step(5, "GO TO CHECKOUT", "Redirected to checkout page", "SUCCESS")
+                        return True, location
                     else:
-                        location += '?skip_shop_pay=true'
-                    
-                    self.console_logger.sub_step(5, 1, f"Redirected to checkout: {location[:80]}...")
-                    self.console_logger.step(5, "GO TO CHECKOUT", "Redirected to checkout page", "SUCCESS")
-                    return True, location
+                        # Handle other redirects
+                        self.console_logger.sub_step(5, 4, f"Redirected to: {location[:100]}...")
+                        
+                        # Try to follow the redirect manually
+                        redirect_response = await client.get(
+                            location,
+                            headers=headers,
+                            cookies=self.cookies,
+                            timeout=30.0,
+                            follow_redirects=False
+                        )
+                        
+                        if redirect_response.status_code in [200, 302, 303]:
+                            # Check if we finally land on the merchant domain
+                            final_location = redirect_response.headers.get('location', '')
+                            if final_location and self.base_url in final_location:
+                                # Extract checkout token
+                                if '/checkouts/cn/' in final_location:
+                                    match = re.search(r'/checkouts/cn/([^/]+)', final_location)
+                                    if match:
+                                        self.checkout_token = match.group(1)
+                                        self.console_logger.extracted_data("Checkout Token from Final Redirect", self.checkout_token)
+                                
+                                # Build direct URL
+                                direct_url = f"{self.base_url}/checkouts/cn/{self.checkout_token}/en-us?skip_shop_pay=true&_r={random.randint(100000000000, 999999999999)}"
+                                return True, direct_url
                 else:
                     self.console_logger.error_detail("No redirect location found")
                     return False, "No redirect location"
             else:
+                # If no redirect, maybe we're already on checkout page
+                # Try to extract checkout token from response
+                html_content = response.text
+                checkout_patterns = [
+                    r'/checkouts/cn/([^/"]+)',
+                    r'checkoutToken["\']?\s*:\s*["\']([^"\']+)',
+                    r'checkout_url["\']?\s*:\s*["\'][^"\']*/([^/?"\']+)'
+                ]
+                
+                for pattern in checkout_patterns:
+                    match = re.search(pattern, html_content)
+                    if match:
+                        self.checkout_token = match.group(1)
+                        self.console_logger.extracted_data("Checkout Token from HTML", self.checkout_token)
+                        
+                        direct_url = f"{self.base_url}/checkouts/cn/{self.checkout_token}/en-us?skip_shop_pay=true&_r={random.randint(100000000000, 999999999999)}"
+                        return True, direct_url
+                
                 self.console_logger.error_detail(f"Failed to proceed to checkout: {response.status_code}")
                 return False, f"Checkout failed: {response.status_code}"
                 
         except Exception as e:
             self.console_logger.error_detail(f"Checkout error: {str(e)}")
-            return False, f"Checkout error: {str(e)}"
+            return False, f"Checkout error: {str(e)[:80]}"
     
     async def load_checkout_page(self, client, checkout_url):
         """Load checkout page and extract session tokens"""
@@ -1317,7 +1395,7 @@ class ShopifyChargeChecker:
                     return format_shopify_response(cc, mes, ano, cvv, "Cart page error", elapsed_time, username, user_data)
                 await self.human_delay(1, 2)
                 
-                # Step 5: Go to checkout
+                # Step 5: Go to checkout - FIXED VERSION
                 success, checkout_result = await self.go_to_checkout(client)
                 if not success:
                     elapsed_time = time.time() - start_time
