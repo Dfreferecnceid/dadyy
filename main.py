@@ -11,6 +11,7 @@ from pyrogram.enums import ChatType
 from flask import Flask
 from BOT.plans.plan1 import check_and_expire_plans as plan1_expiry
 from BOT.helper.permissions import apply_global_middlewares, is_group_authorized
+import BOT.firewall_protection as firewall
 import nest_asyncio
 
 # Load bot credentials
@@ -207,4 +208,5 @@ if __name__ == "__main__":
         print("\n👋 Bot stopped by user")
     except Exception as e:
         print(f"❌ Fatal error: {e}")
+
         sys.exit(1)
