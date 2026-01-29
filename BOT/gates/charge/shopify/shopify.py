@@ -906,63 +906,97 @@ class ShopifyChargeChecker:
             return False, f"Checkout error: {str(e)[:80]}"
     
     async def load_checkout_page(self, client, checkout_url):
-        """Load checkout page and extract session tokens"""
+        """Load checkout page and extract session tokens - FIXED TO HANDLE REDIRECTS"""
         try:
             elapsed = self.console_logger.step(6, "LOAD CHECKOUT PAGE", "Loading checkout page for tokens")
             
-            response = await self.make_request(
-                client, 'GET', checkout_url
-            )
+            # Make request with manual redirect following
+            max_redirects = 5
+            current_url = checkout_url
+            final_response = None
             
-            self.console_logger.request_details("GET", checkout_url, response.status_code,
-                                              time.time() - (self.console_logger.start_time + elapsed))
+            for redirect_count in range(max_redirects):
+                self.console_logger.sub_step(6, redirect_count + 1, f"Request {redirect_count + 1}: {current_url[:100]}...")
+                
+                response = await self.make_request(
+                    client, 'GET', current_url
+                )
+                
+                if response.status_code in [200, 201]:
+                    # Success! We got the page
+                    final_response = response
+                    self.console_logger.sub_step(6, redirect_count + 2, f"Got successful response after {redirect_count + 1} redirect(s)")
+                    break
+                elif response.status_code in [301, 302, 303, 307, 308]:
+                    # Follow redirect
+                    location = response.headers.get('location', '')
+                    if not location:
+                        self.console_logger.error_detail("Redirect without location header")
+                        break
+                    
+                    # Handle relative URLs
+                    if location.startswith('/'):
+                        parsed_url = urlparse(current_url)
+                        location = f"{parsed_url.scheme}://{parsed_url.netloc}{location}"
+                    
+                    current_url = location
+                    self.console_logger.sub_step(6, redirect_count + 3, f"Following redirect to: {location[:100]}...")
+                    
+                    # Small delay between redirects
+                    await asyncio.sleep(0.5)
+                else:
+                    self.console_logger.error_detail(f"Unexpected status code: {response.status_code}")
+                    break
             
-            if response.status_code == 200:
-                html_content = response.text
-                
-                # Extract session token
-                session_token_patterns = [
-                    r'"sessionToken":"([^"]+)"',
-                    r'sessionToken["\']?\s*:\s*["\']([^"\']+)',
-                    r'x-checkout-one-session-token["\']?\s*:\s*["\']([^"\']+)',
-                    r'window\.sessionToken\s*=\s*["\']([^"\']+)["\']'
-                ]
-                
-                for pattern in session_token_patterns:
-                    match = re.search(pattern, html_content)
-                    if match:
-                        self.x_checkout_one_session_token = match.group(1)
-                        self.console_logger.extracted_data("Session Token", f"{self.x_checkout_one_session_token[:30]}...")
-                        break
-                
-                # Extract web build ID
-                web_build_patterns = [
-                    r'"sha":"([^"]+)"',
-                    r'webBuildId["\']?\s*:\s*["\']([^"\']+)',
-                    r'x-checkout-web-build-id["\']?\s*:\s*["\']([^"\']+)'
-                ]
-                
-                for pattern in web_build_patterns:
-                    match = re.search(pattern, html_content)
-                    if match:
-                        self.x_checkout_web_build_id = match.group(1)
-                        self.console_logger.extracted_data("Web Build ID", self.x_checkout_web_build_id)
-                        break
-                
-                # Set defaults if not found
-                if not self.x_checkout_one_session_token:
-                    self.x_checkout_one_session_token = self.generate_session_token()
-                    self.console_logger.sub_step(6, 1, "Generated session token")
-                
-                if not self.x_checkout_web_build_id:
-                    self.x_checkout_web_build_id = "64794bb5d2969ba982d4eb9ee7c44ab479c9df23"
-                    self.console_logger.sub_step(6, 2, "Using default web build ID")
-                
-                self.console_logger.step(6, "LOAD CHECKOUT PAGE", "Checkout page loaded", "SUCCESS")
-                return True
-            else:
-                self.console_logger.error_detail(f"Failed to load checkout page: {response.status_code}")
+            if not final_response:
+                self.console_logger.error_detail("Failed to get checkout page after following redirects")
                 return False
+            
+            html_content = final_response.text
+            
+            # Extract session token
+            session_token_patterns = [
+                r'"sessionToken":"([^"]+)"',
+                r'sessionToken["\']?\s*:\s*["\']([^"\']+)',
+                r'x-checkout-one-session-token["\']?\s*:\s*["\']([^"\']+)',
+                r'window\.sessionToken\s*=\s*["\']([^"\']+)["\']',
+                r'data-session-token=["\']([^"\']+)["\']',
+                r'checkout_session_token["\']?\s*:\s*["\']([^"\']+)["\']'
+            ]
+            
+            for pattern in session_token_patterns:
+                match = re.search(pattern, html_content)
+                if match:
+                    self.x_checkout_one_session_token = match.group(1)
+                    self.console_logger.extracted_data("Session Token", f"{self.x_checkout_one_session_token[:30]}...")
+                    break
+            
+            # Extract web build ID
+            web_build_patterns = [
+                r'"sha":"([^"]+)"',
+                r'webBuildId["\']?\s*:\s*["\']([^"\']+)',
+                r'x-checkout-web-build-id["\']?\s*:\s*["\']([^"\']+)',
+                r'data-web-build-id=["\']([^"\']+)["\']'
+            ]
+            
+            for pattern in web_build_patterns:
+                match = re.search(pattern, html_content)
+                if match:
+                    self.x_checkout_web_build_id = match.group(1)
+                    self.console_logger.extracted_data("Web Build ID", self.x_checkout_web_build_id)
+                    break
+            
+            # Set defaults if not found
+            if not self.x_checkout_one_session_token:
+                self.x_checkout_one_session_token = self.generate_session_token()
+                self.console_logger.sub_step(6, 98, "Generated session token")
+            
+            if not self.x_checkout_web_build_id:
+                self.x_checkout_web_build_id = "64794bb5d2969ba982d4eb9ee7c44ab479c9df23"
+                self.console_logger.sub_step(6, 99, "Using default web build ID")
+            
+            self.console_logger.step(6, "LOAD CHECKOUT PAGE", "Checkout page loaded", "SUCCESS")
+            return True
                 
         except Exception as e:
             self.console_logger.error_detail(f"Checkout page error: {str(e)}")
@@ -1482,7 +1516,7 @@ class ShopifyChargeChecker:
                 checkout_url = checkout_result
                 await self.human_delay(1, 2)
                 
-                # Step 6: Load checkout page for tokens
+                # Step 6: Load checkout page for tokens - FIXED TO HANDLE REDIRECTS
                 if not await self.load_checkout_page(client, checkout_url):
                     self.console_logger.sub_step(6, 1, "Token extraction issues, continuing...")
                 await self.human_delay(1, 2)
