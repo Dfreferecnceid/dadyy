@@ -911,7 +911,7 @@ class ShopifyChargeChecker:
                 for script_data in script_matches:
                     try:
                         data = json.loads(script_data)
-                        # Search recursively in JSON
+                                                # Search recursively in JSON
                         def find_token_in_dict(d):
                             if isinstance(d, dict):
                                 for key, value in d.items():
@@ -924,8 +924,8 @@ class ShopifyChargeChecker:
                             elif isinstance(d, list):
                                 for item in d:
                                     result = find_token_in_dict(item)
-                                        if result:
-                                            return result
+                                    if result:  # THIS LINE WAS MISALIGNED
+                                        return result
                             return None
                         
                         token = find_token_in_dict(data)
