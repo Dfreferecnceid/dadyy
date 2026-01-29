@@ -1,5 +1,5 @@
 # BOT/gates/charge/shopify/shopify.py
-# Shopify Charge Gateway - FIXED PRICE EXTRACTION & GRAPHQL STRUCTURE
+# Shopify Charge Gateway - COMPLETELY FIXED PICKUP STRUCTURE
 
 import json
 import asyncio
@@ -858,27 +858,16 @@ class ShopifyChargeChecker:
             html_content = response.text
             self.console_logger.sub_step(6, 4, f"HTML content length: {len(html_content)} chars")
             
-            # DEBUG: Save HTML for analysis
-            # with open("checkout_debug.html", "w", encoding="utf-8") as f:
-            #     f.write(html_content)
-            
             # CRITICAL: Extract session token from the checkout page HTML - UPDATED PATTERNS
-            # From the logs, the session token is in the checkout page
             session_token_patterns = [
-                # Try to find in script tags first
-                r'<script[^>]*>.*?["\']sessionToken["\']\s*:\s*["\']([^"\']+)["\'].*?</script>',
                 r'"sessionToken"\s*:\s*"([^"]+)"',
                 r'sessionToken["\']?\s*:\s*["\']([^"\']+)',
-                # Try to find in window.__remixContext or similar
                 r'window\.__remixContext\s*=\s*{.*?"sessionToken"\s*:\s*"([^"]+)"',
                 r'<script[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>',
-                # Look for X-Checkout-One-Session-Token in meta tags
                 r'<meta[^>]*name=["\']sessionToken["\'][^>]*content=["\']([^"\']+)["\']',
                 r'<meta[^>]*content=["\']([^"\']+)["\'][^>]*name=["\']sessionToken["\']',
-                # Try to find in JSON data
                 r'"checkout_session_token"\s*:\s*"([^"]+)"',
                 r'"token"\s*:\s*"([^"]+)"',
-                # Last resort: look for any long token-like string
                 r'([A-Za-z0-9_-]{150,})'
             ]
             
@@ -1119,9 +1108,9 @@ class ShopifyChargeChecker:
             return False, f"Payment error: {str(e)[:80]}"
     
     async def complete_checkout_with_payment(self, client, session_id, cc, mes, ano, cvv):
-        """Complete the checkout with PICKUP option - FIXED STRUCTURE WITH PRICE"""
+        """Complete the checkout with SIMPLIFIED STRUCTURE - FIXED FOR PICKUP"""
         try:
-            elapsed = self.console_logger.step(8, "COMPLETE CHECKOUT", "Submitting checkout with PICKUP option and actual price")
+            elapsed = self.console_logger.step(8, "COMPLETE CHECKOUT", "Submitting checkout with SIMPLIFIED structure")
             
             if not self.checkout_token or not self.x_checkout_one_session_token:
                 return False, "Missing checkout tokens"
@@ -1165,10 +1154,7 @@ class ShopifyChargeChecker:
             actual_price = self.product_price if self.product_price else 0.55
             price_str = f"{actual_price:.2f}"
             
-            # Format price for GraphQL - must be string with 2 decimal places
-            price_amount = price_str
-            
-            # Build checkout payload with PROPER STRUCTURE
+            # SIMPLIFIED payload - REMOVED COMPLEX DELIVERY STRUCTURE
             json_data = {
                 "operationName": "SubmitForCompletion",
                 "variables": {
@@ -1180,18 +1166,10 @@ class ShopifyChargeChecker:
                             "lines": [],
                             "acceptUnexpectedDiscounts": True,
                         },
-                        # FIXED: Proper delivery structure for PICKUP
+                        # SIMPLIFIED DELIVERY - NO delivery.noDeliveryRequired object
                         "delivery": {
-                            # For pickup/in-store, use empty delivery strategy
-                            "noDeliveryRequired": {
-                                "selectedDeliveryStrategy": {
-                                    "deliveryStrategyMatchingConditions": {
-                                        "estimatedTimeInTransit": {"any": True},
-                                        "shipments": {"any": True},
-                                    },
-                                },
-                            },
-                            "deliveryLines": []  # Empty array for pickup
+                            "deliveryLines": [],  # Empty array for pickup
+                            "noDeliveryRequired": True  # Simple boolean, not object
                         },
                         "merchandise": {
                             "merchandiseLines": [
@@ -1204,10 +1182,10 @@ class ShopifyChargeChecker:
                                         },
                                     },
                                     "quantity": {"items": {"value": 1}},
-                                    # CRITICAL: Add expectedTotalPrice
+                                    # REQUIRED: expectedTotalPrice
                                     "expectedTotalPrice": {
                                         "value": {
-                                            "amount": price_amount,
+                                            "amount": price_str,
                                             "currencyCode": "USD",
                                         },
                                     },
@@ -1237,16 +1215,16 @@ class ShopifyChargeChecker:
                                     },
                                     "amount": {
                                         "value": {
-                                            "amount": price_amount,
+                                            "amount": price_str,
                                             "currencyCode": "USD",
                                         },
                                     },
                                 },
                             ],
-                            # CRITICAL: Add totalAmount
+                            # REQUIRED: totalAmount
                             "totalAmount": {
                                 "value": {
-                                    "amount": price_amount,
+                                    "amount": price_str,
                                     "currencyCode": "USD",
                                 },
                             },
@@ -1272,9 +1250,7 @@ class ShopifyChargeChecker:
             self.console_logger.sub_step(8, 6, f"Billing name: {card_name}")
             self.console_logger.sub_step(8, 7, f"Using ACTUAL price: ${actual_price:.2f}")
             self.console_logger.sub_step(8, 8, f"Address: {self.billing_address['address1']}, {self.billing_address['city']}")
-            self.console_logger.sub_step(8, 9, f"Delivery: PICKUP (noDeliveryRequired object)")
-            
-            # Log the full payload for debugging
+            self.console_logger.sub_step(8, 9, f"Delivery: SIMPLIFIED (noDeliveryRequired: true)")
             self.console_logger.sub_step(8, 10, f"Payload size: {len(json.dumps(json_data))} bytes")
             
             response = await client.post(
@@ -1287,7 +1263,7 @@ class ShopifyChargeChecker:
             
             self.console_logger.request_details("POST", url, response.status_code,
                                               time.time() - (self.console_logger.start_time + elapsed),
-                                              "Complete checkout with PICKUP and actual price")
+                                              "Complete checkout with SIMPLIFIED structure")
             
             # DEBUG: Log response details
             self.console_logger.sub_step(8, 11, f"Response status: {response.status_code}")
@@ -1680,7 +1656,7 @@ class ShopifyChargeChecker:
                 session_id = session_result
                 await self.human_delay(1, 2)
                 
-                # Step 8: Complete checkout with PICKUP option and ACTUAL PRICE
+                # Step 8: Complete checkout with SIMPLIFIED structure
                 success, checkout_result = await self.complete_checkout_with_payment(client, session_id, cc, mes, ano, cvv)
                 
                 elapsed_time = time.time() - start_time
