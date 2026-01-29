@@ -1351,7 +1351,7 @@ async def handle_shopify_charge(client: Client, message: Message):
 🠪 <b>Example</b>: <code>/sh 4111111111111111|12|2025|123</code>
 ━━━━━━━━━━━━━
 <b>~ Note:</b> <code>Charges via Shopify gateway (Deducts 2 credits AFTER check completes)</code>
-<b>~ Note:</b> <code>Free users can use in authorized groups with credit deduction</code>
+<b>~ Note:</b> <code>Free users can use in authorized groups with credit deduction</code>""")
             return
 
         card_details = args[1].strip()
