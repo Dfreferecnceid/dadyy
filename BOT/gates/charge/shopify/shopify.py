@@ -1,5 +1,5 @@
 # BOT/gates/charge/shopify/shopify.py
-# Shopify Charge Gateway - UPDATED WITH REDIRECT HANDLING
+# Shopify Charge Gateway - FIXED GRAPHQL PAYLOAD VERSION
 # Uses meta-app-prod-store-1.myshopify.com
 
 import json
@@ -942,7 +942,7 @@ class ShopifyChargeChecker:
             return False, f"Payment error: {str(e)[:80]}"
     
     async def complete_checkout_with_payment(self, client, session_id, cc, mes, ano, cvv):
-        """Complete the checkout with ALL information in one request"""
+        """Complete the checkout with ALL information in one request - FIXED GRAPHQL"""
         try:
             elapsed = self.console_logger.step(8, "COMPLETE CHECKOUT", "Submitting all checkout information with payment")
             
@@ -982,7 +982,7 @@ class ShopifyChargeChecker:
             card_name = f"{self.billing_address['first_name']} {self.billing_address['last_name']}"
             
             # Build complete checkout payload with ALL information
-            # Based on the shopify.txt logs, this is the correct format
+            # EXACT FORMAT FROM shopify.txt logs
             json_data = {
                 "operationName": "SubmitForCompletion",
                 "variables": {
@@ -1000,7 +1000,6 @@ class ShopifyChargeChecker:
                                     "destination": {
                                         "streetAddress": {
                                             "address1": self.shipping_address["address1"],
-                                            "address2": self.shipping_address["address2"],
                                             "city": self.shipping_address["city"],
                                             "countryCode": self.shipping_address["country"],
                                             "postalCode": self.shipping_address["zip"],
@@ -1010,7 +1009,6 @@ class ShopifyChargeChecker:
                                             "phone": self.shipping_address["phone"],
                                         },
                                     },
-                                    # PICKUP OPTION as per instructions - simpler format
                                     "selectedDeliveryStrategy": {
                                         "deliveryStrategyMatchingConditions": {
                                             "estimatedTimeInTransit": {"any": True},
@@ -1051,7 +1049,6 @@ class ShopifyChargeChecker:
                                             "billingAddress": {
                                                 "streetAddress": {
                                                     "address1": self.billing_address["address1"],
-                                                    "address2": self.billing_address["address2"],
                                                     "city": self.billing_address["city"],
                                                     "countryCode": self.billing_address["country"],
                                                     "postalCode": self.billing_address["zip"],
@@ -1072,10 +1069,6 @@ class ShopifyChargeChecker:
                                 },
                             ],
                         },
-                        # NO TIP as per instructions - simpler format
-                        "tip": {
-                            "tipSuggestions": []
-                        },
                         "buyerIdentity": {
                             "customer": {
                                 "presentmentCurrency": "USD",
@@ -1095,8 +1088,17 @@ class ShopifyChargeChecker:
                     },
                     "attemptToken": f"{self.checkout_token}-{random.randint(1000, 9999)}",
                 },
+                # EXACT QUERY FROM shopify.txt logs
                 "query": "mutation SubmitForCompletion($input: NegotiationInput!, $attemptToken: String!) { submitForCompletion(input: $input, attemptToken: $attemptToken) { ... on SubmitSuccess { receipt { id } } ... on SubmitAlreadyAccepted { receipt { id } } ... on SubmitFailed { reason } ... on SubmitRejected { errors { ... on NegotiationError { code localizedMessage } } } ... on Throttled { pollAfter pollUrl queueToken } } }"
             }
+            
+            # DEBUG: Print the JSON data for troubleshooting
+            self.console_logger.sub_step(8, 1, f"Submitting checkout with token: {self.checkout_token}")
+            self.console_logger.sub_step(8, 2, f"Session token: {self.x_checkout_one_session_token[:30]}...")
+            self.console_logger.sub_step(8, 3, f"Payment session: {session_id[:30]}...")
+            self.console_logger.sub_step(8, 4, f"Variant ID: {variant_id}")
+            self.console_logger.sub_step(8, 5, f"Email: {self.shipping_address['email']}")
+            self.console_logger.sub_step(8, 6, f"Billing name: {self.billing_address['first_name']} {self.billing_address['last_name']}")
             
             response = await client.post(
                 url,
@@ -1110,33 +1112,51 @@ class ShopifyChargeChecker:
                                               time.time() - (self.console_logger.start_time + elapsed),
                                               "Complete checkout submission with all data")
             
+            # DEBUG: Log response details
+            self.console_logger.sub_step(8, 7, f"Response status: {response.status_code}")
+            
             if response.status_code == 200:
                 try:
                     data = response.json()
+                    self.console_logger.sub_step(8, 8, f"Response parsed successfully")
                     return self.parse_payment_response(data)
                 except Exception as e:
                     self.console_logger.error_detail(f"Failed to parse checkout response: {str(e)}")
                     # Try to get error from response text
-                    error_text = response.text[:200] if response.text else "No response text"
+                    error_text = response.text[:500] if response.text else "No response text"
+                    self.console_logger.sub_step(8, 9, f"Raw response: {error_text}")
                     return False, f"Checkout parse error: {error_text}"
             elif response.status_code == 400:
                 # Try to get more detailed error
                 try:
                     error_data = response.json()
+                    self.console_logger.sub_step(8, 10, f"Error response JSON: {json.dumps(error_data)[:200]}")
+                    
                     errors = error_data.get('errors', [])
                     if errors:
                         error_msg = errors[0].get('message', 'Bad Request')
                         # Clean error message
                         if 'Variable $input of type NegotiationInput!' in error_msg:
-                            error_msg = "Checkout configuration error"
+                            # Try to find what's missing
+                            if 'delivery' in error_msg.lower():
+                                error_msg = "Missing delivery information"
+                            elif 'payment' in error_msg.lower():
+                                error_msg = "Missing payment information"
+                            elif 'buyeridentity' in error_msg.lower():
+                                error_msg = "Missing buyer information"
+                            else:
+                                error_msg = "Checkout configuration error"
                     else:
                         error_msg = response.text[:200]
-                except:
+                except Exception as e:
                     error_msg = response.text[:200]
+                    self.console_logger.sub_step(8, 11, f"Error parsing error response: {str(e)}")
+                
                 self.console_logger.error_detail(f"Checkout failed: 400 - {error_msg}")
                 return False, f"Checkout failed: {error_msg}"
             else:
-                error_text = response.text[:200]
+                error_text = response.text[:500]
+                self.console_logger.sub_step(8, 12, f"Full error response: {error_text}")
                 self.console_logger.error_detail(f"Checkout failed: {response.status_code} - {error_text}")
                 return False, f"Checkout failed: HTTP {response.status_code}"
                 
