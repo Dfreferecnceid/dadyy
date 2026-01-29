@@ -322,7 +322,7 @@ class ShopifyChargeChecker:
             "first_name": "Paris",
             "last_name": "Hilton",
             "address1": "8 Log Pond Drive",
-            "address2": "Apartment, suite, etc. (optional)",
+            "address2": "",
             "city": "Horsham",
             "province": "PA",
             "zip": "19044",
@@ -470,14 +470,16 @@ class ShopifyChargeChecker:
             if response.status_code in [200, 304]:
                 html_content = response.text
                 
-                # Extract variant ID from the logs (43207284392098)
+                # Try to extract product variant ID from HTML
                 variant_patterns = [
                     r'data-product-id="(\d+)"',
                     r'product_id["\']?\s*:\s*["\']?(\d+)',
                     r'variant_id["\']?\s*:\s*["\']?(\d+)',
-                    r'/variants/(\d+)/'
+                    r'value="(\d+)"\s*data-variant-id',
+                    r'"id":(\d+)'
                 ]
                 
+                variant_id = None
                 for pattern in variant_patterns:
                     match = re.search(pattern, html_content)
                     if match:
@@ -485,7 +487,13 @@ class ShopifyChargeChecker:
                         self.console_logger.extracted_data("Product Variant ID", variant_id)
                         break
                 
-                self.console_logger.sub_step(2, 1, "Product page loaded successfully")
+                # If no variant found, use the one from logs
+                if not variant_id:
+                    variant_id = "43207284392098"
+                    self.console_logger.sub_step(2, 1, "Using default variant ID from logs: 43207284392098")
+                
+                self.variant_id = variant_id
+                self.console_logger.sub_step(2, 2, "Product page loaded successfully")
                 self.console_logger.step(2, "LOAD PRODUCT PAGE", "Product page loaded", "SUCCESS")
                 return True
             else:
@@ -497,11 +505,11 @@ class ShopifyChargeChecker:
             return False
             
     async def add_to_cart(self, client):
-        """Add product to cart using the correct variant ID from logs"""
+        """Add product to cart using the correct variant ID"""
         try:
             elapsed = self.console_logger.step(3, "ADD TO CART", "Adding product to cart")
             
-            # From the logs, the correct endpoint is /cart/add with form data
+            # Use the correct endpoint from logs: /cart/add (NOT /cart/add.js)
             add_to_cart_url = f"{self.base_url}/cart/add"
             
             # Headers from actual request in logs
@@ -509,7 +517,7 @@ class ShopifyChargeChecker:
                 'Accept': 'application/javascript',
                 'Accept-Encoding': 'gzip, deflate, br, zstd',
                 'Accept-Language': 'en-US,en;q=0.9',
-                'Content-Type': 'multipart/form-data; boundary=----WebKitFormBoundary' + ''.join(random.choices(string.ascii_letters + string.digits, k=16)),
+                'Content-Type': 'application/x-www-form-urlencoded',
                 'Origin': self.base_url,
                 'Referer': self.product_url,
                 'Sec-CH-UA': '"Not(A:Brand";v="8", "Chromium";v="144", "Google Chrome";v="144"',
@@ -522,63 +530,67 @@ class ShopifyChargeChecker:
                 'X-Requested-With': 'XMLHttpRequest'
             }
             
-            # Form data from logs - CORRECT VARIANT ID
-            boundary = headers['Content-Type'].split('=')[1]
+            # Use the correct variant ID from logs
+            variant_id = getattr(self, 'variant_id', '43207284392098')
             
-            # Build multipart form data
-            form_data = f"""------{boundary}
-Content-Disposition: form-data; name="quantity"
-
-1
-------{boundary}
-Content-Disposition: form-data; name="form_type"
-
-product
-------{boundary}
-Content-Disposition: form-data; name="utf8"
-
-✓
-------{boundary}
-Content-Disposition: form-data; name="id"
-
-43207284392098
-------{boundary}
-Content-Disposition: form-data; name="product-id"
-
-7890988171426
-------{boundary}
-Content-Disposition: form-data; name="section-id"
-
-template--15468374917282__main
-------{boundary}
-Content-Disposition: form-data; name="sections"
-
-cart-notification-product,cart-notification-button,cart-icon-bubble
-------{boundary}
-Content-Disposition: form-data; name="sections_url"
-
-/products/retailer-id-fix-no-mapping
-------{boundary}--"""
+            # Form data from logs - SIMPLIFIED VERSION
+            data = {
+                'quantity': '1',
+                'id': variant_id
+            }
             
             response = await client.post(
                 add_to_cart_url,
                 headers=headers,
-                content=form_data,
+                data=data,
                 cookies=self.cookies,
                 timeout=30.0
             )
             
             self.console_logger.request_details("POST", add_to_cart_url, response.status_code,
                                               time.time() - (self.console_logger.start_time + elapsed),
-                                              "Added variant 43207284392098 to cart")
+                                              f"Variant ID: {variant_id}")
             
             if response.status_code == 200:
                 self.console_logger.sub_step(3, 1, "Product added to cart successfully")
                 self.console_logger.step(3, "ADD TO CART", "Product added to cart", "SUCCESS")
                 return True
             else:
-                self.console_logger.error_detail(f"Failed to add to cart: {response.status_code}")
-                return False
+                # Try with additional parameters
+                self.console_logger.sub_step(3, 1, "Trying with full form data...")
+                
+                # Full form data from logs
+                full_data = {
+                    'quantity': '1',
+                    'form_type': 'product',
+                    'utf8': '✓',
+                    'id': variant_id,
+                    'product-id': '7890988171426',
+                    'section-id': 'template--15468374917282__main',
+                    'sections': 'cart-notification-product,cart-notification-button,cart-icon-bubble',
+                    'sections_url': '/products/retailer-id-fix-no-mapping'
+                }
+                
+                full_response = await client.post(
+                    add_to_cart_url,
+                    headers=headers,
+                    data=full_data,
+                    cookies=self.cookies,
+                    timeout=30.0
+                )
+                
+                if full_response.status_code == 200:
+                    self.console_logger.sub_step(3, 2, "Full form data succeeded")
+                    return True
+                else:
+                    self.console_logger.error_detail(f"Failed to add to cart: {response.status_code}")
+                    # Try to get error details
+                    try:
+                        error_text = response.text[:200]
+                        self.console_logger.error_detail(f"Error response: {error_text}")
+                    except:
+                        pass
+                    return False
                 
         except Exception as e:
             self.console_logger.error_detail(f"Add to cart error: {str(e)}")
@@ -994,8 +1006,8 @@ Content-Disposition: form-data; name="sections_url"
                                     "stableId": "default",
                                     "merchandise": {
                                         "productVariantReference": {
-                                            "id": "gid://shopify/ProductVariantMerchandise/43207284392098",  # Correct variant ID
-                                            "variantId": "gid://shopify/ProductVariant/43207284392098",  # Correct variant ID
+                                            "id": f"gid://shopify/ProductVariantMerchandise/{getattr(self, 'variant_id', '43207284392098')}",
+                                            "variantId": f"gid://shopify/ProductVariant/{getattr(self, 'variant_id', '43207284392098')}",
                                         },
                                     },
                                     "quantity": {"items": {"value": 1}},
