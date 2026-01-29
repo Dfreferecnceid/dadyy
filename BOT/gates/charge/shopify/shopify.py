@@ -1374,7 +1374,7 @@ async def handle_shopify_charge(client: Client, message: Message):
         # Show processing message with your format
         processing_msg = await message.reply(
             f"""
-<b>[#Shopify Charge 0.55$] | WAYNE</b> ✦
+<b>[Shopify Charge 0.55$] | #WAYNE</b> ✦
 ━━━━━━━━━━━━━━━
 <b>[•] Card</b>- <code>{cc}|{mes}|{ano}|{cvv}</code>
 <b>[•] Gateway</b> - <b>Shopify Charge 0.55$</b>
@@ -1383,7 +1383,6 @@ async def handle_shopify_charge(client: Client, message: Message):
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
 <b>[+] Plan:</b> {plan_name}
 <b>[+] User:</b> @{username}
-<b>[+] Store:</b> meta-app-prod-store-1.myshopify.com
 ━━━━━━━━━━━━━━━
 <b>Checking card... Please wait.</b>
 """
