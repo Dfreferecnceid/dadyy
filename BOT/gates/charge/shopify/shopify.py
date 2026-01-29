@@ -1,5 +1,5 @@
 # BOT/gates/charge/shopify/shopify.py
-# Shopify Charge Gateway - FIXED SESSION TOKEN EXTRACTION VERSION
+# Shopify Charge Gateway - FIXED RESPONSE PARSING VERSION
 # Uses meta-app-prod-store-1.myshopify.com
 
 import json
@@ -204,7 +204,7 @@ def check_cooldown(user_id, command_type="sh"):
     return True, 0
 
 def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, user_data):
-    """Format response exactly like response.py"""
+    """Format response exactly like response.py - IMPROVED STATUS DETECTION"""
     fullcc = f"{cc}|{mes}|{ano}|{cvv}"
 
     # Extract user_id from profile
@@ -224,26 +224,38 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
     # Clean response
     raw_response = str(raw_response) if raw_response else "-"
 
-    # Determine status - FIXED LOGIC
-    raw_upper = raw_response.upper()
+    # Determine status - IMPROVED LOGIC
+    raw_response_upper = raw_response.upper()
     
-    # Check for REAL successful charges
-    if "ORDER_PLACED" in raw_upper or "THANK YOU" in raw_upper or "SUBMITSUCCESS" in raw_upper or "RECEIPT" in raw_upper:
+    # Check for successful charges
+    if any(keyword in raw_response_upper for keyword in [
+        "ORDER_PLACED", "SUBMITSUCCESS", "SUCCESSFUL", "APPROVED", "RECEIPT"
+    ]):
         status_flag = "Charged 💎"
     # Check for OTP/3D Secure
-    elif any(keyword in raw_upper for keyword in [
-        "3D", "AUTHENTICATION", "OTP", "VERIFICATION", "CVV-MATCH-OTP", "3DS", "PENDING"
+    elif any(keyword in raw_response_upper for keyword in [
+        "3D", "AUTHENTICATION", "OTP", "VERIFICATION", "CVV-MATCH-OTP", 
+        "3DS", "PENDING", "SECURE REQUIRED"
     ]):
         status_flag = "Approved ❎"
-    # Check for address/ZIP issues
-    elif any(keyword in raw_upper for keyword in [
-        "MISMATCHED", "INCORRECT_ZIP", "INCORRECT_ADDRESS", "ADDRESS_VERIFICATION", "AVS"
+    # Check for address/ZIP issues (these are often approved but need verification)
+    elif any(keyword in raw_response_upper for keyword in [
+        "ADDRESS", "ZIP", "AVS", "VERIFICATION FAILED", "MISMATCHED"
     ]):
         status_flag = "Approved ❎"
-    # Check for specific approved but declined scenarios
-    elif any(keyword in raw_upper for keyword in [
-        "INSUFFICIENT_FUNDS", "INVALID_CVC", "INCORRECT_CVC", 
-        "YOUR CARD DOES NOT SUPPORT", "CARD DECLINED", "DECLINED", "FAILED"
+    # Check for CAPTCHA
+    elif "CAPTCHA" in raw_response_upper:
+        status_flag = "Captcha ⚠️"
+    # Check for rate limiting
+    elif any(keyword in raw_response_upper for keyword in [
+        "RATE LIMITED", "THROTTLED", "LIMIT EXCEEDED"
+    ]):
+        status_flag = "Rate Limit ⏰"
+    # Check for specific decline reasons
+    elif any(keyword in raw_response_upper for keyword in [
+        "INSUFFICIENT FUNDS", "INVALID CVC", "INCORRECT CVC", 
+        "YOUR CARD DOES NOT SUPPORT", "CARD DECLINED", "DECLINED", 
+        "FAILED", "EXPIRED", "INVALID CARD", "DO NOT HONOR"
     ]):
         status_flag = "Declined ❌"
     # Default to declined
@@ -1292,46 +1304,79 @@ class ShopifyChargeChecker:
             return False, f"Checkout error: {str(e)[:80]}"
     
     def parse_payment_response(self, data):
-        """Parse payment response - FIXED VERSION"""
+        """Parse payment response - FIXED TO EXTRACT REAL ERROR MESSAGES"""
         try:
             if not isinstance(data, dict):
                 return False, "Invalid response format"
+            
+            # DEBUG: Log the full response for analysis
+            response_str = json.dumps(data, indent=2)
+            self.console_logger.sub_step(8, 15, f"Full response: {response_str[:500]}...")
             
             # Check for GraphQL errors in the response
             if 'errors' in data:
                 errors = data['errors']
                 if isinstance(errors, list) and errors:
-                    error_msg = errors[0].get('message', 'Payment failed')
+                    # Get the first error
+                    error_data = errors[0]
+                    if isinstance(error_data, dict):
+                        error_msg = error_data.get('message', 'Payment failed')
+                        
+                        # Try to extract more specific error from extensions
+                        extensions = error_data.get('extensions', {})
+                        if 'code' in extensions:
+                            error_code = extensions['code']
+                            # Map Shopify error codes to human-readable messages
+                            error_map = {
+                                'INSUFFICIENT_FUNDS': 'Insufficient Funds',
+                                'INVALID_CVC': 'Invalid CVC',
+                                'EXPIRED_CARD': 'Expired Card',
+                                'INCORRECT_CVC': 'Incorrect CVC',
+                                'CARD_DECLINED': 'Card Declined',
+                                'PROCESSING_ERROR': 'Processing Error',
+                                'INCORRECT_NUMBER': 'Incorrect Card Number',
+                                'INVALID_NUMBER': 'Invalid Card Number',
+                                'INVALID_EXPIRY_DATE': 'Invalid Expiry Date',
+                                'INCORRECT_ZIP': 'Incorrect ZIP Code',
+                                'ADDRESS_VERIFICATION_FAILED': 'Address Verification Failed',
+                                'CVV_FAILURE': 'CVV Verification Failed',
+                                'DO_NOT_HONOR': 'Do Not Honor',
+                                'PICKUP_CARD': 'Pickup Card',
+                                'LOST_CARD': 'Lost Card',
+                                'STOLEN_CARD': 'Stolen Card',
+                                'RESTRICTED_CARD': 'Restricted Card',
+                                'CALL_ISSUER': 'Call Issuer',
+                                'DECLINED': 'Card Declined',
+                                'GENERIC_DECLINE': 'Card Declined',
+                                'HARD_DECLINE': 'Card Declined',
+                                'SOFT_DECLINE': 'Card Declined',
+                                'FRAUD': 'Suspected Fraud',
+                                'BLACKLISTED': 'Card Blacklisted',
+                                'VELOCITY_EXCEEDED': 'Transaction Limit Exceeded',
+                                'THREE_D_SECURE_REQUIRED': '3D Secure Required',
+                                'CAPTCHA_REQUIRED': 'CAPTCHA Required',
+                                'RATE_LIMITED': 'Rate Limited',
+                                'UNAUTHORIZED': 'Unauthorized Transaction',
+                            }
+                            if error_code in error_map:
+                                error_msg = error_map[error_code]
+                        
+                        # Check for CAPTCHA specifically
+                        if 'captcha' in error_msg.lower() or 'robot' in error_msg.lower() or 'human' in error_msg.lower():
+                            return False, "CAPTCHA_REQUIRED - Please try again"
+                        
+                        return False, error_msg
+                    else:
+                        return False, str(error_data)
                 elif isinstance(errors, str):
                     error_msg = errors
+                    if 'captcha' in error_msg.lower():
+                        return False, "CAPTCHA_REQUIRED - Please try again"
+                    return False, error_msg
                 else:
                     error_msg = str(errors)
-                
-                # Extract more specific error if available
-                error_msg_lower = error_msg.lower()
-                if 'declined' in error_msg_lower:
-                    return False, "Card Declined"
-                elif 'cvc' in error_msg_lower:
-                    return False, "Invalid CVC"
-                elif 'expired' in error_msg_lower:
-                    return False, "Expired Card"
-                elif 'funds' in error_msg_lower:
-                    return False, "Insufficient Funds"
-                elif 'invalid' in error_msg_lower:
-                    return False, "Invalid Card"
-                elif 'captcha' in error_msg_lower or 'robot' in error_msg_lower:
-                    return False, "CAPTCHA_REQUIRED - Please try again"
-                elif 'unauthorized' in error_msg_lower:
-                    return False, "Unauthorized transaction"
-                elif 'stolen' in error_msg_lower:
-                    return False, "Card reported stolen"
-                elif 'lost' in error_msg_lower:
-                    return False, "Card reported lost"
-                elif 'pickup' in error_msg_lower:
-                    return False, "Card pickup required"
-                elif 'restricted' in error_msg_lower:
-                    return False, "Restricted card"
-                else:
+                    if 'captcha' in error_msg.lower():
+                        return False, "CAPTCHA_REQUIRED - Please try again"
                     return False, error_msg
             
             # Check for success in data
@@ -1354,61 +1399,124 @@ class ShopifyChargeChecker:
                 reason = submit_data.get('reason', 'Payment failed')
                 # Parse reason for better error messages
                 reason_lower = reason.lower()
-                if 'declined' in reason_lower:
-                    return False, "Card Declined"
-                elif 'cvc' in reason_lower:
+                
+                # Map Shopify decline reasons
+                if 'insufficient' in reason_lower or 'funds' in reason_lower:
+                    return False, "Insufficient Funds"
+                elif 'cvc' in reason_lower or 'security' in reason_lower:
                     return False, "Invalid CVC"
                 elif 'expired' in reason_lower:
                     return False, "Expired Card"
-                elif 'funds' in reason_lower:
-                    return False, "Insufficient Funds"
-                elif 'invalid' in reason_lower:
+                elif 'declined' in reason_lower:
+                    return False, "Card Declined"
+                elif 'invalid' in reason_lower and 'card' in reason_lower:
                     return False, "Invalid Card"
-                elif 'captcha' in reason_lower:
+                elif 'address' in reason_lower or 'zip' in reason_lower or 'avs' in reason_lower:
+                    return False, "Address Verification Failed"
+                elif 'captcha' in reason_lower or 'robot' in reason_lower:
                     return False, "CAPTCHA_REQUIRED - Please try again"
-                elif 'unauthorized' in reason_lower:
-                    return False, "Unauthorized transaction"
+                elif '3d' in reason_lower or 'secure' in reason_lower:
+                    return True, "3D Secure Required - Card Approved"
+                elif 'fraud' in reason_lower:
+                    return False, "Suspected Fraud"
+                elif 'stolen' in reason_lower:
+                    return False, "Card Reported Stolen"
+                elif 'lost' in reason_lower:
+                    return False, "Card Reported Lost"
+                elif 'pickup' in reason_lower:
+                    return False, "Card Pickup Required"
+                elif 'restricted' in reason_lower:
+                    return False, "Restricted Card"
+                elif 'do not honor' in reason_lower:
+                    return False, "Do Not Honor"
+                elif 'call issuer' in reason_lower:
+                    return False, "Call Issuer"
                 else:
-                    return False, reason
+                    # Return the actual reason from Shopify
+                    return False, f"Declined: {reason}"
             elif typename == 'SubmitRejected':
                 errors = submit_data.get('errors', [])
                 if errors and isinstance(errors, list) and len(errors) > 0:
-                    error_msg = errors[0].get('localizedMessage', 'Payment rejected')
+                    error_data = errors[0]
+                    error_msg = error_data.get('localizedMessage', 'Payment rejected')
+                    error_code = error_data.get('code', '')
+                    
+                    # Map error codes
+                    if error_code == 'INVALID_CVC':
+                        return False, "Invalid CVC"
+                    elif error_code == 'INSUFFICIENT_FUNDS':
+                        return False, "Insufficient Funds"
+                    elif error_code == 'EXPIRED_CARD':
+                        return False, "Expired Card"
+                    elif error_code == 'CARD_DECLINED':
+                        return False, "Card Declined"
+                    elif error_code == 'CAPTCHA_REQUIRED':
+                        return False, "CAPTCHA_REQUIRED - Please try again"
+                    elif error_code == 'ADDRESS_VERIFICATION_FAILED':
+                        return False, "Address Verification Failed"
+                    
                     error_msg_lower = error_msg.lower()
-                    if 'declined' in error_msg_lower:
+                    if 'captcha' in error_msg_lower:
+                        return False, "CAPTCHA_REQUIRED - Please try again"
+                    elif 'declined' in error_msg_lower:
                         return False, "Card Declined"
                     elif 'cvc' in error_msg_lower:
                         return False, "Invalid CVC"
-                    elif 'captcha' in error_msg_lower:
-                        return False, "CAPTCHA_REQUIRED - Please try again"
                     elif 'address' in error_msg_lower or 'zip' in error_msg_lower:
                         return False, "Address verification failed"
                     else:
                         return False, error_msg
                 else:
                     return False, "Payment rejected"
+            elif typename == 'Throttled':
+                # Rate limited or throttled
+                poll_after = submit_data.get('pollAfter', 0)
+                if poll_after > 0:
+                    return False, f"Rate Limited - Try again in {poll_after}s"
+                else:
+                    return False, "Rate Limited - Please try again"
             
-            # Check response text for clues
-            response_text = str(data).lower()
-            if "captcha" in response_text or "robot" in response_text:
+            # If we get here, check for any clues in the response
+            response_text = json.dumps(data).lower()
+            
+            # Check for specific patterns
+            if any(pattern in response_text for pattern in ['captcha', 'robot', 'human verification']):
                 return False, "CAPTCHA_REQUIRED - Please try again"
-            if "declined" in response_text:
-                return False, "Card Declined"
-            if "cvc" in response_text:
-                return False, "Invalid CVC"
-            if "expired" in response_text:
-                return False, "Expired Card"
-            if "funds" in response_text:
+            if 'insufficient' in response_text:
                 return False, "Insufficient Funds"
-            if "address" in response_text or "zip" in response_text:
-                return False, "Address verification failed"
-            if "3d" in response_text or "secure" in response_text:
+            if 'cvc' in response_text or 'security code' in response_text:
+                return False, "Invalid CVC"
+            if 'expired' in response_text:
+                return False, "Expired Card"
+            if 'declined' in response_text:
+                return False, "Card Declined"
+            if '3d' in response_text or 'secure' in response_text:
                 return True, "3D Secure Required - Card Approved"
+            if 'fraud' in response_text:
+                return False, "Suspected Fraud"
+            if 'address' in response_text or 'zip' in response_text or 'avs' in response_text:
+                return False, "Address Verification Failed"
+            if 'stolen' in response_text:
+                return False, "Card Reported Stolen"
+            if 'lost' in response_text:
+                return False, "Card Reported Lost"
+            if 'pickup' in response_text:
+                return False, "Card Pickup Required"
+            if 'restricted' in response_text:
+                return False, "Restricted Card"
+            if 'do not honor' in response_text:
+                return False, "Do Not Honor"
+            if 'call issuer' in response_text:
+                return False, "Call Issuer"
             
-            return False, "Payment declined - Unknown reason"
+            # Default to declined with actual response for debugging
+            return False, f"Payment declined: {str(data)[:100]}..."
             
         except Exception as e:
-            return False, f"Response error: {str(e)[:50]}"
+            # Log the actual error for debugging
+            self.console_logger.error_detail(f"Parse error: {str(e)}")
+            self.console_logger.sub_step(8, 16, f"Raw data that failed to parse: {str(data)[:200]}...")
+            return False, f"Response parse error: {str(e)[:50]}"
     
     def generate_shopify_signature(self):
         """Generate Shopify identification signature"""
