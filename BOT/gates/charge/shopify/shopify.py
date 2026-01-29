@@ -693,7 +693,7 @@ class ShopifyChargeChecker:
                             self.console_logger.extracted_data("Checkout Token", self.checkout_token)
                             
                             # Build the direct checkout URL with skip_shop_pay parameter
-                            direct_checkout_url = f"{self.base_url}/checkouts/cn/{self.checkout_token}/en-us?skip_shop_pay=true&_r={random.randint(100000000000, 999999999999)}"
+                            direct_checkout_url = f"{self.base_url}/checkouts/cn/{self.checkout_token}/en-us?skip_shop_pay=true&_r=AQAB{random.randint(1000000, 9999999)}"
                             self.console_logger.sub_step(5, 5, f"Direct checkout URL: {direct_checkout_url[:80]}...")
                             
                             self.console_logger.step(5, "GO TO CHECKOUT", "Checkout token extracted", "SUCCESS")
@@ -740,7 +740,7 @@ class ShopifyChargeChecker:
                             self.checkout_token = match.group(1)
                             self.console_logger.extracted_data("Checkout Token from Response Body", self.checkout_token)
                             
-                            direct_url = f"{self.base_url}/checkouts/cn/{self.checkout_token}/en-us?skip_shop_pay=true&_r={random.randint(100000000000, 999999999999)}"
+                            direct_url = f"{self.base_url}/checkouts/cn/{self.checkout_token}/en-us?skip_shop_pay=true&_r=AQAB{random.randint(1000000, 9999999)}"
                             return True, direct_url
             
             # If we get here without success
@@ -949,6 +949,9 @@ class ShopifyChargeChecker:
             if not self.checkout_token or not self.x_checkout_one_session_token:
                 return False, "Missing checkout tokens"
             
+            # Use the checkout token from the URL that actually worked (from redirects)
+            checkout_token_to_use = self.checkout_token
+            
             url = f"{self.base_url}/checkouts/internal/graphql/persisted?operationName=SubmitForCompletion"
             
             headers = {
@@ -957,7 +960,7 @@ class ShopifyChargeChecker:
                 'Accept-Language': 'en-US',
                 'Content-Type': 'application/json',
                 'Origin': self.base_url,
-                'Referer': f'{self.base_url}/checkouts/cn/{self.checkout_token}/en-us',
+                'Referer': f'{self.base_url}/checkouts/cn/{checkout_token_to_use}/en-us',
                 'Sec-CH-UA': '"Not(A:Brand";v="8", "Chromium";v="144", "Google Chrome";v="144"',
                 'Sec-CH-UA-Mobile': '?0',
                 'Sec-CH-UA-Platform': '"Windows"',
@@ -965,24 +968,24 @@ class ShopifyChargeChecker:
                 'Sec-Fetch-Mode': 'cors',
                 'Sec-Fetch-Site': 'same-origin',
                 'Shopify-Checkout-Client': 'checkout-web/1.0',
-                'Shopify-Checkout-Source': f'id="{self.checkout_token}", type="cn"',
+                'Shopify-Checkout-Source': f'id="{checkout_token_to_use}", type="cn"',
                 'User-Agent': self.user_agent,
                 'X-Checkout-One-Session-Token': self.x_checkout_one_session_token,
                 'X-Checkout-Web-Build-Id': self.x_checkout_web_build_id,
                 'X-Checkout-Web-Deploy-Stage': 'production',
                 'X-Checkout-Web-Server-Handling': 'fast',
                 'X-Checkout-Web-Server-Rendering': 'yes',
-                'X-Checkout-Web-Source-Id': self.checkout_token
+                'X-Checkout-Web-Source-Id': checkout_token_to_use
             }
             
-            # Use the correct variant ID
+            # Use the correct variant ID from product page
             variant_id = self.variant_id if self.variant_id else "43207284392098"
             
             # Generate random name for card as per instructions
             card_name = f"{self.billing_address['first_name']} {self.billing_address['last_name']}"
             
             # Build complete checkout payload with ALL information
-            # EXACT FORMAT FROM shopify.txt logs
+            # EXACT FORMAT FROM shopify.txt logs - WITH METAFIELDS ARRAY ADDED
             json_data = {
                 "operationName": "SubmitForCompletion",
                 "variables": {
@@ -1086,19 +1089,21 @@ class ShopifyChargeChecker:
                             },
                         },
                     },
-                    "attemptToken": f"{self.checkout_token}-{random.randint(1000, 9999)}",
+                    "attemptToken": f"{checkout_token_to_use}-{random.randint(1000, 9999)}",
+                    "metafields": [],  # CRITICAL: This was missing from previous code!
                 },
                 # EXACT QUERY FROM shopify.txt logs
-                "query": "mutation SubmitForCompletion($input: NegotiationInput!, $attemptToken: String!) { submitForCompletion(input: $input, attemptToken: $attemptToken) { ... on SubmitSuccess { receipt { id } } ... on SubmitAlreadyAccepted { receipt { id } } ... on SubmitFailed { reason } ... on SubmitRejected { errors { ... on NegotiationError { code localizedMessage } } } ... on Throttled { pollAfter pollUrl queueToken } } }"
+                "query": "mutation SubmitForCompletion($input: NegotiationInput!, $attemptToken: String!, $metafields: [MetafieldInput!]) {\n  submitForCompletion(input: $input, attemptToken: $attemptToken, metafields: $metafields) {\n    ... on SubmitSuccess {\n      receipt {\n        id\n        __typename\n      }\n      __typename\n    }\n    ... on SubmitAlreadyAccepted {\n      receipt {\n        id\n        __typename\n      }\n      __typename\n    }\n    ... on SubmitFailed {\n      reason\n      __typename\n    }\n    ... on SubmitRejected {\n      errors {\n        code\n        localizedMessage\n        __typename\n      }\n      __typename\n    }\n    ... on Throttled {\n      pollAfter\n      pollUrl\n      queueToken\n      __typename\n    }\n    __typename\n  }\n}"
             }
             
             # DEBUG: Print the JSON data for troubleshooting
-            self.console_logger.sub_step(8, 1, f"Submitting checkout with token: {self.checkout_token}")
+            self.console_logger.sub_step(8, 1, f"Submitting checkout with token: {checkout_token_to_use}")
             self.console_logger.sub_step(8, 2, f"Session token: {self.x_checkout_one_session_token[:30]}...")
             self.console_logger.sub_step(8, 3, f"Payment session: {session_id[:30]}...")
             self.console_logger.sub_step(8, 4, f"Variant ID: {variant_id}")
             self.console_logger.sub_step(8, 5, f"Email: {self.shipping_address['email']}")
-            self.console_logger.sub_step(8, 6, f"Billing name: {self.billing_address['first_name']} {self.billing_address['last_name']}")
+            self.console_logger.sub_step(8, 6, f"Billing name: {card_name}")
+            self.console_logger.sub_step(8, 7, f"Including metafields: [] array")  # Debug info
             
             response = await client.post(
                 url,
@@ -1113,50 +1118,60 @@ class ShopifyChargeChecker:
                                               "Complete checkout submission with all data")
             
             # DEBUG: Log response details
-            self.console_logger.sub_step(8, 7, f"Response status: {response.status_code}")
+            self.console_logger.sub_step(8, 8, f"Response status: {response.status_code}")
             
             if response.status_code == 200:
                 try:
                     data = response.json()
-                    self.console_logger.sub_step(8, 8, f"Response parsed successfully")
+                    self.console_logger.sub_step(8, 9, f"Response parsed successfully")
                     return self.parse_payment_response(data)
                 except Exception as e:
                     self.console_logger.error_detail(f"Failed to parse checkout response: {str(e)}")
                     # Try to get error from response text
                     error_text = response.text[:500] if response.text else "No response text"
-                    self.console_logger.sub_step(8, 9, f"Raw response: {error_text}")
+                    self.console_logger.sub_step(8, 10, f"Raw response: {error_text}")
                     return False, f"Checkout parse error: {error_text}"
             elif response.status_code == 400:
                 # Try to get more detailed error
                 try:
                     error_data = response.json()
-                    self.console_logger.sub_step(8, 10, f"Error response JSON: {json.dumps(error_data)[:200]}")
+                    self.console_logger.sub_step(8, 11, f"Error response: {json.dumps(error_data)[:200]}")
                     
-                    errors = error_data.get('errors', [])
-                    if errors:
-                        error_msg = errors[0].get('message', 'Bad Request')
-                        # Clean error message
-                        if 'Variable $input of type NegotiationInput!' in error_msg:
-                            # Try to find what's missing
-                            if 'delivery' in error_msg.lower():
-                                error_msg = "Missing delivery information"
-                            elif 'payment' in error_msg.lower():
-                                error_msg = "Missing payment information"
-                            elif 'buyeridentity' in error_msg.lower():
-                                error_msg = "Missing buyer information"
+                    # Handle different error response formats
+                    error_msg = "Bad Request"
+                    if isinstance(error_data, dict):
+                        if 'errors' in error_data:
+                            errors = error_data['errors']
+                            if isinstance(errors, list) and len(errors) > 0:
+                                error_msg = errors[0].get('message', 'Bad Request')
+                            elif isinstance(errors, str):
+                                error_msg = errors
                             else:
-                                error_msg = "Checkout configuration error"
-                    else:
-                        error_msg = response.text[:200]
+                                error_msg = str(error_data)
+                        else:
+                            error_msg = str(error_data)
+                    elif isinstance(error_data, str):
+                        error_msg = error_data
+                    
+                    # Clean error message
+                    if 'Variable $input of type NegotiationInput!' in error_msg:
+                        error_msg = "Missing required checkout information"
+                    elif 'metafields' in error_msg.lower():
+                        error_msg = "Metafields parameter issue"
+                    elif 'delivery' in error_msg.lower():
+                        error_msg = "Delivery information issue"
+                    elif 'payment' in error_msg.lower():
+                        error_msg = "Payment information issue"
+                    
                 except Exception as e:
-                    error_msg = response.text[:200]
-                    self.console_logger.sub_step(8, 11, f"Error parsing error response: {str(e)}")
+                    error_msg = response.text[:200] if response.text else "Bad Request"
+                    self.console_logger.sub_step(8, 12, f"Error parsing error response: {str(e)}")
                 
                 self.console_logger.error_detail(f"Checkout failed: 400 - {error_msg}")
                 return False, f"Checkout failed: {error_msg}"
             else:
-                error_text = response.text[:500]
-                self.console_logger.sub_step(8, 12, f"Full error response: {error_text}")
+                error_text = response.text[:500] if response.text else "No response"
+                self.console_logger.sub_step(8, 13, f"Full error response: {error_text}")
                 self.console_logger.error_detail(f"Checkout failed: {response.status_code} - {error_text}")
                 return False, f"Checkout failed: HTTP {response.status_code}"
                 
@@ -1165,55 +1180,65 @@ class ShopifyChargeChecker:
             return False, f"Checkout error: {str(e)[:80]}"
     
     def parse_payment_response(self, data):
-        """Parse payment response"""
+        """Parse payment response - FIXED VERSION"""
         try:
             if not isinstance(data, dict):
                 return False, "Invalid response format"
             
-            # Check for GraphQL errors
+            # Check for GraphQL errors in the response
             if 'errors' in data:
                 errors = data['errors']
-                if errors:
+                if isinstance(errors, list) and errors:
                     error_msg = errors[0].get('message', 'Payment failed')
-                    # Extract more specific error if available
-                    error_msg_lower = error_msg.lower()
-                    if 'declined' in error_msg_lower:
-                        return False, "Card Declined"
-                    elif 'cvc' in error_msg_lower:
-                        return False, "Invalid CVC"
-                    elif 'expired' in error_msg_lower:
-                        return False, "Expired Card"
-                    elif 'funds' in error_msg_lower:
-                        return False, "Insufficient Funds"
-                    elif 'invalid' in error_msg_lower:
-                        return False, "Invalid Card"
-                    elif 'captcha' in error_msg_lower or 'robot' in error_msg_lower:
-                        return False, "CAPTCHA_REQUIRED - Please try again"
-                    elif 'unauthorized' in error_msg_lower:
-                        return False, "Unauthorized transaction"
-                    elif 'stolen' in error_msg_lower:
-                        return False, "Card reported stolen"
-                    elif 'lost' in error_msg_lower:
-                        return False, "Card reported lost"
-                    elif 'pickup' in error_msg_lower:
-                        return False, "Card pickup required"
-                    elif 'restricted' in error_msg_lower:
-                        return False, "Restricted card"
-                    else:
-                        return False, error_msg
+                elif isinstance(errors, str):
+                    error_msg = errors
+                else:
+                    error_msg = str(errors)
+                
+                # Extract more specific error if available
+                error_msg_lower = error_msg.lower()
+                if 'declined' in error_msg_lower:
+                    return False, "Card Declined"
+                elif 'cvc' in error_msg_lower:
+                    return False, "Invalid CVC"
+                elif 'expired' in error_msg_lower:
+                    return False, "Expired Card"
+                elif 'funds' in error_msg_lower:
+                    return False, "Insufficient Funds"
+                elif 'invalid' in error_msg_lower:
+                    return False, "Invalid Card"
+                elif 'captcha' in error_msg_lower or 'robot' in error_msg_lower:
+                    return False, "CAPTCHA_REQUIRED - Please try again"
+                elif 'unauthorized' in error_msg_lower:
+                    return False, "Unauthorized transaction"
+                elif 'stolen' in error_msg_lower:
+                    return False, "Card reported stolen"
+                elif 'lost' in error_msg_lower:
+                    return False, "Card reported lost"
+                elif 'pickup' in error_msg_lower:
+                    return False, "Card pickup required"
+                elif 'restricted' in error_msg_lower:
+                    return False, "Restricted card"
+                else:
+                    return False, error_msg
             
             # Check for success in data
-            submit_data = data.get('data', {}).get('submitForCompletion', {})
+            if 'data' not in data:
+                return False, "No data in response"
             
-            if submit_data.get('__typename') == 'SubmitSuccess':
+            submit_data = data.get('data', {}).get('submitForCompletion', {})
+            typename = submit_data.get('__typename', '')
+            
+            if typename == 'SubmitSuccess':
                 receipt = submit_data.get('receipt', {})
-                if receipt.get('id'):
-                    return True, "ORDER_PLACED - Payment Successful"
+                receipt_id = receipt.get('id', '')
+                if receipt_id:
+                    return True, f"ORDER_PLACED - Payment Successful (Receipt: {receipt_id})"
                 else:
-                    return True, "ORDER_PLACED - Payment Successful (no receipt ID)"
-            elif submit_data.get('__typename') == 'SubmitAlreadyAccepted':
+                    return True, "ORDER_PLACED - Payment Successful"
+            elif typename == 'SubmitAlreadyAccepted':
                 return True, "ORDER_ALREADY_ACCEPTED - Payment Successful"
-            elif submit_data.get('__typename') == 'SubmitFailed':
+            elif typename == 'SubmitFailed':
                 reason = submit_data.get('reason', 'Payment failed')
                 # Parse reason for better error messages
                 reason_lower = reason.lower()
@@ -1233,9 +1258,9 @@ class ShopifyChargeChecker:
                     return False, "Unauthorized transaction"
                 else:
                     return False, reason
-            elif submit_data.get('__typename') == 'SubmitRejected':
+            elif typename == 'SubmitRejected':
                 errors = submit_data.get('errors', [])
-                if errors:
+                if errors and isinstance(errors, list) and len(errors) > 0:
                     error_msg = errors[0].get('localizedMessage', 'Payment rejected')
                     error_msg_lower = error_msg.lower()
                     if 'declined' in error_msg_lower:
@@ -1248,6 +1273,8 @@ class ShopifyChargeChecker:
                         return False, "Address verification failed"
                     else:
                         return False, error_msg
+                else:
+                    return False, "Payment rejected"
             
             # Check response text for clues
             response_text = str(data).lower()
