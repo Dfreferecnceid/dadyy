@@ -59,6 +59,9 @@ bot = Client(
     sleep_threshold=30  # Increase sleep threshold to avoid connection issues
 )
 
+# Global variable to track bot connection state
+bot_connected = False
+
 # List of all known bot commands (with and without prefixes)
 BOT_COMMANDS = [
     # Start and basic commands
@@ -131,29 +134,8 @@ async def global_group_auth_check(client: Client, message: Message):
 
 apply_global_middlewares()
 
-# Flask App with firewall protection
+# Simple Flask App
 app = Flask(__name__)
-
-@app.before_request
-def firewall_check():
-    """Check all incoming requests against firewall"""
-    if firewall:
-        client_ip = request.remote_addr
-        
-        # Check if IP is blocked
-        if firewall.is_ip_blocked(client_ip):
-            abort(403)  # Forbidden
-        
-        # Check for attack patterns in request
-        request_data = str(request.data) + str(request.headers) + request.path
-        
-        if firewall.is_attack_pattern(request_data):
-            firewall.block_ip_automatically(client_ip, "Attack pattern detected")
-            abort(403)
-        
-        # Check rate limiting
-        if not firewall.track_ip_request(client_ip):
-            abort(429)  # Too Many Requests
 
 @app.route("/")
 def home():
@@ -161,47 +143,57 @@ def home():
 
 @app.route("/health")
 def health():
-    """Health check endpoint"""
+    """Simple health check"""
     return "OK", 200
 
 @app.route("/status")
 def status():
-    """Status endpoint for monitoring"""
-    if firewall:
-        status_info = {
-            "status": "running",
-            "blocked_ips_count": len(firewall.blocked_ips),
-            "firewall": "active"
-        }
-    else:
-        status_info = {
-            "status": "running",
-            "blocked_ips_count": 0,
-            "firewall": "inactive"
-        }
-    return json.dumps(status_info, indent=2)
+    """Simple status endpoint"""
+    return json.dumps({
+        "status": "running",
+        "bot_connected": bot_connected,
+        "timestamp": time.time()
+    }, indent=2)
 
 def run_flask():
-    """Run Flask server with error handling"""
+    """Run Flask server with minimal configuration"""
     try:
-        # Disable Flask's debug mode for production
-        app.run(host="0.0.0.0", port=3000, debug=False, threaded=True)
+        # Use minimal settings to avoid conflicts
+        app.run(
+            host="0.0.0.0", 
+            port=3000, 
+            debug=False, 
+            threaded=True,
+            use_reloader=False  # Disable reloader to avoid multiple instances
+        )
     except Exception as e:
         print(f"❌ Flask server error: {e}")
 
 async def run_bot():
     """Run the Telegram bot with proper error handling"""
+    global bot_connected
+    
     max_retries = 3
     retry_delay = 5
 
     for attempt in range(max_retries):
         try:
             print(f"🚀 Starting bot (Attempt {attempt + 1}/{max_retries})...")
+            
+            # Ensure bot is not already running
+            if bot.is_connected:
+                print("⚠️ Bot is already connected, skipping...")
+                break
+                
             await bot.start()
+            bot_connected = True
             print("✅ Bot started successfully!")
 
             # Start plan expiry checker
-            asyncio.create_task(plan1_expiry(bot))
+            try:
+                asyncio.create_task(plan1_expiry(bot))
+            except Exception as e:
+                print(f"⚠️ Could not start plan expiry checker: {e}")
 
             # Keep the bot running
             await idle()
@@ -212,7 +204,12 @@ async def run_bot():
             if "database is locked" in str(e):
                 print(f"⚠️ Database locked, retrying in {retry_delay} seconds...")
                 if attempt < max_retries - 1:
-                    await bot.stop()
+                    try:
+                        if bot.is_connected:
+                            await bot.stop()
+                            bot_connected = False
+                    except:
+                        pass
                     time.sleep(retry_delay)
                     # Clean session files before retry
                     cleanup_session_files()
@@ -223,20 +220,23 @@ async def run_bot():
             else:
                 raise
         except Exception as e:
-            print(f"❌ Bot startup error: {e}")
+            error_msg = str(e)
+            print(f"❌ Bot startup error: {error_msg}")
+            
             if attempt < max_retries - 1:
                 print(f"Retrying in {retry_delay} seconds...")
+                try:
+                    if bot.is_connected:
+                        await bot.stop()
+                        bot_connected = False
+                except:
+                    pass
                 time.sleep(retry_delay)
+                # Clean session files before retry
+                cleanup_session_files()
                 continue
             else:
                 raise
-        finally:
-            # Ensure bot is stopped properly
-            try:
-                await bot.stop()
-                print("🛑 Bot stopped.")
-            except:
-                pass
 
 if __name__ == "__main__":
     nest_asyncio.apply()
@@ -255,7 +255,7 @@ if __name__ == "__main__":
     # Start Flask in a daemon thread
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
-    print("🌐 Flask server started on port 3000 (with firewall protection)")
+    print("🌐 Flask server started on port 3000")
 
     # Give Flask a moment to start
     time.sleep(2)
@@ -265,11 +265,23 @@ if __name__ == "__main__":
         asyncio.run(run_bot())
     except KeyboardInterrupt:
         print("\n👋 Bot stopped by user")
+        try:
+            if bot.is_connected:
+                await bot.stop()
+                bot_connected = False
+        except:
+            pass
         if firewall:
             print("💾 Saving firewall state...")
             firewall.save_blocked_ips()
     except Exception as e:
         print(f"❌ Fatal error: {e}")
+        try:
+            if bot.is_connected:
+                await bot.stop()
+                bot_connected = False
+        except:
+            pass
         if firewall:
             firewall.save_blocked_ips()
         sys.exit(1)
