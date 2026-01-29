@@ -1,3 +1,4 @@
+# main.py
 import json
 import asyncio
 import threading
@@ -11,8 +12,15 @@ from pyrogram.enums import ChatType
 from flask import Flask
 from BOT.plans.plan1 import check_and_expire_plans as plan1_expiry
 from BOT.helper.permissions import apply_global_middlewares, is_group_authorized
-import BOT.firewall_protection as firewall
 import nest_asyncio
+
+# Import the automatic firewall protection
+try:
+    from BOT.firewall import firewall
+    print("✅ Firewall protection loaded")
+except ImportError:
+    print("⚠️ Firewall module not found, running without firewall protection")
+    firewall = None
 
 # Load bot credentials
 with open("FILES/config.json", "r", encoding="utf-8") as f:
@@ -75,7 +83,7 @@ def is_bot_command(message_text: str) -> bool:
     if not message_text:
         return False
 
-    text_lower = message_text.strip().lower()  # FIXED: Changed from message.text to message_text
+    text_lower = message_text.strip().lower()
 
     for command in BOT_COMMANDS:
         if text_lower.startswith(f'/{command}') or text_lower.startswith(f'.{command}') or text_lower.startswith(f'${command}'):
@@ -123,16 +131,60 @@ async def global_group_auth_check(client: Client, message: Message):
 
 apply_global_middlewares()
 
-# Flask App
+# Flask App with firewall protection
 app = Flask(__name__)
+
+@app.before_request
+def firewall_check():
+    """Check all incoming requests against firewall"""
+    if firewall:
+        client_ip = request.remote_addr
+        
+        # Check if IP is blocked
+        if firewall.is_ip_blocked(client_ip):
+            abort(403)  # Forbidden
+        
+        # Check for attack patterns in request
+        request_data = str(request.data) + str(request.headers) + request.path
+        
+        if firewall.is_attack_pattern(request_data):
+            firewall.block_ip_automatically(client_ip, "Attack pattern detected")
+            abort(403)
+        
+        # Check rate limiting
+        if not firewall.track_ip_request(client_ip):
+            abort(429)  # Too Many Requests
 
 @app.route("/")
 def home():
     return "Bot is running!"
 
+@app.route("/health")
+def health():
+    """Health check endpoint"""
+    return "OK", 200
+
+@app.route("/status")
+def status():
+    """Status endpoint for monitoring"""
+    if firewall:
+        status_info = {
+            "status": "running",
+            "blocked_ips_count": len(firewall.blocked_ips),
+            "firewall": "active"
+        }
+    else:
+        status_info = {
+            "status": "running",
+            "blocked_ips_count": 0,
+            "firewall": "inactive"
+        }
+    return json.dumps(status_info, indent=2)
+
 def run_flask():
     """Run Flask server with error handling"""
     try:
+        # Disable Flask's debug mode for production
         app.run(host="0.0.0.0", port=3000, debug=False, threaded=True)
     except Exception as e:
         print(f"❌ Flask server error: {e}")
@@ -192,11 +244,18 @@ if __name__ == "__main__":
     print("=" * 50)
     print("🤖 BOT STARTUP SEQUENCE")
     print("=" * 50)
+    
+    # Show firewall status
+    if firewall:
+        print("🛡️  Automatic firewall protection: ACTIVE")
+        print(f"   - Blocked IPs loaded: {len(firewall.blocked_ips)}")
+    else:
+        print("⚠️  Firewall protection: NOT ACTIVE")
 
     # Start Flask in a daemon thread
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
-    print("🌐 Flask server started on port 3000")
+    print("🌐 Flask server started on port 3000 (with firewall protection)")
 
     # Give Flask a moment to start
     time.sleep(2)
@@ -206,7 +265,11 @@ if __name__ == "__main__":
         asyncio.run(run_bot())
     except KeyboardInterrupt:
         print("\n👋 Bot stopped by user")
+        if firewall:
+            print("💾 Saving firewall state...")
+            firewall.save_blocked_ips()
     except Exception as e:
         print(f"❌ Fatal error: {e}")
-
+        if firewall:
+            firewall.save_blocked_ips()
         sys.exit(1)
