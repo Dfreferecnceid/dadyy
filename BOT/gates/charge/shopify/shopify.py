@@ -693,7 +693,7 @@ class ShopifyChargeChecker:
                             self.console_logger.extracted_data("Checkout Token", self.checkout_token)
                             
                             # Build the direct checkout URL with skip_shop_pay parameter
-                            direct_checkout_url = f"{self.base_url}/checkouts/cn/{self.checkout_token}/en-us?skip_shop_pay=true&_r=AQAB{random.randint(1000000, 9999999)}"
+                            direct_checkout_url = f"{self.base_url}/checkouts/cn/{self.checkout_token}/en-us?skip_shop_pay=true&__r=1&_r=AQAB{random.randint(1000000, 9999999)}"
                             self.console_logger.sub_step(5, 5, f"Direct checkout URL: {direct_checkout_url[:80]}...")
                             
                             self.console_logger.step(5, "GO TO CHECKOUT", "Checkout token extracted", "SUCCESS")
@@ -740,7 +740,7 @@ class ShopifyChargeChecker:
                             self.checkout_token = match.group(1)
                             self.console_logger.extracted_data("Checkout Token from Response Body", self.checkout_token)
                             
-                            direct_url = f"{self.base_url}/checkouts/cn/{self.checkout_token}/en-us?skip_shop_pay=true&_r=AQAB{random.randint(1000000, 9999999)}"
+                            direct_url = f"{self.base_url}/checkouts/cn/{self.checkout_token}/en-us?skip_shop_pay=true&__r=1&_r=AQAB{random.randint(1000000, 9999999)}"
                             return True, direct_url
             
             # If we get here without success
@@ -752,7 +752,7 @@ class ShopifyChargeChecker:
             return False, f"Checkout error: {str(e)[:80]}"
     
     async def load_checkout_page_with_redirects(self, client, checkout_url):
-        """Load checkout page with proper redirect handling"""
+        """Load checkout page with proper redirect handling and extract tokens"""
         try:
             elapsed = self.console_logger.step(6, "LOAD CHECKOUT PAGE", "Loading checkout page for tokens")
             
@@ -792,53 +792,85 @@ class ShopifyChargeChecker:
                 return False
             
             html_content = response.text
+            self.console_logger.sub_step(6, 4, f"HTML content length: {len(html_content)} chars")
             
-            # Extract session token
+            # CRITICAL: Extract session token from the checkout page HTML
             session_token_patterns = [
-                r'"sessionToken":"([^"]+)"',
+                r'"sessionToken"\s*:\s*"([^"]+)"',
                 r'sessionToken["\']?\s*:\s*["\']([^"\']+)',
                 r'x-checkout-one-session-token["\']?\s*:\s*["\']([^"\']+)',
                 r'window\.sessionToken\s*=\s*["\']([^"\']+)["\']',
                 r'data-session-token=["\']([^"\']+)["\']',
-                r'checkout_session_token["\']?\s*:\s*["\']([^"\']+)["\']'
+                r'checkout_session_token["\']?\s*:\s*["\']([^"\']+)["\']',
+                r'<script[^>]*>.*?"sessionToken"\s*:\s*"([^"]+)".*?</script>',
+                r'<meta[^>]*content=["\']([^"\']+)["\'][^>]*name=["\']sessionToken["\']'
             ]
             
-            for pattern in session_token_patterns:
-                match = re.search(pattern, html_content)
+            session_token_found = False
+            for idx, pattern in enumerate(session_token_patterns):
+                match = re.search(pattern, html_content, re.DOTALL)
                 if match:
-                    self.x_checkout_one_session_token = match.group(1)
-                    self.console_logger.extracted_data("Session Token", f"{self.x_checkout_one_session_token[:30]}...")
-                    break
+                    self.x_checkout_one_session_token = match.group(1).strip()
+                    if self.x_checkout_one_session_token and len(self.x_checkout_one_session_token) > 50:
+                        self.console_logger.sub_step(6, 5, f"Pattern {idx+1} found session token: {self.x_checkout_one_session_token[:50]}...")
+                        session_token_found = True
+                        break
+            
+            if not session_token_found:
+                # Try to extract from JavaScript data
+                js_pattern = r'<script[^>]*type=["\']text\/javascript["\'][^>]*>([^<]*)</script>'
+                js_matches = re.findall(js_pattern, html_content, re.DOTALL)
+                for js in js_matches:
+                    token_match = re.search(r'sessionToken["\']?\s*:\s*["\']([^"\']+)', js)
+                    if token_match:
+                        self.x_checkout_one_session_token = token_match.group(1).strip()
+                        if self.x_checkout_one_session_token:
+                            self.console_logger.sub_step(6, 6, f"Found session token in JS: {self.x_checkout_one_session_token[:50]}...")
+                            session_token_found = True
+                            break
+            
+            if not session_token_found:
+                self.console_logger.error_detail("Failed to extract session token from checkout page")
+                return False
+            
+            self.console_logger.extracted_data("Session Token", f"{self.x_checkout_one_session_token[:50]}...")
             
             # Extract web build ID
             web_build_patterns = [
-                r'"sha":"([^"]+)"',
+                r'"sha"\s*:\s*"([^"]+)"',
                 r'webBuildId["\']?\s*:\s*["\']([^"\']+)',
                 r'x-checkout-web-build-id["\']?\s*:\s*["\']([^"\']+)',
-                r'data-web-build-id=["\']([^"\']+)["\']'
+                r'data-web-build-id=["\']([^"\']+)["\']',
+                r'<meta[^>]*content=["\']([^"\']+)["\'][^>]*name=["\']webBuildId["\']'
             ]
             
-            for pattern in web_build_patterns:
+            web_build_found = False
+            for idx, pattern in enumerate(web_build_patterns):
                 match = re.search(pattern, html_content)
                 if match:
-                    self.x_checkout_web_build_id = match.group(1)
-                    self.console_logger.extracted_data("Web Build ID", self.x_checkout_web_build_id)
-                    break
+                    self.x_checkout_web_build_id = match.group(1).strip()
+                    if self.x_checkout_web_build_id:
+                        self.console_logger.sub_step(6, 7, f"Pattern {idx+1} found web build ID: {self.x_checkout_web_build_id}")
+                        web_build_found = True
+                        break
             
-            # Set defaults if not found
-            if not self.x_checkout_one_session_token:
-                # Try to generate from checkout token
-                if self.checkout_token:
-                    self.x_checkout_one_session_token = self.checkout_token + "_session_" + ''.join(random.choices(string.ascii_letters + string.digits, k=50))
-                else:
-                    self.x_checkout_one_session_token = self.generate_session_token()
-                self.console_logger.sub_step(6, 98, "Generated session token")
-            
-            if not self.x_checkout_web_build_id:
+            if not web_build_found:
+                # Use default web build ID if not found
                 self.x_checkout_web_build_id = "64794bb5d2969ba982d4eb9ee7c44ab479c9df23"
-                self.console_logger.sub_step(6, 99, "Using default web build ID")
+                self.console_logger.sub_step(6, 8, "Using default web build ID")
             
-            self.console_logger.step(6, "LOAD CHECKOUT PAGE", "Checkout page loaded", "SUCCESS")
+            self.console_logger.extracted_data("Web Build ID", self.x_checkout_web_build_id)
+            
+            # Also update checkout token from the final URL
+            if '/checkouts/cn/' in current_url:
+                match = re.search(r'/checkouts/cn/([^/]+)', current_url)
+                if match:
+                    new_token = match.group(1)
+                    if new_token != self.checkout_token:
+                        self.console_logger.sub_step(6, 9, f"Updated checkout token from URL: {new_token}")
+                        self.checkout_token = new_token
+            
+            self.console_logger.step(6, "LOAD CHECKOUT PAGE", "Checkout page loaded and tokens extracted", "SUCCESS")
             return True
                 
         except Exception as e:
@@ -949,7 +981,7 @@ class ShopifyChargeChecker:
             if not self.checkout_token or not self.x_checkout_one_session_token:
                 return False, "Missing checkout tokens"
             
-            # Use the checkout token from the URL that actually worked (from redirects)
+            # Use the checkout token from the final URL
             checkout_token_to_use = self.checkout_token
             
             url = f"{self.base_url}/checkouts/internal/graphql/persisted?operationName=SubmitForCompletion"
@@ -984,8 +1016,8 @@ class ShopifyChargeChecker:
             # Generate random name for card as per instructions
             card_name = f"{self.billing_address['first_name']} {self.billing_address['last_name']}"
             
-            # Build complete checkout payload with ALL information
-            # EXACT FORMAT FROM shopify.txt logs - WITH METAFIELDS ARRAY ADDED
+            # Build complete checkout payload - SIMPLIFIED VERSION
+            # Based on logs and Shopify API documentation
             json_data = {
                 "operationName": "SubmitForCompletion",
                 "variables": {
@@ -1018,7 +1050,6 @@ class ShopifyChargeChecker:
                                             "shipments": {"any": True},
                                         },
                                     },
-                                    "deliveryMethodTypes": ["PICKUP"],
                                 },
                             ],
                         },
@@ -1029,16 +1060,9 @@ class ShopifyChargeChecker:
                                     "merchandise": {
                                         "productVariantReference": {
                                             "id": f"gid://shopify/ProductVariantMerchandise/{variant_id}",
-                                            "variantId": f"gid://shopify/ProductVariant/{variant_id}",
                                         },
                                     },
                                     "quantity": {"items": {"value": 1}},
-                                    "expectedTotalPrice": {
-                                        "value": {
-                                            "amount": "1.00",
-                                            "currencyCode": "USD",
-                                        },
-                                    },
                                 },
                             ],
                         },
@@ -1073,37 +1097,28 @@ class ShopifyChargeChecker:
                             ],
                         },
                         "buyerIdentity": {
-                            "customer": {
-                                "presentmentCurrency": "USD",
-                                "countryCode": self.shipping_address["country"],
-                            },
                             "email": self.shipping_address["email"],
                             "phoneCountryCode": "US",
                         },
-                        "taxes": {
-                            "proposedTotalAmount": {
-                                "value": {
-                                    "amount": "0.00",
-                                    "currencyCode": "USD",
-                                },
-                            },
-                        },
                     },
                     "attemptToken": f"{checkout_token_to_use}-{random.randint(1000, 9999)}",
-                    "metafields": [],  # CRITICAL: This was missing from previous code!
+                    "metafields": [],
                 },
-                # EXACT QUERY FROM shopify.txt logs
-                "query": "mutation SubmitForCompletion($input: NegotiationInput!, $attemptToken: String!, $metafields: [MetafieldInput!]) {\n  submitForCompletion(input: $input, attemptToken: $attemptToken, metafields: $metafields) {\n    ... on SubmitSuccess {\n      receipt {\n        id\n        __typename\n      }\n      __typename\n    }\n    ... on SubmitAlreadyAccepted {\n      receipt {\n        id\n        __typename\n      }\n      __typename\n    }\n    ... on SubmitFailed {\n      reason\n      __typename\n    }\n    ... on SubmitRejected {\n      errors {\n        code\n        localizedMessage\n        __typename\n      }\n      __typename\n    }\n    ... on Throttled {\n      pollAfter\n      pollUrl\n      queueToken\n      __typename\n    }\n    __typename\n  }\n}"
+                # SIMPLIFIED QUERY based on common Shopify patterns
+                "query": "mutation SubmitForCompletion($input: NegotiationInput!, $attemptToken: String!, $metafields: [MetafieldInput!]) { submitForCompletion(input: $input, attemptToken: $attemptToken, metafields: $metafields) { ... on SubmitSuccess { receipt { id __typename } __typename } ... on SubmitAlreadyAccepted { receipt { id __typename } __typename } ... on SubmitFailed { reason __typename } ... on SubmitRejected { errors { code localizedMessage __typename } __typename } ... on Throttled { pollAfter pollUrl queueToken __typename } __typename } }"
             }
             
             # DEBUG: Print the JSON data for troubleshooting
             self.console_logger.sub_step(8, 1, f"Submitting checkout with token: {checkout_token_to_use}")
-            self.console_logger.sub_step(8, 2, f"Session token: {self.x_checkout_one_session_token[:30]}...")
+            self.console_logger.sub_step(8, 2, f"Session token: {self.x_checkout_one_session_token[:50]}...")
             self.console_logger.sub_step(8, 3, f"Payment session: {session_id[:30]}...")
             self.console_logger.sub_step(8, 4, f"Variant ID: {variant_id}")
             self.console_logger.sub_step(8, 5, f"Email: {self.shipping_address['email']}")
             self.console_logger.sub_step(8, 6, f"Billing name: {card_name}")
-            self.console_logger.sub_step(8, 7, f"Including metafields: [] array")  # Debug info
+            self.console_logger.sub_step(8, 7, f"Including metafields: [] array")
+            
+            # Log the full payload for debugging
+            self.console_logger.sub_step(8, 8, f"Payload size: {len(json.dumps(json_data))} bytes")
             
             response = await client.post(
                 url,
@@ -1118,60 +1133,60 @@ class ShopifyChargeChecker:
                                               "Complete checkout submission with all data")
             
             # DEBUG: Log response details
-            self.console_logger.sub_step(8, 8, f"Response status: {response.status_code}")
+            self.console_logger.sub_step(8, 9, f"Response status: {response.status_code}")
             
             if response.status_code == 200:
                 try:
                     data = response.json()
-                    self.console_logger.sub_step(8, 9, f"Response parsed successfully")
+                    self.console_logger.sub_step(8, 10, f"Response parsed successfully")
                     return self.parse_payment_response(data)
                 except Exception as e:
                     self.console_logger.error_detail(f"Failed to parse checkout response: {str(e)}")
                     # Try to get error from response text
                     error_text = response.text[:500] if response.text else "No response text"
-                    self.console_logger.sub_step(8, 10, f"Raw response: {error_text}")
+                    self.console_logger.sub_step(8, 11, f"Raw response: {error_text}")
                     return False, f"Checkout parse error: {error_text}"
             elif response.status_code == 400:
                 # Try to get more detailed error
                 try:
                     error_data = response.json()
-                    self.console_logger.sub_step(8, 11, f"Error response: {json.dumps(error_data)[:200]}")
+                    self.console_logger.sub_step(8, 12, f"Error response JSON: {json.dumps(error_data)[:300]}")
                     
-                    # Handle different error response formats
                     error_msg = "Bad Request"
                     if isinstance(error_data, dict):
                         if 'errors' in error_data:
                             errors = error_data['errors']
                             if isinstance(errors, list) and len(errors) > 0:
-                                error_msg = errors[0].get('message', 'Bad Request')
+                                if isinstance(errors[0], dict):
+                                    error_msg = errors[0].get('message', str(errors[0]))
+                                else:
+                                    error_msg = str(errors[0])
                             elif isinstance(errors, str):
                                 error_msg = errors
-                            else:
-                                error_msg = str(error_data)
                         else:
                             error_msg = str(error_data)
                     elif isinstance(error_data, str):
                         error_msg = error_data
                     
-                    # Clean error message
-                    if 'Variable $input of type NegotiationInput!' in error_msg:
-                        error_msg = "Missing required checkout information"
-                    elif 'metafields' in error_msg.lower():
-                        error_msg = "Metafields parameter issue"
-                    elif 'delivery' in error_msg.lower():
-                        error_msg = "Delivery information issue"
-                    elif 'payment' in error_msg.lower():
-                        error_msg = "Payment information issue"
+                    # Provide more specific error messages
+                    if 'Variable' in error_msg and 'of type' in error_msg:
+                        # GraphQL variable type error
+                        if 'NegotiationInput' in error_msg:
+                            error_msg = "Invalid checkout data structure"
+                        elif 'attemptToken' in error_msg:
+                            error_msg = "Invalid attempt token format"
+                        elif 'metafields' in error_msg:
+                            error_msg = "Invalid metafields format"
                     
                 except Exception as e:
                     error_msg = response.text[:200] if response.text else "Bad Request"
-                    self.console_logger.sub_step(8, 12, f"Error parsing error response: {str(e)}")
+                    self.console_logger.sub_step(8, 13, f"Error parsing error response: {str(e)}")
                 
                 self.console_logger.error_detail(f"Checkout failed: 400 - {error_msg}")
                 return False, f"Checkout failed: {error_msg}"
             else:
                 error_text = response.text[:500] if response.text else "No response"
-                self.console_logger.sub_step(8, 13, f"Full error response: {error_text}")
+                self.console_logger.sub_step(8, 14, f"Full error response: {error_text}")
                 self.console_logger.error_detail(f"Checkout failed: {response.status_code} - {error_text}")
                 return False, f"Checkout failed: HTTP {response.status_code}"
                 
@@ -1297,11 +1312,6 @@ class ShopifyChargeChecker:
             
         except Exception as e:
             return False, f"Response error: {str(e)[:50]}"
-    
-    def generate_session_token(self):
-        """Generate random session token"""
-        chars = string.ascii_letters + string.digits + "-_"
-        return ''.join(random.choice(chars) for _ in range(180))
     
     def generate_shopify_signature(self):
         """Generate Shopify identification signature"""
