@@ -1,5 +1,5 @@
 # BOT/gates/charge/shopify/shopify.py
-# Shopify Charge Gateway - FIXED REDIRECT ISSUE WITH MERCHANT DOMAIN CHECKOUT
+# Shopify Charge Gateway - FIXED SESSION TOKEN EXTRACTION
 
 import json
 import asyncio
@@ -886,119 +886,133 @@ class ShopifyChargeChecker:
             return False, f"Checkout error: {str(e)[:80]}"
     
     async def load_checkout_page_with_redirects(self, client, checkout_url):
-        """Load checkout page with proper redirect handling - FIXED"""
+        """Load checkout page with proper redirect handling - COMPLETELY REWRITTEN"""
         try:
             elapsed = self.console_logger.step(7, "LOAD CHECKOUT PAGE", "Loading checkout page for tokens")
             
-            # First, try to access the checkout URL
+            # Load the checkout page with follow_redirects=True to get the actual page content
             response = await client.get(
                 checkout_url,
                 headers=self.get_base_headers(),
                 cookies=self.cookies,
                 timeout=30.0,
-                follow_redirects=False
+                follow_redirects=True  # IMPORTANT: Follow all redirects to get the actual checkout page
             )
             
             self.console_logger.request_details("GET", checkout_url, response.status_code,
-                                              time.time() - (self.console_logger.start_time + elapsed))
-            
-            # Handle redirects manually
-            max_redirects = 5
-            redirect_count = 0
-            current_url = checkout_url
-            
-            while response.status_code in [301, 302, 303, 307, 308] and redirect_count < max_redirects:
-                redirect_count += 1
-                location = response.headers.get('location', '')
-                
-                if location:
-                    self.console_logger.sub_step(7, redirect_count, f"Following redirect {redirect_count} to: {location[:100]}...")
-                    
-                    # Handle relative URLs
-                    if location.startswith('/'):
-                        parsed_url = urlparse(current_url)
-                        location = f"{parsed_url.scheme}://{parsed_url.netloc}{location}"
-                    
-                    current_url = location
-                    
-                    # Make next request
-                    response = await client.get(
-                        location,
-                        headers=self.get_base_headers(),
-                        cookies=self.cookies,
-                        timeout=30.0,
-                        follow_redirects=False
-                    )
-                else:
-                    break
+                                              time.time() - (self.console_logger.start_time + elapsed),
+                                              f"Final URL: {response.url[:100]}...")
             
             if response.status_code not in [200, 201]:
-                self.console_logger.error_detail(f"Failed to load checkout page after {redirect_count} redirects. Status: {response.status_code}")
+                self.console_logger.error_detail(f"Failed to load checkout page. Status: {response.status_code}")
                 return False
             
             html_content = response.text
-            self.console_logger.sub_step(7, redirect_count + 1, f"HTML content length: {len(html_content)} chars")
+            self.console_logger.sub_step(7, 1, f"HTML content length: {len(html_content)} chars")
+            self.console_logger.sub_step(7, 2, f"Final URL: {response.url[:150]}...")
             
-            # Extract session token
+            # Extract session token - IMPROVED PATTERNS
             session_token_patterns = [
                 r'"sessionToken"\s*:\s*"([^"]+)"',
                 r'sessionToken["\']?\s*:\s*["\']([^"\']+)',
                 r'window\.__remixContext\s*=\s*{.*?"sessionToken"\s*:\s*"([^"]+)"',
                 r'<meta[^>]*name=["\']sessionToken["\'][^>]*content=["\']([^"\']+)["\']',
+                r'"sessionToken"\s*:\s*"([A-Za-z0-9_-]{200,})"',  # Session tokens are usually long
+                r'sessionToken\\":\\"([A-Za-z0-9_-]{200,})\\"',
             ]
             
-            for pattern in session_token_patterns:
+            found_token = False
+            for i, pattern in enumerate(session_token_patterns):
                 match = re.search(pattern, html_content)
                 if match:
                     token = match.group(1)
-                    if len(token) > 50:
+                    if len(token) > 50:  # Session tokens are usually long
                         self.x_checkout_one_session_token = token
-                        self.console_logger.extracted_data("Session Token", f"{token[:50]}...")
+                        self.console_logger.extracted_data("Session Token", f"Pattern {i+1}: {token[:50]}...")
+                        found_token = True
                         break
             
-            # If not found, try JSON data
-            if not self.x_checkout_one_session_token:
-                json_pattern = r'<script[^>]*type=["\']application/json["\'][^>]*>(.*?)</script>'
-                matches = re.findall(json_pattern, html_content, re.DOTALL)
-                for match in matches:
-                    try:
-                        data = json.loads(match)
-                        # Search recursively for sessionToken
-                        def find_token(obj, depth=0):
-                            if depth > 5:  # Limit recursion depth
-                                return None
-                            if isinstance(obj, dict):
-                                for key, value in obj.items():
-                                    if 'sessiontoken' in str(key).lower() and isinstance(value, str) and len(value) > 50:
-                                        return value
-                                    elif isinstance(value, (dict, list)):
-                                        result = find_token(value, depth + 1)
+            # If not found with simple patterns, try more complex extraction
+            if not found_token:
+                # Look for JSON data that might contain the session token
+                json_patterns = [
+                    r'<script[^>]*id="__remixContext"[^>]*>(.*?)</script>',
+                    r'window\.__remixContext\s*=\s*({.*?});',
+                    r'<script[^>]*type="application/json"[^>]*data-remix-context[^>]*>(.*?)</script>',
+                ]
+                
+                for pattern in json_patterns:
+                    match = re.search(pattern, html_content, re.DOTALL)
+                    if match:
+                        try:
+                            json_data = json.loads(match.group(1))
+                            # Search recursively for sessionToken
+                            def find_in_json(obj, depth=0):
+                                if depth > 10:  # Limit recursion depth
+                                    return None
+                                if isinstance(obj, dict):
+                                    for key, value in obj.items():
+                                        if key == "sessionToken" and isinstance(value, str) and len(value) > 50:
+                                            return value
+                                        elif isinstance(value, (dict, list)):
+                                            result = find_in_json(value, depth + 1)
+                                            if result:
+                                                return result
+                                elif isinstance(obj, list):
+                                    for item in obj:
+                                        result = find_in_json(item, depth + 1)
                                         if result:
                                             return result
-                            elif isinstance(obj, list):
-                                for item in obj:
-                                    result = find_token(item, depth + 1)
-                                    if result:
-                                        return result
-                            return None
-                        
-                        token = find_token(data)
-                        if token:
-                            self.x_checkout_one_session_token = token
-                            self.console_logger.extracted_data("Session Token from JSON", f"{token[:50]}...")
-                            break
-                    except:
-                        continue
+                                return None
+                            
+                            token = find_in_json(json_data)
+                            if token:
+                                self.x_checkout_one_session_token = token
+                                self.console_logger.extracted_data("Session Token from JSON", f"{token[:50]}...")
+                                found_token = True
+                                break
+                        except:
+                            continue
             
-            if not self.x_checkout_one_session_token:
-                self.console_logger.error_detail("Failed to extract session token")
-                return False
+            # If still not found, try to find in inline scripts
+            if not found_token:
+                script_pattern = r'<script[^>]*>(.*?)</script>'
+                scripts = re.findall(script_pattern, html_content, re.DOTALL | re.IGNORECASE)
+                for script in scripts:
+                    # Look for sessionToken in any script
+                    token_matches = re.findall(r'sessionToken["\']?\s*:\s*["\']([A-Za-z0-9_-]{200,})["\']', script)
+                    for token in token_matches:
+                        if len(token) > 50:
+                            self.x_checkout_one_session_token = token
+                            self.console_logger.extracted_data("Session Token from Script", f"{token[:50]}...")
+                            found_token = True
+                            break
+                    if found_token:
+                        break
+            
+            if not found_token:
+                # Last resort: Try to extract from the URL parameters or headers
+                self.console_logger.sub_step(7, 3, "Trying alternative extraction methods...")
+                
+                # Check if there's a session token in cookies
+                for cookie_name, cookie_value in self.cookies.items():
+                    if 'session' in cookie_name.lower() and len(cookie_value) > 50:
+                        self.x_checkout_one_session_token = cookie_value
+                        self.console_logger.extracted_data("Session Token from Cookie", f"{cookie_value[:50]}...")
+                        found_token = True
+                        break
+                
+                if not found_token:
+                    self.console_logger.error_detail("Failed to extract session token from page content")
+                    return False
             
             # Extract web build ID
             web_build_patterns = [
                 r'"sha"\s*:\s*"([^"]+)"',
                 r'webBuildId["\']?\s*:\s*["\']([^"\']+)',
                 r'x-checkout-web-build-id["\']?\s*:\s*["\']([^"\']+)',
+                r'"buildId"\s*:\s*"([^"]+)"',
+                r'buildId["\']?\s*:\s*["\']([^"\']+)',
             ]
             
             for pattern in web_build_patterns:
@@ -1012,15 +1026,15 @@ class ShopifyChargeChecker:
             if not self.x_checkout_web_build_id:
                 # Use default from logs
                 self.x_checkout_web_build_id = "64794bb5d2969ba982d4eb9ee7c44ab479c9df23"
-                self.console_logger.sub_step(7, redirect_count + 2, "Using default web build ID")
+                self.console_logger.sub_step(7, 4, "Using default web build ID")
             
             # Also update checkout token from the final URL
-            if '/checkouts/cn/' in current_url:
-                match = re.search(r'/checkouts/cn/([^/]+)', current_url)
+            if '/checkouts/cn/' in response.url:
+                match = re.search(r'/checkouts/cn/([^/]+)', response.url)
                 if match:
                     new_token = match.group(1)
                     if new_token != self.checkout_token:
-                        self.console_logger.sub_step(7, redirect_count + 3, f"Updated checkout token from final URL: {new_token}")
+                        self.console_logger.sub_step(7, 5, f"Updated checkout token from final URL: {new_token}")
                         self.checkout_token = new_token
             
             self.console_logger.step(7, "LOAD CHECKOUT PAGE", "Checkout page loaded and tokens extracted", "SUCCESS")
@@ -1414,7 +1428,7 @@ class ShopifyChargeChecker:
             # Create HTTP client
             client_params = {
                 'timeout': 30.0,
-                'follow_redirects': False,
+                'follow_redirects': True,  # Allow following redirects globally
                 'http2': True
             }
             
@@ -1464,14 +1478,14 @@ class ShopifyChargeChecker:
                     self.console_logger.result(False, checkout_result, "ERROR", elapsed_time)
                     return format_shopify_response(cc, mes, ano, cvv, checkout_result, elapsed_time, username, user_data)
                 checkout_url = checkout_result
-                await self.human_delay(1, 2)
+                await self.human_delay(2, 3)  # Longer delay for checkout
                 
-                # Step 7: Load checkout page
+                # Step 7: Load checkout page - THIS IS THE KEY FIX
                 if not await self.load_checkout_page_with_redirects(client, checkout_url):
                     elapsed_time = time.time() - start_time
                     self.console_logger.result(False, "Failed to load checkout page", "ERROR", elapsed_time)
                     return format_shopify_response(cc, mes, ano, cvv, "Checkout page error", elapsed_time, username, user_data)
-                await self.human_delay(1, 2)
+                await self.human_delay(2, 3)
                 
                 # Step 8: Create payment session
                 success, session_result = await self.create_payment_session(client, cc, mes, ano, cvv)
