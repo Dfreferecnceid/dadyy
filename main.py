@@ -59,9 +59,6 @@ bot = Client(
     sleep_threshold=30  # Increase sleep threshold to avoid connection issues
 )
 
-# Global variable to track bot connection state
-bot_connected = False
-
 # List of all known bot commands (with and without prefixes)
 BOT_COMMANDS = [
     # Start and basic commands
@@ -151,7 +148,6 @@ def status():
     """Simple status endpoint"""
     return json.dumps({
         "status": "running",
-        "bot_connected": bot_connected,
         "timestamp": time.time()
     }, indent=2)
 
@@ -169,11 +165,21 @@ def run_flask():
     except Exception as e:
         print(f"❌ Flask server error: {e}")
 
+def get_flood_wait_time(error_msg: str) -> int:
+    """Extract wait time from flood wait error message"""
+    try:
+        # Extract seconds from error message like "A wait of 236 seconds is required"
+        import re
+        match = re.search(r'wait of (\d+) seconds', error_msg)
+        if match:
+            return int(match.group(1))
+    except:
+        pass
+    return 60  # Default 60 seconds
+
 async def run_bot():
     """Run the Telegram bot with proper error handling"""
-    global bot_connected
-    
-    max_retries = 3
+    max_retries = 5  # Increased retries for flood wait
     retry_delay = 5
 
     for attempt in range(max_retries):
@@ -181,22 +187,18 @@ async def run_bot():
             print(f"🚀 Starting bot (Attempt {attempt + 1}/{max_retries})...")
             
             # Ensure bot is not already running
-            if bot.is_connected:
-                print("⚠️ Bot is already connected, skipping...")
-                break
-                
-            await bot.start()
-            bot_connected = True
-            print("✅ Bot started successfully!")
+            if not bot.is_connected:
+                await bot.start()
+                print("✅ Bot started successfully!")
 
-            # Start plan expiry checker
-            try:
-                asyncio.create_task(plan1_expiry(bot))
-            except Exception as e:
-                print(f"⚠️ Could not start plan expiry checker: {e}")
+                # Start plan expiry checker
+                try:
+                    asyncio.create_task(plan1_expiry(bot))
+                except Exception as e:
+                    print(f"⚠️ Could not start plan expiry checker: {e}")
 
-            # Keep the bot running
-            await idle()
+                # Keep the bot running
+                await idle()
 
             break  # Success, exit retry loop
 
@@ -204,12 +206,6 @@ async def run_bot():
             if "database is locked" in str(e):
                 print(f"⚠️ Database locked, retrying in {retry_delay} seconds...")
                 if attempt < max_retries - 1:
-                    try:
-                        if bot.is_connected:
-                            await bot.stop()
-                            bot_connected = False
-                    except:
-                        pass
                     time.sleep(retry_delay)
                     # Clean session files before retry
                     cleanup_session_files()
@@ -223,14 +219,22 @@ async def run_bot():
             error_msg = str(e)
             print(f"❌ Bot startup error: {error_msg}")
             
+            # Check if it's a flood wait error
+            if "FLOOD_WAIT" in error_msg:
+                wait_time = get_flood_wait_time(error_msg)
+                print(f"⏳ Telegram flood wait detected. Waiting {wait_time} seconds...")
+                
+                if attempt < max_retries - 1:
+                    # Wait for the required time + buffer
+                    time.sleep(wait_time + 10)
+                    cleanup_session_files()
+                    continue
+                else:
+                    print("❌ Max retries reached for flood wait.")
+                    raise
+            
             if attempt < max_retries - 1:
                 print(f"Retrying in {retry_delay} seconds...")
-                try:
-                    if bot.is_connected:
-                        await bot.stop()
-                        bot_connected = False
-                except:
-                    pass
                 time.sleep(retry_delay)
                 # Clean session files before retry
                 cleanup_session_files()
@@ -238,9 +242,26 @@ async def run_bot():
             else:
                 raise
 
-if __name__ == "__main__":
-    nest_asyncio.apply()
+async def cleanup_bot():
+    """Cleanup bot connection"""
+    try:
+        if bot.is_connected:
+            await bot.stop()
+            print("🛑 Bot stopped.")
+    except:
+        pass
 
+def save_firewall_state():
+    """Save firewall state if available"""
+    if firewall:
+        try:
+            firewall.save_blocked_ips()
+            print("💾 Firewall state saved")
+        except Exception as e:
+            print(f"⚠️ Could not save firewall state: {e}")
+
+async def main():
+    """Main async entry point"""
     print("=" * 50)
     print("🤖 BOT STARTUP SEQUENCE")
     print("=" * 50)
@@ -258,30 +279,27 @@ if __name__ == "__main__":
     print("🌐 Flask server started on port 3000")
 
     # Give Flask a moment to start
-    time.sleep(2)
+    await asyncio.sleep(2)
 
     # Run the bot
     try:
-        asyncio.run(run_bot())
+        await run_bot()
     except KeyboardInterrupt:
         print("\n👋 Bot stopped by user")
-        try:
-            if bot.is_connected:
-                await bot.stop()
-                bot_connected = False
-        except:
-            pass
-        if firewall:
-            print("💾 Saving firewall state...")
-            firewall.save_blocked_ips()
     except Exception as e:
         print(f"❌ Fatal error: {e}")
-        try:
-            if bot.is_connected:
-                await bot.stop()
-                bot_connected = False
-        except:
-            pass
-        if firewall:
-            firewall.save_blocked_ips()
+    finally:
+        # Cleanup
+        await cleanup_bot()
+        save_firewall_state()
+
+if __name__ == "__main__":
+    nest_asyncio.apply()
+    
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n👋 Application stopped by user")
+    except Exception as e:
+        print(f"❌ Application error: {e}")
         sys.exit(1)
