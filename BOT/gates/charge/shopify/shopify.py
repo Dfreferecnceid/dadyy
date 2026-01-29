@@ -41,6 +41,13 @@ try:
 except ImportError:
     PROXY_ENABLED = False
 
+# Import bin details function
+try:
+    from TOOLS.getbin import get_bin_details
+except ImportError:
+    def get_bin_details(bin_number):
+        return {}
+
 # Custom logger with emoji formatting
 class EmojiLogger:
     def __init__(self):
@@ -215,6 +222,101 @@ def pick_addr(url, cc=None, rc=None):
         return book[cc]
     
     return book["DEFAULT"]
+
+def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, user_data):
+    """Format response exactly like response.py"""
+    fullcc = f"{cc}|{mes}|{ano}|{cvv}"
+
+    # Extract user_id from profile
+    try:
+        # Extract user_id from user_data
+        user_id = str(user_data.get("user_id", "Unknown"))
+    except Exception:
+        user_id = None
+
+    # Load gateway from DATA/sites.json
+    try:
+        with open("DATA/sites.json", "r") as f:
+            sites = json.load(f)
+        gateway = sites.get(user_id, {}).get("gate", "Shopify Self Site 💷")
+    except Exception:
+        gateway = "Shopify Self Site 💷"
+
+    # Clean response
+    raw_response = str(raw_response) if raw_response else "-"
+
+    # Determine status - FIXED LOGIC
+    raw_upper = raw_response.upper()
+    
+    # Check for REAL successful charges
+    if "ORDER_PLACED" in raw_upper or "THANK YOU" in raw_upper or "SUBMITSUCCESS" in raw_upper:
+        status_flag = "Charged 💎"
+    # Check for OTP/3D Secure
+    elif any(keyword in raw_upper for keyword in [
+        "3D", "AUTHENTICATION", "OTP", "VERIFICATION", "CVV-MATCH-OTP", "3DS"
+    ]):
+        status_flag = "Approved ❎"
+    # Check for address/ZIP issues
+    elif any(keyword in raw_upper for keyword in [
+        "MISMATCHED", "INCORRECT_ZIP", "INCORRECT_ADDRESS", "ADDRESS_VERIFICATION"
+    ]):
+        status_flag = "Approved ❎"
+    # Check for specific approved but declined scenarios
+    elif any(keyword in raw_upper for keyword in [
+        "INSUFFICIENT_FUNDS", "INVALID_CVC", "INCORRECT_CVC", 
+        "YOUR CARD DOES NOT SUPPORT", "CARD DECLINED"
+    ]):
+        status_flag = "Declined ❌"
+    # Default to declined
+    else:
+        status_flag = "Declined ❌"
+
+    # BIN lookup
+    bin_data = get_bin_details(cc[:6]) or {}
+    bin_info = {
+        "bin": bin_data.get("bin", cc[:6]),
+        "country": bin_data.get("country", "Unknown"),
+        "flag": bin_data.get("flag", "🏳️"),
+        "vendor": bin_data.get("vendor", "Unknown"),
+        "type": bin_data.get("type", "Unknown"),
+        "level": bin_data.get("level", "Unknown"),
+        "bank": bin_data.get("bank", "Unknown")
+    }
+
+    # User Plan
+    try:
+        plan = user_data.get("plan", {}).get("plan", "Free")
+        badge = user_data.get("plan", {}).get("badge", "🎭")
+        first_name = user_data.get("first_name", "User")
+    except Exception:
+        plan = "Free"
+        badge = "🎭"
+        first_name = "User"
+
+    # Clean name
+    clean_name = re.sub(r'[↑←«~∞🏴]', '', first_name).strip()
+    profile_display = f"『{badge}』{clean_name}"
+
+    # Final formatted message - EXACTLY like response.py
+    result = f"""
+<b>[#Shopify Charge] | WAYNE</b> ✦
+━━━━━━━━━━━━━━━
+<b>[•] Card</b>- <code>{fullcc}</code>
+<b>[•] Gateway</b> - <b>{gateway}</b>
+<b>[•] Status</b>- <code>{status_flag}</code>
+<b>[•] Response</b>- <code>{raw_response}</code>
+━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
+<b>[+] Bin</b>: <code>{bin_info['bin']}</code>  
+<b>[+] Info</b>: <code>{bin_info['vendor']} - {bin_info['type']} - {bin_info['level']}</code> 
+<b>[+] Bank</b>: <code>{bin_info['bank']}</code> 🏦
+<b>[+] Country</b>: <code>{bin_info['country']} - [{bin_info['flag']}]</code>
+━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
+<b>[ﾒ] Checked By</b>: {profile_display} [<code>{plan} {badge}</code>]
+<b>[ϟ] Dev</b> ➺</b> <b><i>DADYY</i></b>
+━━━━━━━━━━━━━━━
+<b>[ﾒ] T/t</b>: <code>[{timet:.2f} 𝐬]</code> <b>|P/x:</b> [<code>Live ⚡️</code>]
+"""
+    return result
 
 class ShopifyChargeChecker:
     def __init__(self, user_id=None):
@@ -739,16 +841,76 @@ class ShopifyChargeChecker:
                 logger.success(f"Payment session created: {session_id[:20]}...")
                 return True, session_id
             else:
-                logger.warning(f"Payment session failed: {response.status_code}")
-                # Generate fake session ID
-                fake_id = f"sess_{int(time.time())}_{random.randint(1000, 9999)}"
-                return True, fake_id
+                error_msg = "Payment session creation failed"
+                try:
+                    error_data = response.json()
+                    if "error" in error_data:
+                        error_msg = error_data.get("error", {}).get("message", error_msg)
+                except:
+                    pass
+                logger.warning(f"Payment session failed: {response.status_code} - {error_msg}")
+                return False, error_msg
                 
         except Exception as e:
             logger.error(f"Payment session error: {str(e)}")
-            # Generate fake session ID
-            fake_id = f"sess_{int(time.time())}_{random.randint(1000, 9999)}"
-            return True, fake_id
+            return False, f"Payment session error: {str(e)[:100]}"
+            
+    def parse_payment_response(self, data):
+        """Parse the actual Shopify payment response to determine real status"""
+        try:
+            # Convert data to string if it's not already
+            if not isinstance(data, str):
+                try:
+                    data_str = json.dumps(data)
+                except:
+                    data_str = str(data)
+            else:
+                data_str = data
+            
+            data_upper = data_str.upper()
+            
+            # Check for REAL successful charges
+            success_indicators = [
+                "SUBMITSUCCESS", "SUBMITALREADYACCEPTED", "ORDER_PLACED", 
+                "THANK YOU", "SHOPIFY_PAYMENTS", "RECEIPT"
+            ]
+            
+            for indicator in success_indicators:
+                if indicator in data_upper:
+                    # Verify it's not a false positive
+                    if "ERROR" not in data_upper and "DECLINED" not in data_upper:
+                        return True, "ORDER_PLACED - Payment Successful"
+            
+            # Check for OTP/3D Secure requirements
+            otp_indicators = ["3D", "AUTHENTICATION", "OTP", "VERIFICATION", "3DS", "ADDITIONAL_VERIFICATION"]
+            for indicator in otp_indicators:
+                if indicator in data_upper:
+                    return True, "CVV-MATCH-OTP - 3D Secure Required"
+            
+            # Check for address/ZIP issues
+            address_indicators = ["MISMATCHED", "ZIP", "ADDRESS", "BILLING"]
+            for indicator in address_indicators:
+                if indicator in data_upper:
+                    return True, f"{indicator} - Address Verification Failed"
+            
+            # Check for specific error messages
+            if "YOUR CARD DOES NOT SUPPORT" in data_upper:
+                return False, "Your card does not support this type of purchase"
+            elif "CARD DECLINED" in data_upper:
+                return False, "Card Declined"
+            elif "INSUFFICIENT FUNDS" in data_upper:
+                return False, "Insufficient Funds"
+            elif "INVALID CVC" in data_upper or "INCORRECT CVC" in data_upper:
+                return False, "Invalid CVC"
+            elif "EXPIRED CARD" in data_upper:
+                return False, "Expired Card"
+            
+            # Default to declined
+            return False, "Card Declined - Unknown Reason"
+            
+        except Exception as e:
+            logger.error(f"Error parsing payment response: {str(e)}")
+            return False, f"Response parsing error: {str(e)[:50]}"
             
     async def submit_payment(self, client, cc, mes, ano, cvv, session_id, price):
         """Submit payment using GraphQL"""
@@ -965,41 +1127,14 @@ class ShopifyChargeChecker:
             
             if response.status_code == 200:
                 data = response.json()
+                logger.debug_response(f"Payment response: {json.dumps(data)[:200]}...")
                 
-                # Check for success
-                if "SubmitSuccess" in str(data) or "SubmitAlreadyAccepted" in str(data):
-                    logger.success("Payment submitted successfully")
-                    return True, "APPROVED - Payment successful"
-                
-                # Check for errors
-                errors = data.get("data", {}).get("submitForCompletion", {}).get("errors", [])
-                if errors:
-                    error_msg = errors[0].get("localizedMessage", "Unknown error")
-                    return False, self.clean_error_message(error_msg)
-                
-                # Check for processing error
-                processing_error = data.get("data", {}).get("submitForCompletion", {}).get("receipt", {}).get("processingError", {})
-                if processing_error:
-                    error_code = processing_error.get("code", "UNKNOWN_ERROR")
-                    return False, error_code
-                
-                # Generic response check
-                if "shopify_payments" in str(data):
-                    return True, "APPROVED - Order placed"
-                elif "CARD_DECLINED" in str(data):
-                    return False, "CARD_DECLINED"
-                elif "INSUFFICIENT_FUNDS" in str(data).upper():
-                    return False, "INSUFFICIENT_FUNDS"
-                elif "INCORRECT_CVC" in str(data).upper() or "INVALID_CVC" in str(data).upper():
-                    return False, "INCORRECT_CVC"
-                elif "FRAUD" in str(data).upper():
-                    return False, "FRAUD_DETECTED"
-                elif "3DS" in str(data).upper() or "AUTHENTICATION" in str(data).upper():
-                    return False, "3D_SECURE_REQUIRED"
-                else:
-                    return False, "DECLINED - Unknown reason"
+                # Parse the actual response
+                success, message = self.parse_payment_response(data)
+                return success, message
                     
             else:
+                logger.error(f"Submit payment failed with status: {response.status_code}")
                 return False, f"SERVER_ERROR: Status {response.status_code}"
                 
         except Exception as e:
@@ -1043,72 +1178,6 @@ class ShopifyChargeChecker:
         
         return message
         
-    async def format_response(self, cc, mes, ano, cvv, status, message, username, elapsed_time, user_data, bin_info=None):
-        """Format response message"""
-        if bin_info is None:
-            bin_info = await self.get_bin_info(cc)
-
-        user_id = user_data.get("user_id", "Unknown")
-        first_name = html.escape(user_data.get("first_name", "User"))
-        badge = user_data.get("plan", {}).get("badge", "🔰")
-
-        # Clean error message
-        if ":" in message:
-            error_parts = message.split(":", 1)
-            if len(error_parts) > 1:
-                error_type = error_parts[0].strip()
-                error_msg = error_parts[1].strip()
-                message_display = f"{error_type}: {error_msg}"
-            else:
-                message_display = message
-        else:
-            message_display = message
-
-        if status == "APPROVED":
-            status_emoji = "✅"
-            status_text = "APPROVED"
-        elif "CARD_DECLINED" in message or "DECLINED" in message.upper():
-            status_emoji = "❌"
-            status_text = "DECLINED"
-        elif "3D_SECURE" in message or "AUTHENTICATION" in message.upper():
-            status_emoji = "🛡️"
-            status_text = "3D SECURE"
-        elif "CAPTCHA" in message:
-            status_emoji = "🤖"
-            status_text = "CAPTCHA"
-        elif "FRAUD" in message:
-            status_emoji = "🚫"
-            status_text = "FRAUD"
-        elif "INSUFFICIENT" in message:
-            status_emoji = "💰"
-            status_text = "INSUFFICIENT FUNDS"
-        else:
-            status_emoji = "❌"
-            status_text = "DECLINED"
-
-        clean_name = re.sub(r'[↑←«~∞🏴]', '', first_name).strip()
-        user_display = f"『{badge}』{clean_name}"
-        bank_info = bin_info['bank'].upper() if bin_info['bank'] != 'N/A' else 'N/A'
-
-        response = f"""<b>『$cmd → /sh』| <b>WAYNE</b> </b>
-┃┃┃┃┃┃┃┃┃┃┃┃┃┃┃
-<b>[•] Card-</b> <code>{cc}|{mes}|{ano}|{cvv}</code>
-<b>[•] Gateway -</b> Shopify Charge
-<b>[•] Status-</b> <code>{status_text} {status_emoji}</code>
-<b>[•] Response-</b> <code>{message_display}</code>
-┃ ┃ ┃ ┃ ┃ ┃ ┃ ┃ ┃ ┃ ┃ ┃ ┃
-<b>[+] Bin:</b> <code>{cc[:6]}</code>  
-<b>[+] Info:</b> <code>{bin_info['scheme']} - {bin_info['type']} - {bin_info['brand']}</code>
-<b>[+] Bank:</b> <code>{bank_info}</code> 🏦
-<b>[+] Country:</b> <code>{bin_info['country']}</code> [{bin_info['emoji']}]
-┃ ┃ ┃ ┃ ┃ ┃ ┃ ┃ ┃ ┃ ┃ ┃ ┃
-<b>[🛡️] Checked By:</b> {user_display}
-<b>[💎] Dev ➤</b> <b><i>DADYY</i></b>
-┃┃┃┃┃┃┃┃┃┃┃┃┃┃┃
-<b>[🛡️] T/t:</b> <code>{elapsed_time:.2f} ⚡</code> |<b>P/x:</b> <code>Live ♥️</code></b>"""
-
-        return response
-        
     async def check_card(self, card_details, username, user_data):
         """Main card checking method"""
         start_time = time.time()
@@ -1118,7 +1187,8 @@ class ShopifyChargeChecker:
             # Parse card details
             cc_parts = card_details.split('|')
             if len(cc_parts) < 4:
-                return await self.format_response("", "", "", "", "ERROR", "Invalid card format. Use: CC|MM|YY|CVV", username, time.time()-start_time, user_data)
+                elapsed_time = time.time() - start_time
+                return format_shopify_response("", "", "", "", "Invalid card format. Use: CC|MM|YY|CVV", elapsed_time, username, user_data)
 
             cc = cc_parts[0].strip().replace(" ", "")
             mes = cc_parts[1].strip()
@@ -1127,23 +1197,23 @@ class ShopifyChargeChecker:
 
             # Validate card details
             if not cc.isdigit() or len(cc) < 15:
-                return await self.format_response(cc, mes, ano, cvv, "ERROR", "Invalid card number", username, time.time()-start_time, user_data)
+                elapsed_time = time.time() - start_time
+                return format_shopify_response(cc, mes, ano, cvv, "Invalid card number", elapsed_time, username, user_data)
 
             if not mes.isdigit() or len(mes) not in [1, 2] or not (1 <= int(mes) <= 12):
-                return await self.format_response(cc, mes, ano, cvv, "ERROR", "Invalid month", username, time.time()-start_time, user_data)
+                elapsed_time = time.time() - start_time
+                return format_shopify_response(cc, mes, ano, cvv, "Invalid month", elapsed_time, username, user_data)
 
             if not ano.isdigit() or len(ano) not in [2, 4]:
-                return await self.format_response(cc, mes, ano, cvv, "ERROR", "Invalid year", username, time.time()-start_time, user_data)
+                elapsed_time = time.time() - start_time
+                return format_shopify_response(cc, mes, ano, cvv, "Invalid year", elapsed_time, username, user_data)
 
             if not cvv.isdigit() or len(cvv) not in [3, 4]:
-                return await self.format_response(cc, mes, ano, cvv, "ERROR", "Invalid CVV", username, time.time()-start_time, user_data)
+                elapsed_time = time.time() - start_time
+                return format_shopify_response(cc, mes, ano, cvv, "Invalid CVV", elapsed_time, username, user_data)
 
             if len(ano) == 2:
                 ano = '20' + ano
-
-            # Get BIN info
-            bin_info = await self.get_bin_info(cc)
-            logger.bin_info(f"BIN: {cc[:6]} | {bin_info['scheme']} - {bin_info['type']} | {bin_info['bank']} | {bin_info['country']} [{bin_info['emoji']}]")
 
             # Create HTTP client with proxy if available
             client_params = {
@@ -1160,19 +1230,24 @@ class ShopifyChargeChecker:
 
             async with httpx.AsyncClient(**client_params) as client:
                 # Step 1: Get access token
-                await self.get_access_token(client)
+                access_success = await self.get_access_token(client)
+                if not access_success:
+                    elapsed_time = time.time() - start_time
+                    return format_shopify_response(cc, mes, ano, cvv, "Failed to get access token", elapsed_time, username, user_data)
                 await self.human_delay(1, 2)
                 
                 # Step 2: Get product info
                 success, price = await self.get_product_info(client)
                 if not success:
-                    return await self.format_response(cc, mes, ano, cvv, "DECLINED", "Failed to get product info", username, time.time()-start_time, user_data, bin_info)
+                    elapsed_time = time.time() - start_time
+                    return format_shopify_response(cc, mes, ano, cvv, "Failed to get product info", elapsed_time, username, user_data)
                 await self.human_delay(1, 2)
                 
                 # Step 3: Create cart
                 success, checkout_url = await self.create_cart(client, self.variant_id, price)
                 if not success:
-                    return await self.format_response(cc, mes, ano, cvv, "DECLINED", "Failed to create cart", username, time.time()-start_time, user_data, bin_info)
+                    elapsed_time = time.time() - start_time
+                    return format_shopify_response(cc, mes, ano, cvv, "Failed to create cart", elapsed_time, username, user_data)
                 await self.human_delay(1, 2)
                 
                 # Step 4: Load checkout page
@@ -1182,9 +1257,11 @@ class ShopifyChargeChecker:
                 await self.human_delay(1, 2)
                 
                 # Step 5: Create payment session
-                success, session_id = await self.create_payment_session(client, cc, mes, ano, cvv)
+                success, session_result = await self.create_payment_session(client, cc, mes, ano, cvv)
                 if not success:
-                    return await self.format_response(cc, mes, ano, cvv, "DECLINED", "Failed to create payment session", username, time.time()-start_time, user_data, bin_info)
+                    elapsed_time = time.time() - start_time
+                    return format_shopify_response(cc, mes, ano, cvv, session_result, elapsed_time, username, user_data)
+                session_id = session_result
                 await self.human_delay(1, 2)
                 
                 # Step 6: Submit payment
@@ -1192,25 +1269,20 @@ class ShopifyChargeChecker:
                 
                 elapsed_time = time.time() - start_time
                 
-                if success:
-                    logger.success(f"Payment successful in {elapsed_time:.2f}s")
-                    return await self.format_response(cc, mes, ano, cvv, "APPROVED", payment_result, username, elapsed_time, user_data, bin_info)
-                else:
-                    logger.error(f"Payment failed: {payment_result}")
-                    return await self.format_response(cc, mes, ano, cvv, "DECLINED", payment_result, username, elapsed_time, user_data, bin_info)
+                return format_shopify_response(cc, mes, ano, cvv, payment_result, elapsed_time, username, user_data)
 
         except httpx.TimeoutException:
             logger.error("Request timeout")
             elapsed_time = time.time() - start_time
-            return await self.format_response(cc, mes, ano, cvv, "ERROR", "TIMEOUT_ERROR: Request timeout", username, elapsed_time, user_data, bin_info)
+            return format_shopify_response(cc, mes, ano, cvv, "TIMEOUT_ERROR: Request timeout", elapsed_time, username, user_data)
         except httpx.ConnectError:
             logger.error("Connection error")
             elapsed_time = time.time() - start_time
-            return await self.format_response(cc, mes, ano, cvv, "ERROR", "CONNECTION_ERROR: Connection failed", username, elapsed_time, user_data, bin_info)
+            return format_shopify_response(cc, mes, ano, cvv, "CONNECTION_ERROR: Connection failed", elapsed_time, username, user_data)
         except Exception as e:
             logger.error(f"Unexpected error: {str(e)}")
             elapsed_time = time.time() - start_time
-            return await self.format_response(cc, mes, ano, cvv, "ERROR", f"UNKNOWN_ERROR: {str(e)[:80]}", username, elapsed_time, user_data, bin_info)
+            return format_shopify_response(cc, mes, ano, cvv, f"UNKNOWN_ERROR: {str(e)[:80]}", elapsed_time, username, user_data)
 
 # Command handler
 @Client.on_message(filters.command(["sh", ".sh", "$sh"]))
@@ -1231,10 +1303,10 @@ async def handle_shopify_charge(client: Client, message: Message):
         # Check if user is banned
         if is_user_banned(user_id):
             await message.reply("""<pre>⚠️ User Banned</pre>
-┃┃┃┃┃┃┃┃┃┃┃┃┃
+━━━━━━━━━━━━━
 🠪 <b>Message</b>: You have been banned from using this bot.
 🠪 <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
-┃┃┃┃┃┃┃┃┃┃┃┃┃""")
+━━━━━━━━━━━━━""")
             return
 
         # Load user data
@@ -1242,10 +1314,10 @@ async def handle_shopify_charge(client: Client, message: Message):
         user_id_str = str(user_id)
         if user_id_str not in users:
             await message.reply("""<pre>📝 Registration Required</pre>
-┃┃┃┃┃┃┃┃┃┃┃┃┃
+━━━━━━━━━━━━━
 🠪 <b>Message</b>: You need to register first with /register
 🠪 <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
-┃┃┃┃┃┃┃┃┃┃┃┃┃""")
+━━━━━━━━━━━━━""")
             return
 
         user_data = users[user_id_str]
@@ -1256,11 +1328,11 @@ async def handle_shopify_charge(client: Client, message: Message):
         can_use, wait_time = check_cooldown(user_id, "sh")
         if not can_use:
             await message.reply(f"""<pre>⏱️ Cooldown Active</pre>
-┃┃┃┃┃┃┃┃┃┃┃┃┃
+━━━━━━━━━━━━━
 🠪 <b>Message</b>: Please wait {wait_time:.1f} seconds before using this command again.
 🠪 <b>Your Plan:</b> <code>{plan_name}</code>
 🠪 <b>Anti-Spam:</b> <code>{user_plan.get('antispam', 15)}s</code>
-┃┃┃┃┃┃┃┃┃┃┃┃┃""")
+━━━━━━━━━━━━━""")
             return
 
         args = message.text.split()
@@ -1273,18 +1345,13 @@ async def handle_shopify_charge(client: Client, message: Message):
                 ))
             else:
                 await message.reply("""<pre>#WAYNE ━[SHOPIFY CHARGE]━━</pre>
-┃┃┃┃┃┃┃┃┃┃┃┃┃
+━━━━━━━━━━━━━
 🠪 <b>Command</b>: <code>/sh</code> or <code>.sh</code> or <code>$sh</code>
 🠪 <b>Usage</b>: <code>/sh cc|mm|yy|cvv</code>
 🠪 <b>Example</b>: <code>/sh 4111111111111111|12|2025|123</code>
-┃┃┃┃┃┃┃┃┃┃┃┃┃
+━━━━━━━━━━━━━
 <b>~ Note:</b> <code>Charges via Shopify gateway (Deducts 2 credits AFTER check completes)</code>
 <b>~ Note:</b> <code>Free users can use in authorized groups with credit deduction</code>
-<b>~ Store:</b> <code>meta-app-prod-store-1.myshopify.com</code>
-<b>~ Product:</b> <code>retailer-id-fix-no-mapping</code>
-<b>~ Address:</b> <code>8 Log Pond Drive, Horsham PA 19044</code>
-<b>~ Shipping:</b> <code>Local Pickup</code>
-<b>~ Tip:</b> <code>None</code>""")
             return
 
         card_details = args[1].strip()
@@ -1292,11 +1359,11 @@ async def handle_shopify_charge(client: Client, message: Message):
         cc_parts = card_details.split('|')
         if len(cc_parts) < 4:
             await message.reply("""<pre>❌ Invalid Format</pre>
-┃┃┃┃┃┃┃┃┃┃┃┃┃
+━━━━━━━━━━━━━
 🠪 <b>Message</b>: Invalid card format.
 🠪 <b>Correct Format</b>: <code>cc|mm|yy|cvv</code>
 🠪 <b>Example</b>: <code>4111111111111111|12|2025|123</code>
-┃┃┃┃┃┃┃┃┃┃┃┃┃""")
+━━━━━━━━━━━━━""")
             return
 
         cc = cc_parts[0]
@@ -1304,22 +1371,22 @@ async def handle_shopify_charge(client: Client, message: Message):
         ano = cc_parts[2]
         cvv = cc_parts[3]
 
-        # Show processing message
+        # Show processing message with your format
         processing_msg = await message.reply(
-            charge_processor.get_processing_message(
-                cc, mes, ano, cvv, username, plan_name, 
-                "Shopify Charge", "sh"
-            ) if charge_processor else f"""<b>『$cmd → /sh』| <b>WAYNE</b> </b>
-┃┃┃┃┃┃┃┃┃┃┃┃┃┃┃
-<b>[•] Card-</b> <code>{cc}|{mes}|{ano}|{cvv}</code>
-<b>[•] Gateway -</b> Shopify Charge
-<b>[•] Status-</b> Processing... ⏱️
-┃ ┃ ┃ ┃ ┃ ┃ ┃ ┃ ┃ ┃ ┃ ┃ ┃
+            f"""
+<b>[#Shopify Charge 0.55$] | WAYNE</b> ✦
+━━━━━━━━━━━━━━━
+<b>[•] Card</b>- <code>{cc}|{mes}|{ano}|{cvv}</code>
+<b>[•] Gateway</b> - <b>Shopify Charge 0.55$</b>
+<b>[•] Status</b>- <code>Processing...</code>
+<b>[•] Response</b>- <code>Checking card...</code>
+━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
 <b>[+] Plan:</b> {plan_name}
 <b>[+] User:</b> @{username}
 <b>[+] Store:</b> meta-app-prod-store-1.myshopify.com
-┃┃┃┃┃┃┃┃┃┃┃┃┃┃┃
-<b>Checking card... Please wait.</b>"""
+━━━━━━━━━━━━━━━
+<b>Checking card... Please wait.</b>
+"""
         )
 
         # Create checker instance
@@ -1347,8 +1414,8 @@ async def handle_shopify_charge(client: Client, message: Message):
     except Exception as e:
         error_msg = str(e)[:150]
         await message.reply(f"""<pre>❌ Command Error</pre>
-┃┃┃┃┃┃┃┃┃┃┃┃┃
+━━━━━━━━━━━━━
 🠪 <b>Message</b>: An error occurred while processing your request.
 🠪 <b>Error</b>: <code>{error_msg}</code>
 🠪 <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
-┃┃┃┃┃┃┃┃┃┃┃┃┃""")
+━━━━━━━━━━━━━""")
