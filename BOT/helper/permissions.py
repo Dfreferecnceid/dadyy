@@ -727,9 +727,10 @@ async def check_private_access(message: Message) -> bool:
         return False
 
 def apply_global_middlewares():
-    """Apply global middlewares to bot"""
-    # This function is called from main.py
-    print("✅ Global middlewares applied")
+    """DEPRECATED: Global middlewares are no longer used"""
+    # This function is kept for compatibility but does nothing
+    # Commands use @group_auth_required decorator instead
+    pass
 
 # NEW: Initialize user credits on registration
 def initialize_user_on_registration(user_id):
