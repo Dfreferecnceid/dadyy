@@ -5,12 +5,9 @@ import os
 import sys
 import time
 import sqlite3
-from pyrogram import Client, idle, filters
-from pyrogram.types import Message
-from pyrogram.enums import ChatType
+from pyrogram import Client, idle
 from flask import Flask
 from BOT.plans.plan1 import check_and_expire_plans as plan1_expiry
-from BOT.helper.permissions import apply_global_middlewares, is_group_authorized
 import nest_asyncio
 
 # Load bot credentials
@@ -49,81 +46,6 @@ bot = Client(
     workdir=".",  # Explicitly set work directory
     sleep_threshold=30  # Increase sleep threshold to avoid connection issues
 )
-
-# List of all known bot commands (with and without prefixes)
-BOT_COMMANDS = [
-    # Start and basic commands
-    "start", "register", "cmds", "info", "redeem", "buy",
-
-    # Tool commands
-    "fake", "gen", "gate", "bin", "sk", "setpx", "delpx", "getpx",
-
-    # Admin commands
-    "gc", "plans", "plan", "looser", "broad", "notused", "off", "on",
-    "banbin", "unbanbin", "ban", "unban", "add", "rmv", "plus", "pro",
-    "elite", "vip", "ultimate",
-
-    # Gate commands
-    "au", "chk", "bu", "ad",  # Auth
-    "xx", "xo", "xs", "xc", "xp", "bt", "sh", "slf",  # Charge
-    "mau", "mchk", "mxc", "mxp", "mxx"  # Mass
-]
-
-def is_bot_command(message_text: str) -> bool:
-    """Check if message contains any bot command"""
-    if not message_text:
-        return False
-
-    text_lower = message_text.strip().lower()
-
-    for command in BOT_COMMANDS:
-        if text_lower.startswith(f'/{command}') or text_lower.startswith(f'.{command}') or text_lower.startswith(f'${command}'):
-            return True
-        if f' /{command}' in text_lower or f' .{command}' in text_lower or f' ${command}' in text_lower:
-            return True
-        if text_lower.startswith(f'/{command} ') or text_lower.startswith(f'.{command} ') or text_lower.startswith(f'${command} '):
-            return True
-
-    return False
-
-# Global group authorization check
-@bot.on_message(filters.group)
-async def global_group_auth_check(client: Client, message: Message):
-    # Skip private chats
-    if message.chat.type == ChatType.PRIVATE:
-        return
-    
-    # Skip if no text
-    if not message.text:
-        return
-
-    text = message.text.strip()
-    
-    # Skip if not a bot command
-    if not is_bot_command(text):
-        return
-    
-    # Allow /add and /rmv commands in any group (for adding/removing bot)
-    if text.startswith('/add') or text.startswith('.add') or text.startswith('$add'):
-        return
-    if text.startswith('/rmv') or text.startswith('.rmv') or text.startswith('$rmv'):
-        return
-    if text.startswith('/start') or text.startswith('.start') or text.startswith('$start'):
-        return
-
-    # Check if group is authorized
-    if not is_group_authorized(message.chat.id):
-        await message.reply_text(
-            "<pre>⛔️ Group Not Authorized</pre>\n"
-            "━━━━━━━━━━━━━\n"
-            "⟐ <b>Message</b>: This group is not authorized to use the bot.\n"
-            "⟐ <b>Contact</b>: <code>@D_A_DYY</code> for authorization.\n"
-            "━━━━━━━━━━━━━",
-            quote=True
-        )
-        return
-
-apply_global_middlewares()
 
 # Flask App
 app = Flask(__name__)
