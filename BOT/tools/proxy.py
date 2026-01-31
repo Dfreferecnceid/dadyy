@@ -906,11 +906,6 @@ async def validate_proxy_command(client, message: Message):
 2. <code>/vpx proxy1:port\\nproxy2:port</code> (multiple)
 3. <b>Send .txt file</b> with /vpx command
 ━━━━━━━━━━━━━
-<pre>Test Sites:</pre>
-⟐ <b>ipinfo.io</b> (HTTPS + location)
-⟐ <b>httpbin.org</b> (HTTP + simple)
-<pre>A proxy passes if either site responds</pre>
-━━━━━━━━━━━━━
 <b>~ Note:</b> <code>Available for all users</code>"""
 
         await message.reply(usage)
@@ -1000,7 +995,6 @@ async def validate_proxy_command(client, message: Message):
         response += f"\n... and {len(results) - 10} more proxies\n"
 
     response += "━━━━━━━━━━━━━\n"
-    response += "<b>Test Sites:</b> ipinfo.io (HTTPS) → httpbin.org (HTTP)\n"
     response += "<b>~ Note:</b> <code>Valid proxies are automatically added to pool</code>"
 
     await msg.edit(response)
