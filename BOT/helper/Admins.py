@@ -272,7 +272,7 @@ def get_all_commands():
 
     # UPDATED: Added new proxy commands and removed old ones
     gate_commands = [
-        "au", "chk", "sx", "xc", "sk", "gen", "fake", "bin",
+        "au", "chk", "bu", "sx", "xc", "sk", "gen", "fake", "bin",
         "gates", "gate", "start", "help", "info", "register",
         "buy", "plans", "plan", "plus", "pro", "elite", "vip", "ultimate",
         "redeem", "looser", "broad", "notused", "off", "on", "resett",
