@@ -313,8 +313,26 @@ def is_user_admin(user_id):
 def check_credits_for_charge(user_id, command_text):
     """Check if user has enough credits for charge commands - FIXED FOR ALL USERS"""
     try:
-        # Import credit functions
-        from BOT.gc.credit import has_sufficient_credits, get_user_credits
+        # Try multiple import paths for credit module
+        try:
+            from BOT.gc.credit import has_sufficient_credits, get_user_credits
+        except ImportError:
+            try:
+                from gc.credit import has_sufficient_credits, get_user_credits
+            except ImportError:
+                try:
+                    from .credit import has_sufficient_credits, get_user_credits
+                except ImportError:
+                    # If all imports fail, create fallback functions
+                    def has_sufficient_credits(user_id, amount):
+                        return True, "Credit system not available"
+                    
+                    def get_user_credits(user_id):
+                        users = load_users()
+                        user_data = users.get(str(user_id), {})
+                        return user_data.get("plan", {}).get("credits", "100")
+                    
+                    return True, "Credit system not available, allowing command"
 
         if not is_charge_command(command_text):
             return True, "Not a charge command"
@@ -356,7 +374,8 @@ def check_credits_for_charge(user_id, command_text):
 
     except Exception as e:
         print(f"[check_credits_for_charge error] {e}")
-        return False, "Error checking credits"
+        # Fallback: allow command if credit check fails
+        return True, f"Error checking credits: {str(e)}"
 
 # UPDATED: Combined decorator with credit check for charge commands - FIXED FOR FREE USERS
 def auth_and_free_restricted(func):
@@ -369,13 +388,13 @@ def auth_and_free_restricted(func):
         text = message.text.strip()
 
         # Check if it's a bot command
-        is_bot_command = (
+        is_bot_cmd = (
             text.startswith('/') or 
             text.startswith('.') or 
             text.startswith('$')
         )
 
-        if not is_bot_command:
+        if not is_bot_cmd:
             return await func(client, message)
 
         # Extract command
@@ -427,10 +446,14 @@ def auth_and_free_restricted(func):
             if is_auth_command(command_text):
                 return await func(client, message)
 
-            # Charge commands need credit check (but credits deducted AFTER check completes)
+            # Charge commands need credit check
             if is_charge_command(command_text):
-                # For charge commands, we'll check credits in the actual command handler
-                # The credit deduction happens AFTER the check completes
+                # Check credits
+                has_credits, credit_msg = check_credits_for_charge(user_id, command_text)
+                if not has_credits:
+                    await message.reply(credit_msg)
+                    return
+                # Credits check passed, continue to command
                 return await func(client, message)
 
             # Other commands (gen, fake, bin, etc.)
@@ -530,13 +553,13 @@ async def is_premium_user(message: Message) -> bool:
         text = message.text.strip()
 
         # Check if message starts with bot command prefix (/, ., or $)
-        is_bot_command = (
+        is_bot_cmd = (
             text.startswith('/') or 
             text.startswith('.') or 
             text.startswith('$')
         )
 
-        if not is_bot_command:
+        if not is_bot_cmd:
             return False  # Not a bot command, ignore
 
         users = load_users()
@@ -613,13 +636,13 @@ async def check_private_access(message: Message) -> bool:
         text = message.text.strip()
 
         # Check if message starts with bot command prefix (/, ., or $)
-        is_bot_command = (
+        is_bot_cmd = (
             text.startswith('/') or 
             text.startswith('.') or 
             text.startswith('$')
         )
 
-        if not is_bot_command:
+        if not is_bot_cmd:
             return False  # Not a bot command, ignore
 
         # ✅ Step 1: Check if group is allowed
@@ -712,7 +735,20 @@ def apply_global_middlewares():
 def initialize_user_on_registration(user_id):
     """Initialize credits for newly registered user"""
     try:
-        from BOT.gc.credit import initialize_user_credits
+        # Try multiple import paths
+        try:
+            from BOT.gc.credit import initialize_user_credits
+        except ImportError:
+            try:
+                from gc.credit import initialize_user_credits
+            except ImportError:
+                try:
+                    from .credit import initialize_user_credits
+                except ImportError:
+                    # Fallback if all imports fail
+                    def initialize_user_credits(user_id):
+                        return True
+                    return True
         return initialize_user_credits(user_id)
     except Exception as e:
         print(f"[initialize_user_on_registration error] {e}")
@@ -739,5 +775,3 @@ else:
         # If file is corrupted, recreate it
         print(f"Recreating corrupted {GROUPS_FILE}...")
         save_allowed_groups([])
-
-print("✅ Permissions module loaded with centralized command status functions!")
