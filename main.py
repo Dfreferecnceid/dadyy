@@ -1,23 +1,17 @@
-# main.py
 import json
 import asyncio
 import threading
 import os
 import sys
 import time
+import sqlite3
 from pyrogram import Client, idle, filters
 from pyrogram.types import Message
 from pyrogram.enums import ChatType
 from flask import Flask
 from BOT.plans.plan1 import check_and_expire_plans as plan1_expiry
 from BOT.helper.permissions import apply_global_middlewares, is_group_authorized
-
-# Import the automatic firewall protection
-try:
-    from BOT.firewall import firewall
-    FIREWALL_LOADED = True
-except ImportError:
-    FIREWALL_LOADED = False
+import nest_asyncio
 
 # Load bot credentials
 with open("FILES/config.json", "r", encoding="utf-8") as f:
@@ -29,53 +23,94 @@ with open("FILES/config.json", "r", encoding="utf-8") as f:
 # Pyrogram plugins - Load from BOT only
 plugins = dict(root="BOT")
 
-# Clean up any existing session files
+# Clean up any existing session files to prevent lock issues
 def cleanup_session_files():
-    """Remove any existing session files"""
+    """Remove any existing session files to prevent database lock issues"""
     session_files = ["MY_BOT.session", "MY_BOT.session-journal"]
     for session_file in session_files:
         if os.path.exists(session_file):
             try:
                 os.remove(session_file)
-                print(f"🗑️ Removed: {session_file}")
-                time.sleep(1)
-            except:
-                pass
+                print(f"🗑️ Removed existing session file: {session_file}")
+                time.sleep(1)  # Give OS time to release file locks
+            except Exception as e:
+                print(f"⚠️ Could not remove {session_file}: {e}")
 
-# Run cleanup
+# Run cleanup before creating client
 cleanup_session_files()
 
-# Create Pyrogram client
+# Pyrogram client with explicit session directory
 bot = Client(
     "MY_BOT",
     api_id=API_ID,
     api_hash=API_HASH,
     bot_token=BOT_TOKEN,
     plugins=plugins,
-    workdir=".",
-    sleep_threshold=30
+    workdir=".",  # Explicitly set work directory
+    sleep_threshold=30  # Increase sleep threshold to avoid connection issues
 )
 
-# Command prefixes to check
-COMMAND_PREFIXES = ['/', '.', '$']
+# List of all known bot commands (with and without prefixes)
+BOT_COMMANDS = [
+    # Start and basic commands
+    "start", "register", "cmds", "info", "redeem", "buy",
+
+    # Tool commands
+    "fake", "gen", "gate", "bin", "sk", "setpx", "delpx", "getpx",
+
+    # Admin commands
+    "gc", "plans", "plan", "looser", "broad", "notused", "off", "on",
+    "banbin", "unbanbin", "ban", "unban", "add", "rmv", "plus", "pro",
+    "elite", "vip", "ultimate",
+
+    # Gate commands
+    "au", "chk", "bu", "ad",  # Auth
+    "xx", "xo", "xs", "xc", "xp", "bt", "sh", "slf",  # Charge
+    "mau", "mchk", "mxc", "mxp", "mxx"  # Mass
+]
+
+def is_bot_command(message_text: str) -> bool:
+    """Check if message contains any bot command"""
+    if not message_text:
+        return False
+
+    text_lower = message_text.strip().lower()
+
+    for command in BOT_COMMANDS:
+        if text_lower.startswith(f'/{command}') or text_lower.startswith(f'.{command}') or text_lower.startswith(f'${command}'):
+            return True
+        if f' /{command}' in text_lower or f' .{command}' in text_lower or f' ${command}' in text_lower:
+            return True
+        if text_lower.startswith(f'/{command} ') or text_lower.startswith(f'.{command} ') or text_lower.startswith(f'${command} '):
+            return True
+
+    return False
 
 # Global group authorization check
 @bot.on_message(filters.group)
 async def global_group_auth_check(client: Client, message: Message):
-    """Check if group is authorized before processing commands"""
+    # Skip private chats
+    if message.chat.type == ChatType.PRIVATE:
+        return
+    
+    # Skip if no text
     if not message.text:
         return
-    
+
     text = message.text.strip()
     
-    # Check if message starts with any command prefix
-    if not any(text.startswith(prefix) for prefix in COMMAND_PREFIXES):
+    # Skip if not a bot command
+    if not is_bot_command(text):
         return
     
-    # Skip /add and /rmv commands (they need to work to authorize groups)
-    if text.startswith(('/add', '.add', '/rmv', '.rmv')):
+    # Allow /add and /rmv commands in any group (for adding/removing bot)
+    if text.startswith('/add') or text.startswith('.add') or text.startswith('$add'):
         return
-    
+    if text.startswith('/rmv') or text.startswith('.rmv') or text.startswith('$rmv'):
+        return
+    if text.startswith('/start') or text.startswith('.start') or text.startswith('$start'):
+        return
+
     # Check if group is authorized
     if not is_group_authorized(message.chat.id):
         await message.reply_text(
@@ -90,7 +125,7 @@ async def global_group_auth_check(client: Client, message: Message):
 
 apply_global_middlewares()
 
-# Simple Flask App
+# Flask App
 app = Flask(__name__)
 
 @app.route("/")
@@ -98,142 +133,81 @@ def home():
     return "Bot is running!"
 
 def run_flask():
-    """Run Flask server"""
+    """Run Flask server with error handling"""
     try:
-        app.run(host="0.0.0.0", port=3000, debug=False, threaded=True, use_reloader=False)
+        app.run(host="0.0.0.0", port=3000, debug=False, threaded=True)
     except Exception as e:
-        print(f"❌ Flask error: {e}")
+        print(f"❌ Flask server error: {e}")
 
-def extract_flood_wait(error_msg: str) -> int:
-    """Extract wait time from flood wait error"""
-    try:
-        import re
-        match = re.search(r'wait of (\d+) seconds', error_msg)
-        if match:
-            return int(match.group(1))
-    except:
-        pass
-    return 60  # Default
+async def run_bot():
+    """Run the Telegram bot with proper error handling"""
+    max_retries = 3
+    retry_delay = 5
 
-async def start_bot_with_retry():
-    """Start bot with retry logic for flood wait"""
-    max_attempts = 3
-    
-    for attempt in range(1, max_attempts + 1):
+    for attempt in range(max_retries):
         try:
-            print(f"🚀 Starting bot (Attempt {attempt}/{max_attempts})...")
-            
-            if not bot.is_connected:
-                await bot.start()
-                print("✅ Bot started successfully!")
-                
-                # Set bot commands (optional but good for UX)
-                try:
-                    await bot.set_bot_commands([
-                        ("start", "Start the bot"),
-                        ("register", "Register in the bot"),
-                        ("cmds", "Show all commands"),
-                        ("info", "Check your info"),
-                        ("buy", "Buy premium plans"),
-                        ("redeem", "Redeem gift code")
-                    ])
-                    print("✅ Bot commands set")
-                except:
-                    print("⚠️ Could not set bot commands")
-                
-                # Start plan expiry checker
-                try:
-                    asyncio.create_task(plan1_expiry(bot))
-                    print("✅ Plan expiry checker started")
-                except Exception as e:
-                    print(f"⚠️ Plan checker error: {e}")
-                
-                return True
-                
-        except Exception as e:
-            error_msg = str(e)
-            print(f"❌ Attempt {attempt} failed: {error_msg}")
-            
-            if "FLOOD_WAIT" in error_msg:
-                wait_time = extract_flood_wait(error_msg)
-                print(f"⏳ Flood wait detected. Waiting {wait_time} seconds...")
-                time.sleep(wait_time + 5)
-                continue
-                
-            if attempt < max_attempts:
-                print(f"Retrying in 10 seconds...")
-                time.sleep(10)
-                cleanup_session_files()
-            else:
-                print("❌ Max attempts reached")
-                return False
-    
-    return False
+            print(f"🚀 Starting bot (Attempt {attempt + 1}/{max_retries})...")
+            await bot.start()
+            print("✅ Bot started successfully!")
 
-async def main():
-    """Main async function"""
+            # Start plan expiry checker
+            asyncio.create_task(plan1_expiry(bot))
+
+            # Keep the bot running
+            await idle()
+
+            break  # Success, exit retry loop
+
+        except sqlite3.OperationalError as e:
+            if "database is locked" in str(e):
+                print(f"⚠️ Database locked, retrying in {retry_delay} seconds...")
+                if attempt < max_retries - 1:
+                    await bot.stop()
+                    time.sleep(retry_delay)
+                    # Clean session files before retry
+                    cleanup_session_files()
+                    continue
+                else:
+                    print("❌ Max retries reached. Could not start bot.")
+                    raise
+            else:
+                raise
+        except Exception as e:
+            print(f"❌ Bot startup error: {e}")
+            if attempt < max_retries - 1:
+                print(f"Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+                continue
+            else:
+                raise
+        finally:
+            # Ensure bot is stopped properly
+            try:
+                await bot.stop()
+                print("🛑 Bot stopped.")
+            except:
+                pass
+
+if __name__ == "__main__":
+    nest_asyncio.apply()
+
     print("=" * 50)
     print("🤖 BOT STARTUP SEQUENCE")
     print("=" * 50)
-    
-    if FIREWALL_LOADED:
-        print("🛡️  Firewall: ACTIVE")
-    else:
-        print("⚠️  Firewall: NOT LOADED")
-    
-    # Start Flask
+
+    # Start Flask in a daemon thread
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
     print("🌐 Flask server started on port 3000")
-    
-    # Wait a bit for Flask
-    await asyncio.sleep(2)
-    
-    # Start the bot
-    if await start_bot_with_retry():
-        try:
-            print("🤖 Bot is now running and should respond to commands!")
-            print("📱 Test with: /start or /cmds")
-            await idle()
-        except KeyboardInterrupt:
-            print("\n👋 Bot stopped by user")
-        except Exception as e:
-            print(f"❌ Bot runtime error: {e}")
-        finally:
-            # Clean shutdown
-            if bot.is_connected:
-                await bot.stop()
-                print("🛑 Bot stopped cleanly")
-    else:
-        print("❌ Could not start bot after retries")
 
-if __name__ == "__main__":
-    # Handle asyncio properly
+    # Give Flask a moment to start
+    time.sleep(2)
+
+    # Run the bot
     try:
-        # Try to get existing loop
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        # Create new loop if none exists
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    
-    try:
-        loop.run_until_complete(main())
+        asyncio.run(run_bot())
     except KeyboardInterrupt:
-        print("\n👋 Application stopped")
+        print("\n👋 Bot stopped by user")
     except Exception as e:
         print(f"❌ Fatal error: {e}")
-    finally:
-        # Save firewall state if loaded
-        if FIREWALL_LOADED:
-            try:
-                firewall.save_blocked_ips()
-                print("💾 Firewall state saved")
-            except:
-                pass
-        
-        # Close the loop
-        try:
-            loop.close()
-        except:
-            pass
+        sys.exit(1)
