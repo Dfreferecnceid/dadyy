@@ -358,10 +358,7 @@ async def buy_command(client: Client, message: Message):
 ━━━━━━━━━━━━━
 <b>Credit System (DAILY RESET):</b>
 ⟐ <b>Free Users</b>: <code>100 daily credits (resets every 24h)</code>
-⟐ <b>Auth Commands</b>: <code>FREE for all users</code>
-⟐ <b>Charge Commands</b>: <code>2 credits per use</code>
 ⟐ <b>Premium Users</b>: <code>Daily credits reset every 24h</code>
-⟐ <b>Owner/Admin</b>: <code>Unlimited credits (∞)</code>
 
 ━━━━━━━━━━━━━
 <b>Free Plan (For Comparison):</b>
@@ -369,18 +366,16 @@ async def buy_command(client: Client, message: Message):
 ⟐ <b>Anti-Spam Delay</b>: <code>15 seconds</code>
 ⟐ <b>Mass Limit</b>: <code>5 cards per mass check</code>
 ⟐ <b>Badge</b>: <code>🧿</code>
-⟐ <b>Private Access</b>: <code>❌ Disabled</code>
-⟐ <b>Features</b>: Auth commands in groups, limited access
+
 
 ━━━━━━━━━━━━━
 <b>How to Purchase:</b>
 1. Contact <code>@D_A_DYY</code> on Telegram
 2. Specify which plan you want
-3. Make payment (Crypto/CashApp/PayPal)
+3. Make payment (Crypto/UPI/PayPal)
 4. Receive your plan activation
 
-<b>~ Note:</b> <code>All plans come with 24/7 support</code>
-<b>~ Note:</b> <code>Bulk discounts available for multiple purchases</code>
+<b>~ Note:</b> <code>All plans come with support</code>
 <b>~ Note:</b> <code>Use /redeem for gift codes</code>
 <b>~ Note:</b> <code>Use /info to check your credit balance and plan details</code>"""
 
@@ -535,20 +530,16 @@ async def handle_main_callbacks(client, callback_query):
 ━━━━━━━━━━━━━
 <b>Credit System (DAILY RESET):</b>
 ⟐ <b>Free Users</b>: <code>100 daily credits (resets every 24h)</code>
-⟐ <b>Auth Commands</b>: <code>FREE for all users</code>
-⟐ <b>Charge Commands</b>: <code>2 credits per use</code>
 ⟐ <b>Premium Users</b>: <code>Daily credits reset every 24h</code>
-⟐ <b>Owner/Admin</b>: <code>Unlimited credits (∞)</code>
 
 ━━━━━━━━━━━━━
 <b>How to Purchase:</b>
 1. Contact <code>@D_A_DYY</code> on Telegram
 2. Specify which plan you want
-3. Make payment (Crypto/CashApp/PayPal)
+3. Make payment (Crypto/UPI/PayPal)
 4. Receive your plan activation
 
-<b>~ Note:</b> <code>All plans come with 24/7 support</code>
-<b>~ Note:</b> <code>Bulk discounts available for multiple purchases</code>"""
+<b>~ Note:</b> <code>All plans come with support</code>"""
 
         buttons = InlineKeyboardMarkup([
             [
@@ -608,38 +599,9 @@ async def handle_main_callbacks(client, callback_query):
 
         tools_text = f"""<pre>#WAYNE 〔Tools Menu〕</pre>
 ━━━━━━━━━━━━━
-<b>Available Tools :</b>
-
-⟐ <b>/info</b> - <code>Check your account information and credits</code>
-⟐ <b>Status:</b> <code>{info_status}</code>
-
-⟐ <b>/fake</b> - <code>Generate fake address</code>
-⟐ <b>Status:</b> <code>{fake_status}</code>
-
-⟐ <b>/gen</b> - <code>Generate valid CCs</code>
-⟐ <b>Status:</b> <code>{gen_status}</code>
-
-⟐ <b>/gate</b> - <code>Scan website for payment gateways</code>
-⟐ <b>Status:</b> <code>{gate_status}</code>
-
-⟐ <b>/bin</b> - <code>Check BIN information</code>
-⟐ <b>Status:</b> <code>{bin_status}</code>
-
-⟐ <b>/sk</b> - <code>Check Stripe secret key</code>
-⟐ <b>Status:</b> <code>{sk_status}</code>
-
-⟐ <b>/redeem</b> - <code>Redeem gift codes</code>
-⟐ <b>Status:</b> <code>{redeem_status}</code>
-
-⟐ <b>Proxy Commands</b> - <code>Manage proxy settings (Click Proxy button)</code>
-⟐ <b>Status:</b> <code>Active ✅</code>
-
-⟐ <b>/buy</b> - <code>Buy premium plans</code>
-⟐ <b>Status:</b> <code>{buy_status}</code>
-
+<b>Choose an option:</b>
 ━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Disabled commands show ❌ status</code>
-<b>~ Note:</b> <code>Use /on command to enable disabled commands (Owner Only)</code>"""
+<b>~ Note:</b> <code>Disabled commands show ❌ status</code>"""
 
         await callback_query.message.edit_text(
             tools_text,
@@ -782,8 +744,6 @@ async def handle_gates_callbacks(client, callback_query):
 ⟐ <b>Mass Gates</b> - <code>Check multiple cards at once</code>
 
 ━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Premium features require plan upgrade</code>
-<b>~ Note:</b> <code>Free users can only use basic commands</code>
 <b>~ Note:</b> <code>Disabled commands show ❌ status in menus</code>"""
 
             buttons = InlineKeyboardMarkup([
@@ -801,7 +761,7 @@ async def handle_gates_callbacks(client, callback_query):
             ])
             await callback_query.message.edit_text(text, reply_markup=buttons)
 
-# Tool callbacks
+# Tool callbacks - FIXED: Changed single braces to double braces for placeholder text
 @Client.on_callback_query(filters.regex(r"^tool_"))
 async def handle_tool_callbacks(client, callback_query):
     data = callback_query.data
@@ -814,7 +774,7 @@ async def handle_tool_callbacks(client, callback_query):
 ⟐ <b>Command</b>: <code>/info</code>
 ⟐ <b>Status</b>: <code>{info_status}</code>
 ⟐ <b>Reply to User</b>: <code>/info (as reply)</code>
-⟐ <b>Shows:</b> User ID, Username, Plan, Join Date, Daily Credits, Private Access Status
+⟐ <b>Shows:</b> User Information
 ━━━━━━━━━━━━━
 <b>~ Note:</b> <code>Check your or others' account information</code>""",
             reply_markup=InlineKeyboardMarkup([
@@ -828,11 +788,9 @@ async def handle_tool_callbacks(client, callback_query):
         await callback_query.message.edit_text(
             f"""<pre>#WAYNE 〔/fake〕</pre>
 ━━━━━━━━━━━━━
-⟐ <b>Command</b>: <code>/fake {country}</code>
+⟐ <b>Command</b>: <code>/fake {{country}}</code>
 ⟐ <b>Status</b>: <code>{fake_status}</code>
 ⟐ <b>Example</b>: <code>/fake us</code>
-⟐ <b>Example</b>: <code>/fake united states</code>
-⟐ <b>Supported Countries:</b> US, UK, CA, DE, FR, IT, ES, AU, JP, CN, IN, BR, MX
 ━━━━━━━━━━━━━
 <b>~ Note:</b> <code>Generates random address details</code>""",
             reply_markup=InlineKeyboardMarkup([
@@ -846,11 +804,10 @@ async def handle_tool_callbacks(client, callback_query):
         await callback_query.message.edit_text(
             f"""<pre>#WAYNE 〔/gen〕</pre>
 ━━━━━━━━━━━━━
-⟐ <b>Command</b>: <code>/gen {BIN} {amount}</code>
-⟐ <b>Command</b>: <code>/gen {cc|mm|yy|cvv} {amount}</code>
+⟐ <b>Command</b>: <code>/gen {{BIN}} {{amount}}</code>
+⟐ <b>Command</b>: <code>/gen {{cc|mm|yy|cvv}} {{amount}}</code>
 ⟐ <b>Status</b>: <code>{gen_status}</code>
 ⟐ <b>Example</b>: <code>/gen 411111 10</code>
-⟐ <b>Example</b>: <code>/gen 411111|12|2025|123 5</code>
 ⟐ <b>Max Limit</b>: <code>500 cards</code>
 ━━━━━━━━━━━━━
 <b>~ Note:</b> <code>Generates Luhn-valid cards</code>""",
@@ -865,11 +822,9 @@ async def handle_tool_callbacks(client, callback_query):
         await callback_query.message.edit_text(
             f"""<pre>#WAYNE 〔/gate〕</pre>
 ━━━━━━━━━━━━━
-⟐ <b>Command</b>: <code>/gate {website_url}</code>
+⟐ <b>Command</b>: <code>/gate {{website_url}}</code>
 ⟐ <b>Status</b>: <code>{gate_status}</code>
-⟐ <b>Example</b>: <code>/gate example.com</code>
 ⟐ <b>Example</b>: <code>/gate https://shop.example.com</code>
-⟐ <b>Features:</b> Payment Gateway Detection, VBV Check, Auth Gate Detection
 ━━━━━━━━━━━━━
 <b>~ Note:</b> <code>Advanced scanning with 20-40 seconds</code>""",
             reply_markup=InlineKeyboardMarkup([
@@ -883,10 +838,9 @@ async def handle_tool_callbacks(client, callback_query):
         await callback_query.message.edit_text(
             f"""<pre>#WAYNE 〔/bin〕</pre>
 ━━━━━━━━━━━━━
-⟐ <b>Command</b>: <code>/bin {BIN}</code>
+⟐ <b>Command</b>: <code>/bin {{BIN}}</code>
 ⟐ <b>Status</b>: <code>{bin_status}</code>
 ⟐ <b>Example</b>: <code>/bin 411111</code>
-⟐ <b>Example</b>: <code>/bin 411111|12|2025|123</code>
 ⟐ <b>Alias</b>: <code>.bin</code>
 ━━━━━━━━━━━━━
 <b>~ Note:</b> <code>Supports BIN or Full CC</code>""",
@@ -901,7 +855,7 @@ async def handle_tool_callbacks(client, callback_query):
         await callback_query.message.edit_text(
             f"""<pre>#WAYNE 〔/sk〕</pre>
 ━━━━━━━━━━━━━
-⟐ <b>Command</b>: <code>/sk {stripe_secret_key}</code>
+⟐ <b>Command</b>: <code>/sk {{stripe_secret_key}}</code>
 ⟐ <b>Status</b>: <code>{sk_status}</code>
 ⟐ <b>Example</b>: <code>/sk sk_live_1234567890abcdef</code>
 ⟐ <b>Alias</b>: <code>.sk</code>
@@ -918,10 +872,9 @@ async def handle_tool_callbacks(client, callback_query):
         await callback_query.message.edit_text(
             f"""<pre>#WAYNE 〔/redeem〕</pre>
 ━━━━━━━━━━━━━
-⟐ <b>Command</b>: <code>/redeem {gift_code}</code>
+⟐ <b>Command</b>: <code>/redeem {{gift_code}}</code>
 ⟐ <b>Status</b>: <code>{redeem_status}</code>
 ⟐ <b>Example</b>: <code>/redeem WAYNE-DAD-ABCD-1234</code>
-⟐ <b>Upgrades To:</b> PLUS Plan
 ━━━━━━━━━━━━━
 <b>~ Note:</b> <code>Redeem gift codes to upgrade your plan</code>""",
             reply_markup=InlineKeyboardMarkup([
@@ -944,12 +897,10 @@ async def handle_tool_callbacks(client, callback_query):
 ⟐ <b>/addpx</b> - <code>Add a new proxy to the system</code>
 ⟐ <b>Status:</b> <code>{addpx_status}</code>
 ⟐ <b>Free Users:</b> <code>Authorized groups only</code>
-⟐ <b>Premium Users:</b> <code>Private chat enabled</code>
 
 ⟐ <b>/rmvpx</b> - <code>Remove a specific proxy</code>
 ⟐ <b>Status:</b> <code>{rmvpx_status}</code>
 ⟐ <b>Free Users:</b> <code>Authorized groups only</code>
-⟐ <b>Premium Users:</b> <code>Private chat enabled</code>
 
 ⟐ <b>/vpx</b> - <code>View all active proxies</code>
 ⟐ <b>Status:</b> <code>{vpx_status}</code>
@@ -958,14 +909,10 @@ async def handle_tool_callbacks(client, callback_query):
 ━━━━━━━━━━━━━
 <b>Usage Examples:</b>
 ⟐ <code>/addpx ip:port:user:pass</code>
-⟐ <code>/addpx user:pass@ip:port</code>
-⟐ <code>/addpx http://user:pass@ip:port</code>
-⟐ <code>/rmvpx ip:port</code>
 ⟐ <code>/vpx</code>
 
 ━━━━━━━━━━━━━
 <b>~ Note:</b> <code>Free users can use /addpx and /rmvpx in authorized groups only</code>
-<b>~ Note:</b> <code>Premium users can use proxy commands in private chat</code>
 <b>~ Note:</b> <code>[] shows command status (✅=Active, ❌=Disabled)</code>""",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("Back", callback_data="tools"),
@@ -973,7 +920,7 @@ async def handle_tool_callbacks(client, callback_query):
             ])
         )
 
-# Admin callbacks
+# Admin callbacks - FIXED: Changed single braces to double braces for placeholder text
 @Client.on_callback_query(filters.regex(r"^admin_"))
 async def handle_admin_callbacks(client, callback_query):
     data = callback_query.data
