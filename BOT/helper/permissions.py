@@ -236,7 +236,7 @@ def is_allowed_for_free_users(command_text):
     # NO auth/charge/gate commands allowed in private for free users
     allowed_commands = [
         "start", "register", "cmds", "info", "buy", "redeem"
-        # Removed: "gen", "fake", "gate", "bin", "sk", "au", "chk", "bu", "ad"
+        # Removed: "gen", "fake", "gate", "bin", "sk", "au", "chk", "bu", "ad", "sq"
     ]
 
     # Remove prefixes
@@ -269,7 +269,8 @@ def is_auth_command(command_text):
         return False
 
     # Auth commands are free for everyone BUT ONLY IN AUTHORIZED GROUPS
-    auth_commands = ["au", "chk", "bu", "ad"]
+    # UPDATED: Added "sq" for Square auth
+    auth_commands = ["au", "chk", "bu", "ad", "sq"]
 
     # Remove prefixes
     clean_command = command_text.lstrip('/').lstrip('.').lstrip('$').lower().split()[0]
@@ -283,9 +284,10 @@ def is_gate_command(command_text):
         return False
 
     # All gate-related commands
+    # UPDATED: Added "sq" for Square auth
     gate_commands = [
         # Auth commands
-        "au", "chk", "bu", "ad",
+        "au", "chk", "bu", "ad", "sq",
         # Charge commands
         "xx", "xo", "xs", "xc", "xp", "bt", "sh", "slf",
         # Mass commands
@@ -326,12 +328,12 @@ def check_credits_for_charge(user_id, command_text):
                     # If all imports fail, create fallback functions
                     def has_sufficient_credits(user_id, amount):
                         return True, "Credit system not available"
-                    
+
                     def get_user_credits(user_id):
                         users = load_users()
                         user_data = users.get(str(user_id), {})
                         return user_data.get("plan", {}).get("credits", "100")
-                    
+
                     return True, "Credit system not available, allowing command"
 
         if not is_charge_command(command_text):
@@ -706,7 +708,7 @@ async def check_private_access(message: Message) -> bool:
             allowed_commands = [
                 "start", "register", "cmds", "info", "buy", "redeem",
                 "gen", "fake", "gate", "bin", "sk", 
-                "au", "chk", "bu", "ad"  # Auth commands are free
+                "au", "chk", "bu", "ad", "sq"  # Auth commands are free
             ]
 
             if clean_command in allowed_commands:
