@@ -1,5 +1,5 @@
 # BOT/helper/startg.py
-# Gates Menu Configuration File - UPDATED with dynamic command status
+# Gates Menu Configuration File - UPDATED with dynamic command status and Square auth
 
 import html
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -61,6 +61,21 @@ ADYEN_AUTH_CONFIG = {
             "name": "Adyen Auth",
             "command": "$ad cc|mes|ano|cvv",
             "command_key": "ad",
+            "status": "",  # Will be filled dynamically
+            "note": "FREE"
+        }
+    ]
+}
+
+# Auth -> Square commands - ADDED NEW CONFIG
+SQUARE_AUTH_CONFIG = {
+    "title": "<pre>#WAYNE 〔Square Auth Gates〕</pre>",
+    "description": "━ ━ ━ ━ ━━━ ━ ━ ━ ━",
+    "commands": [
+        {
+            "name": "Square Auth",
+            "command": "$sq cc|mes|ano|cvv",
+            "command_key": "sq",
             "status": "",  # Will be filled dynamically
             "note": "FREE"
         }
@@ -216,6 +231,7 @@ def get_dynamic_config(config_name):
         "stripe_auth": STRIPE_AUTH_CONFIG,
         "braintree_auth": BRAINTREE_AUTH_CONFIG,
         "adyen_auth": ADYEN_AUTH_CONFIG,
+        "square_auth": SQUARE_AUTH_CONFIG,  # ADDED
         "stripe_charge": STRIPE_CHARGE_CONFIG,
         "braintree_charge": BRAINTREE_CHARGE_CONFIG,
         "shopify_charge": SHOPIFY_CHARGE_CONFIG,
@@ -254,7 +270,7 @@ def get_gates_main_menu():
     return text, buttons
 
 def get_auth_submenu():
-    """Get auth submenu (Stripe, Braintree, Adyen) - EXACTLY as in start.py"""
+    """Get auth submenu (Stripe, Braintree, Adyen, Square) - UPDATED"""
     text = """<pre>#WAYNE 〔Auth Gates〕</pre>
 ━━━━━━━━━━━━━
 <b>Available Auth Gate Types:</b>
@@ -262,6 +278,7 @@ def get_auth_submenu():
 ⟐ <b>Stripe Auth</b> - <code>Authentication via Stripe</code>
 ⟐ <b>Braintree Auth</b> - <code>Authentication via Braintree</code>
 ⟐ <b>Adyen Auth</b> - <code>Authentication via Adyen</code>
+⟐ <b>Square Auth</b> - <code>Authentication via Square</code>
 
 ━━━━━━━━━━━━━
 <b>~ Note:</b> <code>Click on a gateway to see available commands</code>
@@ -274,6 +291,9 @@ def get_auth_submenu():
         ],
         [
             InlineKeyboardButton("Adyen", callback_data="auth_adyen"),
+            InlineKeyboardButton("Square", callback_data="auth_square")
+        ],
+        [
             InlineKeyboardButton("Back", callback_data="gates")
         ]
     ])
@@ -370,6 +390,16 @@ def get_adyen_auth_menu():
     ])
     return text, buttons
 
+def get_square_auth_menu():
+    """Get Square Auth commands menu with dynamic status"""
+    text = generate_commands_display("square_auth")
+
+    buttons = InlineKeyboardMarkup([
+        [InlineKeyboardButton("Back", callback_data="gates_auth"),
+         InlineKeyboardButton("Close", callback_data="exit")]
+    ])
+    return text, buttons
+
 def get_stripe_charge_menu():
     """Get Stripe Charge commands menu with dynamic status - UPDATED with all 5 commands"""
     text = generate_commands_display("stripe_charge")
@@ -421,6 +451,7 @@ GATES_MENUS = {
     "auth_stripe": get_stripe_auth_menu,
     "auth_braintree": get_braintree_auth_menu,
     "auth_adyen": get_adyen_auth_menu,
+    "auth_square": get_square_auth_menu,  # ADDED
 
     # Charge submenus
     "gates_charge": get_charge_submenu,
