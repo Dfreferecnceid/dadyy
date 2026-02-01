@@ -803,7 +803,7 @@ class SquareAuthChecker:
 <b>[+] Plan:</b> {user_plan}
 <b>[+] User:</b> @{username}
 ━━━━━━━━━━━━━━━
-<b>Registering & checking card... Please wait.</b>"""
+<b>Checking card... Please wait.</b>"""
 
 @Client.on_message(filters.command(["sq", ".sq", "!sq"]))
 @auth_and_free_restricted
@@ -924,4 +924,5 @@ async def handle_square_auth(client: Client, message: Message):
 ━━━━━━━━━━━━━
 ⟐ <b>Error</b>: <code>{str(e)[:100]}</code>
 ⟐ <b>Contact</b>: <code>@D_A_DYY</code>
+
 ━━━━━━━━━━━━━""")
