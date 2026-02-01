@@ -720,7 +720,8 @@ async def handle_main_callbacks(client, callback_query):
             await callback_query.answer("⛔ You need to register first!", show_alert=True)
 
 # GATES CALLBACK HANDLER - This must come BEFORE the general callback handler
-@Client.on_callback_query(filters.regex("^(gates|gates_auth|gates_charge|gates_mass|auth_stripe|auth_braintree|auth_adyen|charge_stripe|charge_braintree|charge_shopify)$"))
+# UPDATED: Added "auth_square" to regex for Square auth support
+@Client.on_callback_query(filters.regex("^(gates|gates_auth|gates_charge|gates_mass|auth_stripe|auth_braintree|auth_adyen|auth_square|charge_stripe|charge_braintree|charge_shopify)$"))
 async def handle_gates_callbacks(client, callback_query):
     """Handle all gates-related callback queries using GATES_MENUS"""
     data = callback_query.data
@@ -1362,7 +1363,7 @@ async def info_command(client: Client, message: Message):
 
     response += """━━━━━━━━━━━━━
 <b>Free Commands (No Credits):</b>
-⟐ <code>$au, $chk, $bu, $ad</code>
+⟐ <code>$au, $chk, $bu, $ad, $sq</code>  <!-- UPDATED: Added $sq -->
 
 <b>Charge Commands (2 Credits Each):</b>
 ⟐ <code>$xx, $xo, $xs, $xc, $xp, $bt, $sh, $slf</code>
