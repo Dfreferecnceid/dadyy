@@ -22,7 +22,6 @@ from ..helper.permissions import auth_and_free_restricted
 # File paths
 PROXY_FILE = "DATA/proxy.json"
 GLOBAL_PROXY_FILE = "FILES/proxy.csv"
-GOOD_PROXY_FILE = "FILES/goodp.json"  # New: Store only good proxies
 VALID_PROXY_FILE = "DATA/valid_proxies.json"
 DEAD_PROXY_FILE = "DATA/dead_proxies.json"
 
@@ -39,7 +38,7 @@ def is_owner(user_id: int) -> bool:
         return False
 
 class ProxyManager:
-    """Thread-safe proxy manager with continuous validation"""
+    """Thread-safe proxy manager with dual-site validation"""
 
     def __init__(self):
         self.user_proxies: Dict[str, str] = {}
@@ -51,114 +50,9 @@ class ProxyManager:
         self.executor = ThreadPoolExecutor(max_workers=50)
         self.last_validation = 0
         self.last_cleanup = time.time()
-        self.continuous_validation = True
-        self.validation_thread = None
 
-        print("🔄 Initializing Proxy Manager with continuous validation...")
+        print("🔄 Initializing Proxy Manager...")
         self.load_and_validate_all_proxies()
-        self.start_continuous_validation()
-
-    def start_continuous_validation(self):
-        """Start background thread for continuous proxy validation"""
-        if self.continuous_validation:
-            self.validation_thread = threading.Thread(
-                target=self._continuous_validation_loop,
-                daemon=True,
-                name="ProxyValidator"
-            )
-            self.validation_thread.start()
-            print("✅ Started continuous proxy validation (every 5 minutes)")
-
-    def _continuous_validation_loop(self):
-        """Background loop for continuous proxy validation"""
-        print("🔄 Continuous validation thread started...")
-        
-        while self.continuous_validation:
-            try:
-                # Wait 5 minutes between validations
-                time.sleep(300)  # 5 minutes = 300 seconds
-                
-                if not self.validation_in_progress:
-                    print("🔄 Running scheduled proxy validation...")
-                    self._validate_all_proxies_periodically()
-                    
-            except Exception as e:
-                print(f"❌ Error in continuous validation loop: {e}")
-                time.sleep(60)  # Wait 1 minute on error
-
-    def _validate_all_proxies_periodically(self):
-        """Validate all proxies periodically"""
-        with _proxy_lock:
-            # Get all proxies from CSV file
-            csv_proxies = self._load_raw_proxies_from_csv()
-            
-            if not csv_proxies:
-                print("⚠️ No proxies found in CSV for periodic validation")
-                return
-            
-            # Normalize all proxies
-            normalized_proxies = []
-            for raw in csv_proxies:
-                proxy = self.normalize_proxy(raw)
-                if proxy:
-                    normalized_proxies.append(proxy)
-            
-            print(f"🔄 Validating {len(normalized_proxies)} proxies from CSV...")
-            self._validate_proxy_batch_dual(normalized_proxies)
-            
-            # Save only good proxies to goodp.json
-            self._save_good_proxies()
-            
-            print(f"✅ Periodic validation complete. Good proxies saved to {GOOD_PROXY_FILE}")
-
-    def _save_good_proxies(self):
-        """Save only good/working proxies to goodp.json"""
-        try:
-            # Filter out dead proxies
-            good_proxies = [
-                proxy for proxy in self.valid_proxies 
-                if proxy not in self.dead_proxies and proxy not in self.perm_dead_proxies
-            ]
-            
-            # Save with timestamp
-            data = {
-                'good_proxies': good_proxies,
-                'count': len(good_proxies),
-                'last_updated': time.time(),
-                'last_updated_human': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                'stats': {
-                    'total_checked': len(self.valid_proxies) + len(self.perm_dead_proxies),
-                    'good': len(good_proxies),
-                    'dead': len(self.perm_dead_proxies),
-                    'temporarily_dead': len(self.dead_proxies)
-                }
-            }
-            
-            with open(GOOD_PROXY_FILE, "w") as f:
-                json.dump(data, f, indent=2)
-            
-            print(f"💾 Saved {len(good_proxies)} good proxies to {GOOD_PROXY_FILE}")
-            
-        except Exception as e:
-            print(f"❌ Error saving good proxies: {e}")
-
-    def _load_raw_proxies_from_csv(self) -> List[str]:
-        """Load raw proxy strings from CSV file (no normalization)"""
-        raw_proxies = []
-
-        if not os.path.exists(GLOBAL_PROXY_FILE):
-            return []
-
-        try:
-            with open(GLOBAL_PROXY_FILE, 'r') as f:
-                for line in f:
-                    line = line.strip()
-                    if line and not line.startswith('#'):
-                        raw_proxies.append(line)
-            return raw_proxies
-        except Exception as e:
-            print(f"❌ Error loading raw proxies from CSV: {e}")
-            return []
 
     def normalize_proxy(self, proxy_raw: str) -> Optional[str]:
         """Normalize proxy string to URL format - HTTP ONLY"""
@@ -173,78 +67,24 @@ class ProxyManager:
             return proxy_raw.replace("https://", "http://")
 
         # Format: USER:PASS@HOST:PORT
-        match1 = re.fullmatch(r"([^:@]+):([^:@]+)@([^:@]+):(\d+)", proxy_raw)
+        match1 = re.fullmatch(r"(.+?):(.+?)@([a-zA-Z0-9\.\-]+):(\d+)", proxy_raw)
         if match1:
             user, pwd, host, port = match1.groups()
             return f"http://{user}:{pwd}@{host}:{port}"
 
         # Format: HOST:PORT:USER:PASS
-        match2 = re.fullmatch(r"([^:]+):(\d+):([^:]+):(.+)", proxy_raw)
+        match2 = re.fullmatch(r"([a-zA-Z0-9\.\-]+):(\d+):(.+?):(.+)", proxy_raw)
         if match2:
             host, port, user, pwd = match2.groups()
             return f"http://{user}:{pwd}@{host}:{port}"
 
         # Format: HOST:PORT (no auth)
-        match3 = re.fullmatch(r"([^:]+):(\d+)", proxy_raw)
+        match3 = re.fullmatch(r"([a-zA-Z0-9\.\-]+):(\d+)", proxy_raw)
         if match3:
             host, port = match3.groups()
             return f"http://{host}:{port}"
 
         return None
-
-    def _save_proxy_to_csv(self, proxy_raw: str):
-        """Save a raw proxy string to CSV file"""
-        try:
-            # Read existing proxies
-            existing_proxies = set()
-            if os.path.exists(GLOBAL_PROXY_FILE):
-                with open(GLOBAL_PROXY_FILE, 'r') as f:
-                    for line in f:
-                        line = line.strip()
-                        if line:
-                            existing_proxies.add(line)
-            
-            # Add new proxy if not already exists
-            if proxy_raw not in existing_proxies:
-                with open(GLOBAL_PROXY_FILE, 'a') as f:
-                    f.write(f"{proxy_raw}\n")
-                print(f"💾 Saved proxy to CSV: {proxy_raw[:50]}...")
-                return True
-            else:
-                print(f"⚠️ Proxy already exists in CSV: {proxy_raw[:50]}...")
-                return False
-                
-        except Exception as e:
-            print(f"❌ Error saving proxy to CSV: {e}")
-            return False
-
-    def _save_proxies_to_csv_bulk(self, proxies_raw: List[str]):
-        """Save multiple raw proxy strings to CSV file"""
-        try:
-            # Read existing proxies
-            existing_proxies = set()
-            if os.path.exists(GLOBAL_PROXY_FILE):
-                with open(GLOBAL_PROXY_FILE, 'r') as f:
-                    for line in f:
-                        line = line.strip()
-                        if line:
-                            existing_proxies.add(line)
-            
-            # Add new proxies
-            added_count = 0
-            with open(GLOBAL_PROXY_FILE, 'a') as f:
-                for proxy in proxies_raw:
-                    if proxy and proxy not in existing_proxies:
-                        f.write(f"{proxy}\n")
-                        existing_proxies.add(proxy)
-                        added_count += 1
-            
-            print(f"💾 Added {added_count} new proxies to CSV")
-            return added_count
-                
-        except Exception as e:
-            print(f"❌ Error saving proxies to CSV: {e}")
-            return 0
 
     def load_and_validate_all_proxies(self):
         """Load all proxies and validate them with dual-site check"""
@@ -264,32 +104,19 @@ class ProxyManager:
             # Load previously validated proxies
             self._load_valid_proxies()
 
-            # Load proxies from CSV and validate them
-            csv_proxies = self._load_raw_proxies_from_csv()
-            
-            if csv_proxies:
-                print(f"📥 Found {len(csv_proxies)} proxies in CSV, validating with dual-site check...")
-                
-                # Normalize all proxies
-                normalized_proxies = []
-                for raw in csv_proxies:
-                    proxy = self.normalize_proxy(raw)
-                    if proxy:
-                        normalized_proxies.append(proxy)
-                
-                # Validate all proxies
-                self._validate_proxy_batch_dual(normalized_proxies)
+            # Load new proxies from CSV and validate them
+            new_proxies = self._load_proxies_from_csv()
+
+            if new_proxies:
+                print(f"📥 Found {len(new_proxies)} new proxies in CSV, validating with dual-site check...")
+                self._validate_proxy_batch_dual(new_proxies)
             else:
                 print(f"⚠️ No proxies found in {GLOBAL_PROXY_FILE}")
 
             # Save validated proxies
             self._save_valid_proxies()
-            
-            # Save only good proxies
-            self._save_good_proxies()
 
             print(f"🎯 Proxy Manager Ready: {len(self.valid_proxies)} valid proxies available")
-            print(f"✅ Good proxies saved to {GOOD_PROXY_FILE}")
 
     def _load_valid_proxies(self):
         """Load previously validated working proxies"""
@@ -307,6 +134,43 @@ class ProxyManager:
             self.valid_proxies = []
             self.perm_dead_proxies = set()
             self.proxy_stats = {}
+
+    def _load_proxies_from_csv(self) -> List[str]:
+        """Load raw proxies from CSV file"""
+        raw_proxies = []
+
+        if not os.path.exists(GLOBAL_PROXY_FILE):
+            print(f"⚠️ Global proxy file not found: {GLOBAL_PROXY_FILE}")
+            return []
+
+        try:
+            # Try reading as plain text (one proxy per line)
+            with open(GLOBAL_PROXY_FILE, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#'):
+                        raw_proxies.append(line)
+
+            # Normalize all proxies
+            normalized_proxies = []
+            for raw in raw_proxies:
+                proxy = self.normalize_proxy(raw)
+                if proxy:
+                    normalized_proxies.append(proxy)
+
+            # Filter out already known proxies
+            new_proxies = []
+            for proxy in normalized_proxies:
+                if (proxy not in self.valid_proxies and 
+                    proxy not in self.perm_dead_proxies and
+                    proxy not in self.user_proxies.values()):
+                    new_proxies.append(proxy)
+
+            return new_proxies
+
+        except Exception as e:
+            print(f"❌ Error loading proxies from CSV: {e}")
+            return []
 
     def _test_proxy_dual_sync(self, proxy_url: str) -> Tuple[bool, float, Optional[str], str]:
         """Test proxy with dual-site check (sync for thread pool)"""
@@ -375,29 +239,23 @@ class ProxyManager:
                 try:
                     result = future.result(timeout=12)  # (is_valid, response_time, ip, site)
                     if result[0]:  # Valid proxy
-                        if proxy not in self.valid_proxies:
-                            self.valid_proxies.append(proxy)
+                        self.valid_proxies.append(proxy)
                         self.proxy_stats[proxy] = {
                             'success': 1,
                             'fails': 0,
                             'response_time': result[1],
                             'ip': result[2],
                             'site': result[3],
-                            'last_used': time.time(),
-                            'last_validated': time.time()
+                            'last_used': time.time()
                         }
                         valid_count += 1
                         print(f"✅ Proxy validated via {result[3]}: {proxy[:50]}...")
                     else:
-                        if proxy in self.valid_proxies:
-                            self.valid_proxies.remove(proxy)
                         self.perm_dead_proxies.add(proxy)
                         dead_count += 1
                         print(f"❌ Proxy dead: {proxy[:50]}...")
 
                 except Exception as e:
-                    if proxy in self.valid_proxies:
-                        self.valid_proxies.remove(proxy)
                     self.perm_dead_proxies.add(proxy)
                     dead_count += 1
                     print(f"❌ Proxy error: {proxy[:50]}... - {str(e)[:50]}")
@@ -405,26 +263,10 @@ class ProxyManager:
             print(f"📊 Validation Complete: {valid_count} valid, {dead_count} dead")
             self.last_validation = time.time()
 
-            # Remove bad proxies from valid list
-            self._clean_bad_proxies()
-
         except Exception as e:
             print(f"❌ Batch validation error: {e}")
         finally:
             self.validation_in_progress = False
-
-    def _clean_bad_proxies(self):
-        """Remove bad proxies from valid proxies list"""
-        to_remove = []
-        for proxy in self.valid_proxies:
-            if proxy in self.dead_proxies or proxy in self.perm_dead_proxies:
-                to_remove.append(proxy)
-        
-        for proxy in to_remove:
-            self.valid_proxies.remove(proxy)
-        
-        if to_remove:
-            print(f"🧹 Removed {len(to_remove)} bad proxies from valid list")
 
     def _save_valid_proxies(self):
         """Save validated proxies to file"""
@@ -458,20 +300,8 @@ class ProxyManager:
                     self._update_stats(proxy)
                     return proxy
 
-            # 2. Use validated proxy pool (only good proxies)
+            # 2. Use validated proxy pool
             available_proxies = [p for p in self.valid_proxies if p not in self.dead_proxies]
-
-            if not available_proxies:
-                # Try to load from goodp.json if empty
-                try:
-                    if os.path.exists(GOOD_PROXY_FILE):
-                        with open(GOOD_PROXY_FILE, 'r') as f:
-                            data = json.load(f)
-                            available_proxies = data.get('good_proxies', [])
-                            # Update local valid_proxies
-                            self.valid_proxies = available_proxies
-                except:
-                    pass
 
             if not available_proxies:
                 return None
@@ -507,8 +337,7 @@ class ProxyManager:
                 'response_time': 5.0,
                 'ip': 'Unknown',
                 'site': 'Unknown',
-                'last_used': time.time(),
-                'last_validated': time.time()
+                'last_used': time.time()
             }
         else:
             self.proxy_stats[proxy]['last_used'] = time.time()
@@ -523,10 +352,6 @@ class ProxyManager:
                 new_time = (old_time + response_time) / 2
                 self.proxy_stats[proxy]['response_time'] = new_time
                 self.dead_proxies.discard(proxy)
-                
-                # Ensure it's in valid_proxies list
-                if proxy not in self.valid_proxies:
-                    self.valid_proxies.append(proxy)
 
     def mark_proxy_failed(self, proxy: str):
         """Mark proxy as failed (temporarily dead)"""
@@ -535,9 +360,6 @@ class ProxyManager:
                 self.proxy_stats[proxy]['fails'] += 1
                 if self.proxy_stats[proxy]['fails'] > 2:
                     self.dead_proxies.add(proxy)
-                    # Remove from valid_proxies if too many failures
-                    if proxy in self.valid_proxies and self.proxy_stats[proxy]['fails'] > 5:
-                        self.valid_proxies.remove(proxy)
 
     def _clean_dead_proxies(self):
         """Remove old dead proxies after timeout"""
@@ -579,10 +401,6 @@ class ProxyManager:
 
         if is_valid:
             with _proxy_lock:
-                # Save to CSV first
-                self._save_proxy_to_csv(proxy_raw)
-                
-                # Add to valid proxies
                 self.valid_proxies.append(proxy_url)
                 self.proxy_stats[proxy_url] = {
                     'success': 1,
@@ -590,11 +408,8 @@ class ProxyManager:
                     'response_time': response_time,
                     'ip': ip,
                     'site': site,
-                    'last_used': time.time(),
-                    'last_validated': time.time()
+                    'last_used': time.time()
                 }
-                # Save good proxies
-                self._save_good_proxies()
                 self._save_valid_proxies()
             return True, ip, response_time, site
         else:
@@ -604,23 +419,18 @@ class ProxyManager:
             return False, f"Failed on both sites", response_time, "Failed"
 
     def add_proxies_bulk(self, proxies_text: str) -> Dict[str, int]:
-        """Add multiple proxies from text (bulk addition) - SAVES TO CSV FIRST"""
+        """Add multiple proxies from text (bulk addition)"""
         lines = proxies_text.strip().split('\n')
-        raw_proxies = []
         normalized_proxies = []
 
         for line in lines:
             line = line.strip()
             if line and not line.startswith('#'):
-                raw_proxies.append(line)
                 proxy = self.normalize_proxy(line)
                 if proxy:
                     normalized_proxies.append(proxy)
 
-        # Save ALL proxies to CSV first
-        saved_count = self._save_proxies_to_csv_bulk(raw_proxies)
-
-        # Filter out already known proxies
+        # Filter out already known
         new_proxies = []
         for proxy in normalized_proxies:
             if (proxy not in self.valid_proxies and 
@@ -628,29 +438,19 @@ class ProxyManager:
                 new_proxies.append(proxy)
 
         if not new_proxies:
-            return {
-                'total': len(normalized_proxies), 
-                'saved_to_csv': saved_count,
-                'new': 0, 
-                'duplicate': len(normalized_proxies)
-            }
+            return {'total': 0, 'new': 0, 'duplicate': len(normalized_proxies)}
 
         # Validate new proxies
         self._validate_proxy_batch_dual(new_proxies)
-        
-        # Save good proxies
-        self._save_good_proxies()
         self._save_valid_proxies()
 
         stats = self.get_stats()
         return {
             'total': len(normalized_proxies),
-            'saved_to_csv': saved_count,
             'new': len(new_proxies),
             'duplicate': len(normalized_proxies) - len(new_proxies),
             'valid_now': stats['total_valid'],
-            'available_now': stats['available_now'],
-            'good_proxies': stats.get('good_proxies_count', 0)
+            'available_now': stats['available_now']
         }
 
     def remove_proxies_bulk(self, proxies_text: str) -> Dict[str, int]:
@@ -683,7 +483,6 @@ class ProxyManager:
 
         if removed_count > 0:
             self._save_valid_proxies()
-            self._save_good_proxies()
 
         return {
             'requested': len(normalized_proxies),
@@ -691,41 +490,24 @@ class ProxyManager:
             'remaining': len(self.valid_proxies)
         }
 
-    def remove_all_proxies(self) -> Dict[str, int]:
-        """Remove all proxies from system"""
+    def remove_all_proxies(self) -> int:
+        """Remove all proxies from global pool"""
         with _proxy_lock:
-            # Get counts before removal
-            valid_count = len(self.valid_proxies)
-            dead_count = len(self.perm_dead_proxies)
-            temp_dead_count = len(self.dead_proxies)
-            csv_count = 0
-            
-            # Clear CSV file
-            try:
-                if os.path.exists(GLOBAL_PROXY_FILE):
-                    with open(GLOBAL_PROXY_FILE, 'r') as f:
-                        csv_count = len([line for line in f if line.strip()])
-                    open(GLOBAL_PROXY_FILE, 'w').close()
-            except:
-                pass
-
-            # Clear all data
+            removed_count = len(self.valid_proxies)
             self.valid_proxies = []
             self.dead_proxies = set()
             self.perm_dead_proxies = set()
             self.proxy_stats = {}
 
-            # Save cleared state
-            self._save_valid_proxies()
-            self._save_good_proxies()
+            # Also clear CSV file
+            try:
+                open(GLOBAL_PROXY_FILE, 'w').close()
+            except:
+                pass
 
-        return {
-            'valid_removed': valid_count,
-            'dead_removed': dead_count,
-            'temp_dead_removed': temp_dead_count,
-            'csv_removed': csv_count,
-            'total_removed': valid_count + dead_count + temp_dead_count
-        }
+            self._save_valid_proxies()
+
+        return removed_count
 
     def get_stats(self) -> Dict:
         """Get statistics about proxy usage"""
@@ -748,16 +530,6 @@ class ProxyManager:
                 })
 
             proxy_performance.sort(key=lambda x: x['rate'], reverse=True)
-            
-            # Load good proxies count
-            good_count = 0
-            try:
-                if os.path.exists(GOOD_PROXY_FILE):
-                    with open(GOOD_PROXY_FILE, 'r') as f:
-                        data = json.load(f)
-                        good_count = data.get('count', 0)
-            except:
-                pass
 
             return {
                 'total_valid': len(self.valid_proxies),
@@ -765,11 +537,9 @@ class ProxyManager:
                 'total_dead': len(self.perm_dead_proxies),
                 'temp_dead': len(self.dead_proxies),
                 'available_now': len([p for p in self.valid_proxies if p not in self.dead_proxies]),
-                'good_proxies_count': good_count,
                 'top_proxies': proxy_performance[:10],
                 'last_validation': self.last_validation,
-                'validation_in_progress': self.validation_in_progress,
-                'continuous_validation': self.continuous_validation
+                'validation_in_progress': self.validation_in_progress
             }
 
 # Global proxy manager instance
@@ -800,7 +570,7 @@ def parse_proxy(proxy_str: str) -> Optional[Dict]:
     
     # Try different formats
     # Format: user:pass@host:port
-    match1 = re.match(r'^([^:@]+):([^:@]+)@([^:@]+):(\d+)$', proxy_str)
+    match1 = re.match(r'^(.+?):(.+?)@(.+?):(\d+)$', proxy_str)
     if match1:
         user, password, host, port = match1.groups()
         return {
@@ -811,7 +581,7 @@ def parse_proxy(proxy_str: str) -> Optional[Dict]:
         }
     
     # Format: host:port:user:pass
-    match2 = re.match(r'^([^:]+):(\d+):([^:]+):(.+)$', proxy_str)
+    match2 = re.match(r'^(.+?):(\d+):(.+?):(.+)$', proxy_str)
     if match2:
         host, port, user, password = match2.groups()
         return {
@@ -822,7 +592,7 @@ def parse_proxy(proxy_str: str) -> Optional[Dict]:
         }
     
     # Format: host:port (no auth)
-    match3 = re.match(r'^([^:]+):(\d+)$', proxy_str)
+    match3 = re.match(r'^(.+?):(\d+)$', proxy_str)
     if match3:
         host, port = match3.groups()
         return {
@@ -935,20 +705,12 @@ async def add_proxy_command(client, message: Message):
 <code>• ip:port:user:pass</code>
 <code>• http://ip:port</code>
 ━━━━━━━━━━━━━
-<pre>Workflow:</pre>
-1. Proxies saved to <code>FILES/proxy.csv</code>
-2. Auto-validated with dual-site check
-3. Good proxies saved to <code>FILES/goodp.json</code>
-4. Bad proxies automatically removed
-━━━━━━━━━━━━━
 <pre>Examples:</pre>
 <code>/addpx 192.168.1.1:8080</code>
 <code>/addpx user:pass@proxy.com:8080</code>
-<code>/addpx evo-pro.porterproxies.com:62345:PP_MLXEA0ROCN-country-US:dp81eqnp</code>
 ━━━━━━━━━━━━━
 <b>~ Note:</b> <code>Proxies auto-validate and classify as good/bad</code>
-<b>~ Note:</b> <code>Available for all users</code>
-<b>~ Auto:</b> <code>Continuous validation every 5 minutes</code>""")
+<b>~ Note:</b> <code>Available for all users</code>""")
         return
 
     # Process proxies
@@ -969,23 +731,16 @@ async def add_proxy_command(client, message: Message):
 ━━━━━━━━━━━━━
 <b>Processing Results:</b>
 ⟐ Total Input: <code>{result['total']}</code>
-⟐ Saved to CSV: <code>{result['saved_to_csv']}</code>
 ⟐ New Proxies: <code>{result['new']}</code>
 ⟐ Duplicates: <code>{result['duplicate']}</code>
 ━━━━━━━━━━━━━
 <b>Current Pool Status:</b>
 ⟐ Valid Proxies: <code>{result['valid_now']}</code>
-⟐ Good Proxies: <code>{result['good_proxies']}</code>
 ⟐ Available Now: <code>{result['available_now']}</code>
 ⟐ Known Dead: <code>{stats['total_dead']}</code>
 ━━━━━━━━━━━━━
-<b>Storage:</b>
-⟐ <code>FILES/proxy.csv</code>: All proxies (raw)
-⟐ <code>FILES/goodp.json</code>: Working proxies only
-━━━━━━━━━━━━━
 <b>~ Note:</b> <code>Proxies validated with dual-site check (ipinfo.io + httpbin.org)</code>
-<b>~ Tip:</b> <code>Use /vpx to validate specific proxies</code>
-<b>~ Auto:</b> <code>Continuous validation every 5 minutes</code>""")
+<b>~ Tip:</b> <code>Use /vpx to validate specific proxies</code>""")
 
 @Client.on_message(filters.command(["rmvpx", ".rmvpx"]))
 @auth_and_free_restricted
@@ -1033,13 +788,13 @@ async def remove_proxy_command(client, message: Message):
     else:
         await message.reply("""<pre>#WAYNE 〔/rmvpx〕</pre>
 ━━━━━━━━━━━━━
-<pre>Remove proxies from system</pre>
+<pre>Remove proxies from global pool</pre>
 <pre>Methods:</pre>
 1. <code>/rmvpx proxy1:port</code> (single)
 2. <code>/rmvpx proxy1:port\\nproxy2:port</code> (multiple)
 3. <b>Send .txt file</b> with /rmvpx command
 ━━━━━━━━━━━━━
-<pre>Note:</b> Removes from active pool and goodp.json, but not from proxy.csv</pre>
+<pre>Note:</b> Only removes from valid pool, not from CSV file</pre>
 <b>~ Note:</b> <code>Available for all users</code>""")
         return
 
@@ -1053,8 +808,8 @@ async def remove_proxy_command(client, message: Message):
 ⟐ Removed: <code>{result['removed']}</code>
 ⟐ Remaining: <code>{result['remaining']}</code>
 ━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Proxies removed from active pool and goodp.json</code>
-<b>~ Tip:</b> <code>Use /rmvall to clear everything including CSV (Owner Only)</code>""")
+<b>~ Note:</b> <code>Proxies removed from active pool but may still be in CSV file</code>
+<b>~ Tip:</b> <code>Use /rmvall to clear everything (Owner Only)</code>""")
 
 @Client.on_message(filters.command(["rmvall", ".rmvall"]))
 @auth_and_free_restricted
@@ -1089,13 +844,10 @@ async def remove_all_proxies_command(client, message: Message):
     if len(message.command) < 2 or message.command[1].lower() != "confirm":
         await message.reply("""<pre>⚠️ CONFIRMATION REQUIRED</pre>
 ━━━━━━━━━━━━━
-<b>WARNING:</b> This will remove ALL proxies from system!
-<b>Actions:</b>
-⟐ Clears all valid proxies
-⟐ Clears all dead proxies  
-⟐ Clears proxy.csv file
-⟐ Clears goodp.json file
-⟐ Clears all statistics
+<b>WARNING:</b> This will remove ALL proxies from global pool!
+<b>Action:</b> Clears all valid, dead, and temporary proxies
+<b>CSV File:</b> Will be emptied
+<b>Stats:</b> Will be reset
 ━━━━━━━━━━━━━
 <pre>To confirm, type:</pre>
 <code>/rmvall confirm</code>
@@ -1105,25 +857,25 @@ async def remove_all_proxies_command(client, message: Message):
 
     msg = await message.reply("<pre>🗑️ Removing ALL proxies...</pre>")
 
+    # Get count before removal
+    stats_before = proxy_manager.get_stats()
+
     # Remove all
-    result = proxy_manager.remove_all_proxies()
+    removed_count = proxy_manager.remove_all_proxies()
 
     await msg.edit(f"""<pre>✅ All Proxies Cleared</pre>
 ━━━━━━━━━━━━━
 <b>Removal Summary:</b>
-⟐ Valid Proxies: <code>{result['valid_removed']}</code>
-⟐ Dead Proxies: <code>{result['dead_removed']}</code>
-⟐ Temp Dead: <code>{result['temp_dead_removed']}</code>
-⟐ CSV Entries: <code>{result['csv_removed']}</code>
-⟐ Total Removed: <code>{result['total_removed']}</code>
+⟐ Valid Proxies: <code>{stats_before['total_valid']} → 0</code>
+⟐ Dead Proxies: <code>{stats_before['total_dead']} → 0</code>
+⟐ Temp Dead: <code>{stats_before['temp_dead']} → 0</code>
+⟐ Total Removed: <code>{removed_count}</code>
 ━━━━━━━━━━━━━
-<b>Files Cleared:</b>
-⟐ <code>FILES/proxy.csv</code>: <code>Cleared</code>
-⟐ <code>FILES/goodp.json</code>: <code>Cleared</code>
-⟐ <code>DATA/valid_proxies.json</code>: <code>Cleared</code>
+<b>CSV File:</b> <code>Cleared</code>
+<b>Valid Proxies File:</b> <code>Cleared</code>
+<b>Stats File:</b> <code>Reset</code>
 ━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Proxy system is now empty. Add new proxies with /addpx</code>
-<b>~ Auto:</b> <code>Continuous validation will restart with new proxies</code>""")
+<b>~ Note:</b> <code>Proxy pool is now empty. Add new proxies with /addpx</code>""")
 
 @Client.on_message(filters.command(["vpx", ".vpx"]))
 @auth_and_free_restricted
@@ -1154,14 +906,7 @@ async def validate_proxy_command(client, message: Message):
 2. <code>/vpx proxy1:port\\nproxy2:port</code> (multiple)
 3. <b>Send .txt file</b> with /vpx command
 ━━━━━━━━━━━━━
-<pre>Workflow:</pre>
-1. Proxy saved to <code>FILES/proxy.csv</code>
-2. Validated with dual-site check
-3. If valid → added to <code>FILES/goodp.json</code>
-4. If invalid → marked as dead
-━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Available for all users</code>
-<b>~ Auto:</b> <code>Valid proxies auto-added to working pool</code>"""
+<b>~ Note:</b> <code>Available for all users</code>"""
 
         await message.reply(usage)
         return
@@ -1236,10 +981,6 @@ async def validate_proxy_command(client, message: Message):
 ⟐ Valid: <code>{valid_count}</code> ✅
 ⟐ Invalid: <code>{len(results) - valid_count}</code> ❌
 ━━━━━━━━━━━━━
-<b>Storage:</b>
-⟐ Saved to CSV: <code>Yes</code>
-⟐ Added to goodp.json: <code>{'Yes' if valid_count > 0 else 'No'}</code>
-━━━━━━━━━━━━━
 <b>Detailed Results:</b>\n"""
 
     for i, r in enumerate(results[:10], 1):  # Show first 10
@@ -1254,8 +995,7 @@ async def validate_proxy_command(client, message: Message):
         response += f"\n... and {len(results) - 10} more proxies\n"
 
     response += "━━━━━━━━━━━━━\n"
-    response += "<b>~ Note:</b> <code>Valid proxies auto-added to working pool</code>\n"
-    response += "<b>~ Auto:</b> <code>Continuous validation runs every 5 minutes</code>"
+    response += "<b>~ Note:</b> <code>Valid proxies are automatically added to pool</code>"
 
     await msg.edit(response)
 
@@ -1289,36 +1029,15 @@ async def proxy_stats_handler(client, message: Message):
         return
 
     stats = proxy_manager.get_stats()
-    
-    # Load good proxies info
-    good_proxies_info = {}
-    try:
-        if os.path.exists(GOOD_PROXY_FILE):
-            with open(GOOD_PROXY_FILE, 'r') as f:
-                good_data = json.load(f)
-                good_proxies_info = {
-                    'count': good_data.get('count', 0),
-                    'last_updated': good_data.get('last_updated_human', 'Never'),
-                    'total_checked': good_data.get('stats', {}).get('total_checked', 0)
-                }
-    except:
-        pass
 
     response = f"""<pre>📊 Proxy Statistics</pre>
 ━━━━━━━━━━━━━━━
 <b>Pool Status:</b>
 ⟐ Valid Proxies: <code>{stats['total_valid']}</code>
-⟐ Good Proxies: <code>{stats['good_proxies_count']}</code>
 ⟐ Available Now: <code>{stats['available_now']}</code>
 ⟐ User Proxies: <code>{stats['total_user']}</code>
 ⟐ Dead Proxies: <code>{stats['total_dead']}</code>
 ⟐ Temporary Dead: <code>{stats['temp_dead']}</code>
-━━━━━━━━━━━━━━━
-<b>Storage Files:</b>
-⟐ <code>FILES/proxy.csv</code>: All proxies (raw)
-⟐ <code>FILES/goodp.json</code>: {good_proxies_info.get('count', 0)} working proxies
-⟐ Last Updated: <code>{good_proxies_info.get('last_updated', 'Never')}</code>
-⟐ Total Checked: <code>{good_proxies_info.get('total_checked', 0)}</code>
 ━━━━━━━━━━━━━━━
 <b>Top Performing Proxies:</b>\n"""
 
@@ -1348,102 +1067,10 @@ async def proxy_stats_handler(client, message: Message):
         mins_ago = (time.time() - stats['last_validation']) / 60 if stats['last_validation'] else 999
         response += f"<b>Last Validation:</b> <code>{mins_ago:.1f} minutes ago</code>\n"
 
-    response += "<b>Continuous Validation:</b> <code>Every 5 minutes</code>\n"
     response += "<b>Test Method:</b> Dual-site (ipinfo.io → httpbin.org)\n"
     response += "<b>Usage:</b> Personal proxy → Fastest global proxy\n"
     response += "<b>~ Note:</b> <code>Owner Only Command</code>"
 
     await message.reply(response)
-
-# New command to view good proxies
-@Client.on_message(filters.command(["goodpx", ".goodpx"]))
-@auth_and_free_restricted
-async def good_proxies_command(client, message: Message):
-    """View good/working proxies - OWNER ONLY"""
-
-    # Check if command is disabled
-    command_text = message.text.split()[0] if message.text else ""
-    if is_command_disabled(command_text):
-        await message.reply(get_command_offline_message(command_text))
-        return
-
-    # Check if user is restricted
-    if is_user_restricted_for_command(message.from_user.id, command_text):
-        await message.reply("""<pre>🚫 Access Restricted</pre>
-━━━━━━━━━━━━━
-⟐ <b>Message</b>: You are restricted from using this command.
-⟐ <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
-━━━━━━━━━━━━━""")
-        return
-
-    # Check if owner
-    if not is_owner(message.from_user.id):
-        await message.reply("""<pre>🚫 Owner Only</pre>
-━━━━━━━━━━━━━
-⟐ <b>Message</b>: This command is for owner only.
-⟐ <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
-━━━━━━━━━━━━━""")
-        return
-
-    try:
-        if not os.path.exists(GOOD_PROXY_FILE):
-            await message.reply("""<pre>📭 No Good Proxies</pre>
-━━━━━━━━━━━━━
-⟐ <b>Message</b>: No good proxies file found.
-⟐ <b>Tip</b>: <code>Add proxies with /addpx command</code>
-━━━━━━━━━━━━━""")
-            return
-
-        with open(GOOD_PROXY_FILE, 'r') as f:
-            data = json.load(f)
-
-        good_proxies = data.get('good_proxies', [])
-        count = data.get('count', 0)
-        last_updated = data.get('last_updated_human', 'Never')
-        stats = data.get('stats', {})
-
-        if not good_proxies:
-            await message.reply("""<pre>📭 No Working Proxies</pre>
-━━━━━━━━━━━━━
-⟐ <b>Message</b>: No working proxies in database.
-⟐ <b>Tip</b>: <code>Add and validate proxies with /addpx command</code>
-━━━━━━━━━━━━━""")
-            return
-
-        response = f"""<pre>✅ Working Proxies</pre>
-━━━━━━━━━━━━━
-<b>Summary:</b>
-⟐ Total Working: <code>{count}</code>
-⟐ Last Updated: <code>{last_updated}</code>
-⟐ Total Checked: <code>{stats.get('total_checked', 0)}</code>
-⟐ Dead Proxies: <code>{stats.get('dead', 0)}</code>
-━━━━━━━━━━━━━
-<b>Proxies (First 20):</b>\n"""
-
-        for i, proxy in enumerate(good_proxies[:20], 1):
-            # Shorten for display
-            if '@' in proxy:
-                short_proxy = '...' + proxy.split('@')[-1][-30:]
-            else:
-                short_proxy = proxy.replace('http://', '')[:30]
-            
-            response += f"{i}. <code>{short_proxy}</code>\n"
-
-        if len(good_proxies) > 20:
-            response += f"\n... and {len(good_proxies) - 20} more proxies\n"
-
-        response += "━━━━━━━━━━━━━\n"
-        response += "<b>File:</b> <code>FILES/goodp.json</code>\n"
-        response += "<b>Auto-Updated:</b> <code>Every 5 minutes</code>\n"
-        response += "<b>~ Note:</b> <code>Only working proxies are stored here</code>"
-
-        await message.reply(response)
-
-    except Exception as e:
-        await message.reply(f"""<pre>❌ Error</pre>
-━━━━━━━━━━━━━
-⟐ <b>Message</b>: Failed to read good proxies file.
-⟐ <b>Error</b>: <code>{str(e)[:100]}</code>
-━━━━━━━━━━━━━""")
 
 # REMOVED OLD PROXY COMMANDS COMPLETELY: getpx, setpx, delpx
