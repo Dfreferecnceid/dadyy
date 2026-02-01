@@ -270,9 +270,9 @@ def get_all_commands():
     """Get list of all valid commands in the bot"""
     valid_commands = set()
 
-    # UPDATED: Added new proxy commands including goodpx
+    # UPDATED: Added new proxy commands and removed old ones
     gate_commands = [
-        "au", "chk", "sx", "xc", "sk", "gen", "fake", "bin",
+        "au", "chk", "bu", "sq", "sx", "xc", "sk", "gen", "fake", "bin",
         "gates", "gate", "start", "help", "info", "register",
         "buy", "plans", "plan", "plus", "pro", "elite", "vip", "ultimate",
         "redeem", "looser", "broad", "notused", "off", "on", "resett",
@@ -280,9 +280,8 @@ def get_all_commands():
         "gc", "id",
         "xx", "xo", "xs", "xc", "xp", "bt", "sh", "slf",  # Charge commands
         "mau", "mchk", "mxc", "mxp", "mxx",  # Mass commands
-        # NEW PROXY COMMANDS - Added goodpx
-        "addpx", "rmvpx", "rmvall", "vpx", "pxstats", "goodpx",  # Added goodpx here
-        # REMOVED OLD PROXY COMMANDS: "setpx", "delpx", "getpx"
+        # NEW PROXY COMMANDS - Added
+        "addpx", "rmvpx", "rmvall", "vpx", "pxstats",
     ]
 
     # Add dot and dollar variants
@@ -519,242 +518,6 @@ async def resett_command(client: Client, message: Message):
 ⟐ <b>Message</b>: Failed to reset credits for {target_username}
 ⟐ <b>Error</b>: <code>{reset_msg}</code>
 ━━━━━━━━━━━━━""")
-
-# ==================== NEW ADMIN MENU COMMAND ====================
-
-@Client.on_message(filters.command(["admin", ".admin"]))
-@owner_required
-@auth_and_free_restricted
-async def admin_menu_command(client: Client, message: Message):
-    """Admin menu with all admin/owner commands - OWNER ONLY"""
-    
-    # Create inline keyboard with admin commands
-    keyboard = InlineKeyboardMarkup([
-        # Row 1: User Management
-        [
-            InlineKeyboardButton("📊 Proxy Stats", callback_data="admin_proxystats"),
-            InlineKeyboardButton("✅ Good Proxies", callback_data="admin_goodpx")
-        ],
-        # Row 2: Gift Codes & Broadcasting
-        [
-            InlineKeyboardButton("🎁 Generate Codes", callback_data="admin_gc"),
-            InlineKeyboardButton("📢 Broadcast", callback_data="admin_broad")
-        ],
-        # Row 3: User Control
-        [
-            InlineKeyboardButton("⬆️ Upgrade User", callback_data="admin_upgrade"),
-            InlineKeyboardButton("⬇️ Downgrade User", callback_data="admin_downgrade")
-        ],
-        # Row 4: Ban Management
-        [
-            InlineKeyboardButton("🚫 Ban User", callback_data="admin_ban"),
-            InlineKeyboardButton("✅ Unban User", callback_data="admin_unban")
-        ],
-        # Row 5: BIN Management
-        [
-            InlineKeyboardButton("💳 Ban BIN", callback_data="admin_banbin"),
-            InlineKeyboardButton("💳 Unban BIN", callback_data="admin_unbanbin")
-        ],
-        # Row 6: Group Management
-        [
-            InlineKeyboardButton("➕ Add Group", callback_data="admin_addgroup"),
-            InlineKeyboardButton("➖ Remove Group", callback_data="admin_removegroup")
-        ],
-        # Row 7: Command Control
-        [
-            InlineKeyboardButton("⏸️ Disable CMD", callback_data="admin_disablecmd"),
-            InlineKeyboardButton("▶️ Enable CMD", callback_data="admin_enablecmd")
-        ],
-        # Row 8: Credits & Codes
-        [
-            InlineKeyboardButton("🔄 Reset Credits", callback_data="admin_resetcredits"),
-            InlineKeyboardButton("📋 Unused Codes", callback_data="admin_unusedcodes")
-        ]
-    ])
-
-    await message.reply(
-        """<pre>#WAYNE ─[ADMIN PANEL]─</pre>
-━━━━━━━━━━━━━
-<b>Owner/Admin Commands Menu</b>
-
-<b>📊 Proxy Management:</b>
-⟐ <code>/pxstats</code> - Proxy statistics
-⟐ <code>/goodpx</code> - View working proxies
-⟐ <code>/addpx</code> - Add proxies (all users)
-⟐ <code>/rmvpx</code> - Remove proxies
-⟐ <code>/rmvall</code> - Remove all proxies
-⟐ <code>/vpx</code> - Validate proxies
-
-<b>👤 User Management:</b>
-⟐ <code>/looser</code> - Downgrade user to Free
-⟐ <code>/resett</code> - Reset user credits
-⟐ <code>/ban</code> - Ban user
-⟐ <code>/unban</code> - Unban user
-
-<b>🎁 Gift Codes:</b>
-⟐ <code>/gc</code> - Generate gift codes
-⟐ <code>/notused</code> - Check unused codes
-
-<b>💳 BIN Management:</b>
-⟐ <code>/banbin</code> - Ban BIN
-⟐ <code>/unbanbin</code> - Unban BIN
-
-<b>👥 Group Management:</b>
-⟐ <code>/add</code> - Add group to allowed list
-⟐ <code>/rmv</code> - Remove group from allowed list
-
-<b>⚙️ Command Control:</b>
-⟐ <code>/off</code> - Disable command
-⟐ <code>/on</code> - Enable command
-
-<b>📢 Broadcasting:</b>
-⟐ <code>/broad</code> - Broadcast message
-
-━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Owner Only Commands</code>
-<b>~ Tip:</b> <code>Click buttons below for quick access</code>""",
-        reply_markup=keyboard
-    )
-
-# ==================== CALLBACK HANDLERS FOR ADMIN MENU ====================
-
-@Client.on_callback_query(filters.regex("^admin_"))
-async def handle_admin_callback(client, callback_query):
-    """Handle admin menu button clicks"""
-    action = callback_query.data
-    
-    if action == "admin_proxystats":
-        await callback_query.message.reply("""<pre>📊 Proxy Statistics</pre>
-━━━━━━━━━━━━━
-⟐ <b>Command</b>: <code>/pxstats</code>
-⟐ <b>Usage</b>: View detailed proxy statistics
-⟐ <b>Access</b>: Owner only
-━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Shows proxy pool status and performance metrics</code>""")
-    
-    elif action == "admin_goodpx":
-        await callback_query.message.reply("""<pre>✅ Working Proxies</pre>
-━━━━━━━━━━━━━
-⟐ <b>Command</b>: <code>/goodpx</code>
-⟐ <b>Usage</b>: View all working proxies
-⟐ <b>Access</b>: Owner only
-━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Shows proxies from FILES/goodp.json</code>
-<b>~ Auto:</b> <code>Updated every 5 minutes</code>""")
-    
-    elif action == "admin_gc":
-        await callback_query.message.reply("""<pre>🎁 Generate Gift Codes</pre>
-━━━━━━━━━━━━━
-⟐ <b>Command</b>: <code>/gc</code>
-⟐ <b>Usage</b>: <code>/gc &lt;days&gt; &lt;num_codes&gt;</code>
-⟐ <b>Example</b>: <code>/gc 30 5</code>
-━━━━━━━━━━━━━""")
-    
-    elif action == "admin_broad":
-        await callback_query.message.reply("""<pre>📢 Broadcast Message</pre>
-━━━━━━━━━━━━━
-⟐ <b>Command</b>: <code>/broad</code>
-⟐ <b>Usage</b>: <code>/broad &lt;message&gt;</code>
-⟐ <b>Example</b>: <code>/broad Hello everyone!</code>
-━━━━━━━━━━━━━""")
-    
-    elif action == "admin_upgrade":
-        await callback_query.message.reply("""<pre>⬆️ Upgrade User</pre>
-━━━━━━━━━━━━━
-⟐ <b>Command</b>: Use plan activation commands
-⟐ <b>Plans</b>: <code>/plus</code>, <code>/pro</code>, <code>/elite</code>, <code>/vip</code>, <code>/ultimate</code>
-⟐ <b>Example</b>: <code>/plus @username</code>
-━━━━━━━━━━━━━""")
-    
-    elif action == "admin_downgrade":
-        await callback_query.message.reply("""<pre>⬇️ Downgrade User</pre>
-━━━━━━━━━━━━━
-⟐ <b>Command</b>: <code>/looser</code>
-⟐ <b>Usage</b>: <code>/looser &lt;username&gt;</code>
-⟐ <b>Example</b>: <code>/looser @username</code>
-━━━━━━━━━━━━━""")
-    
-    elif action == "admin_ban":
-        await callback_query.message.reply("""<pre>🚫 Ban User</pre>
-━━━━━━━━━━━━━
-⟐ <b>Command</b>: <code>/ban</code>
-⟐ <b>Usage</b>: <code>/ban &lt;username&gt;</code>
-⟐ <b>Example</b>: <code>/ban @username</code>
-━━━━━━━━━━━━━""")
-    
-    elif action == "admin_unban":
-        await callback_query.message.reply("""<pre>✅ Unban User</pre>
-━━━━━━━━━━━━━
-⟐ <b>Command</b>: <code>/unban</code>
-⟐ <b>Usage</b>: <code>/unban &lt;username&gt;</code>
-⟐ <b>Example</b>: <code>/unban @username</code>
-━━━━━━━━━━━━━""")
-    
-    elif action == "admin_banbin":
-        await callback_query.message.reply("""<pre>💳 Ban BIN</pre>
-━━━━━━━━━━━━━
-⟐ <b>Command</b>: <code>/banbin</code>
-⟐ <b>Usage</b>: <code>/banbin &lt;BIN&gt;</code>
-⟐ <b>Example</b>: <code>/banbin 411111</code>
-━━━━━━━━━━━━━""")
-    
-    elif action == "admin_unbanbin":
-        await callback_query.message.reply("""<pre>💳 Unban BIN</pre>
-━━━━━━━━━━━━━
-⟐ <b>Command</b>: <code>/unbanbin</code>
-⟐ <b>Usage</b>: <code>/unbanbin &lt;BIN&gt;</code>
-⟐ <b>Example</b>: <code>/unbanbin 411111</code>
-━━━━━━━━━━━━━""")
-    
-    elif action == "admin_addgroup":
-        await callback_query.message.reply("""<pre>➕ Add Group</pre>
-━━━━━━━━━━━━━
-⟐ <b>Command</b>: <code>/add</code>
-⟐ <b>Usage</b>: <code>/add &lt;chat_id&gt;</code> or just <code>/add</code> in group
-⟐ <b>Example</b>: <code>/add -1001234567890</code>
-━━━━━━━━━━━━━""")
-    
-    elif action == "admin_removegroup":
-        await callback_query.message.reply("""<pre>➖ Remove Group</pre>
-━━━━━━━━━━━━━
-⟐ <b>Command</b>: <code>/rmv</code>
-⟐ <b>Usage</b>: <code>/rmv &lt;chat_id&gt;</code> or just <code>/rmv</code> in group
-⟐ <b>Example</b>: <code>/rmv -1001234567890</code>
-━━━━━━━━━━━━━""")
-    
-    elif action == "admin_disablecmd":
-        await callback_query.message.reply("""<pre>⏸️ Disable Command</pre>
-━━━━━━━━━━━━━
-⟐ <b>Command</b>: <code>/off</code>
-⟐ <b>Usage</b>: <code>/off &lt;command&gt;</code>
-⟐ <b>Example</b>: <code>/off /au</code>
-━━━━━━━━━━━━━""")
-    
-    elif action == "admin_enablecmd":
-        await callback_query.message.reply("""<pre>▶️ Enable Command</pre>
-━━━━━━━━━━━━━
-⟐ <b>Command</b>: <code>/on</code>
-⟐ <b>Usage</b>: <code>/on &lt;command&gt;</code>
-⟐ <b>Example</b>: <code>/on /au</code>
-━━━━━━━━━━━━━""")
-    
-    elif action == "admin_resetcredits":
-        await callback_query.message.reply("""<pre>🔄 Reset Credits</pre>
-━━━━━━━━━━━━━
-⟐ <b>Command</b>: <code>/resett</code>
-⟐ <b>Usage</b>: <code>/resett &lt;username&gt;</code>
-⟐ <b>Example</b>: <code>/resett @username</code>
-━━━━━━━━━━━━━""")
-    
-    elif action == "admin_unusedcodes":
-        await callback_query.message.reply("""<pre>📋 Unused Codes</pre>
-━━━━━━━━━━━━━
-⟐ <b>Command</b>: <code>/notused</code>
-⟐ <b>Usage</b>: <code>/notused</code>
-⟐ <b>Result</b>: Shows unused gift codes
-━━━━━━━━━━━━━""")
-    
-    await callback_query.answer(f"Command info displayed")
 
 # ==================== COMMAND HANDLERS ====================
 
@@ -1132,11 +895,11 @@ async def off_command(client: Client, message: Message):
     result = disable_command(command)
 
     if result == "invalid_command":
-        # UPDATED: Added goodpx to the list of valid commands
+        # UPDATED: Added new proxy commands to the list
         await message.reply(f"""<pre>❌ Invalid Command</pre>
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: Command <code>{command}</code> does not exist in this bot.
-⟐ <b>Valid Commands:</b> <code>au, chk, xx, xo, xs, xc, xp, bt, sh, slf, mau, mchk, mxc, mxp, mxx, gen, fake, bin, gates, gate, start, help, info, register, buy, plans, plan, plus, pro, elite, vip, ultimate, redeem, looser, broad, notused, off, on, resett, banbin, unbanbin, ban, unban, add, rmv, gc, id, addpx, rmvpx, rmvall, vpx, pxstats, goodpx</code>
+⟐ <b>Valid Commands:</b> <code>au, chk, xx, xo, xs, xc, xp, bt, sh, slf, mau, mchk, mxc, mxp, mxx, gen, fake, bin, gates, gate, start, help, info, register, buy, plans, plan, plus, pro, elite, vip, ultimate, redeem, looser, broad, notused, off, on, resett, banbin, unbanbin, ban, unban, add, rmv, gc, id, addpx, rmvpx, rmvall, vpx, pxstats</code>
 ━━━━━━━━━━━━━""")
     elif result == "already_disabled":
         await message.reply(f"""<pre>ℹ️ Already Disabled</pre>
@@ -1178,11 +941,11 @@ async def on_command(client: Client, message: Message):
     result = enable_command(command)
 
     if result == "invalid_command":
-        # UPDATED: Added goodpx to the list of valid commands
+        # UPDATED: Added new proxy commands to the list
         await message.reply(f"""<pre>❌ Invalid Command</pre>
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: Command <code>{command}</code> does not exist in this bot.
-⟐ <b>Valid Commands:</b> <code>au, chk, xx, xo, xs, xc, xp, bt, sh, slf, mau, mchk, mxc, mxp, mxx, gen, fake, bin, gates, gate, start, help, info, register, buy, plans, plan, plus, pro, elite, vip, ultimate, redeem, looser, broad, notused, off, on, resett, banbin, unbanbin, ban, unban, add, rmv, gc, id, addpx, rmvpx, rmvall, vpx, pxstats, goodpx</code>
+⟐ <b>Valid Commands:</b> <code>au, chk, xx, xo, xs, xc, xp, bt, sh, slf, mau, mchk, mxc, mxp, mxx, gen, fake, bin, gates, gate, start, help, info, register, buy, plans, plan, plus, pro, elite, vip, ultimate, redeem, looser, broad, notused, off, on, resett, banbin, unbanbin, ban, unban, add, rmv, gc, id, addpx, rmvpx, rmvall, vpx, pxstats</code>
 ━━━━━━━━━━━━━""")
     elif result == "not_disabled":
         await message.reply(f"""<pre>ℹ️ Not Disabled</pre>
