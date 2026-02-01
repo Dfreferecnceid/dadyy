@@ -8,7 +8,6 @@ import time
 import httpx
 import random
 import string
-import os
 from datetime import datetime, timedelta
 from pyrogram import Client, filters
 from pyrogram.types import Message
@@ -31,13 +30,6 @@ try:
     from BOT.gc.credit import charge_processor
 except ImportError:
     charge_processor = None
-
-# Import proxy system - MODIFIED TO USE GOOD PROXIES ONLY
-try:
-    from BOT.tools.proxy import get_proxy_for_user, mark_proxy_success, mark_proxy_failed
-    PROXY_ENABLED = True
-except ImportError:
-    PROXY_ENABLED = False
 
 # Custom logger with emoji formatting
 class EmojiLogger:
@@ -148,34 +140,10 @@ def check_cooldown(user_id, command_type="xo"):
 
     return True, 0
 
-def get_good_proxy():
-    """Get a random good proxy from FILES/goodp.json - Returns None if no good proxies available"""
-    try:
-        good_proxy_file = "FILES/goodp.json"
-        if not os.path.exists(good_proxy_file):
-            logger.warning("No goodp.json file found, proceeding without proxy")
-            return None
-            
-        with open(good_proxy_file, 'r') as f:
-            data = json.load(f)
-            
-        good_proxies = data.get('good_proxies', [])
-        
-        if not good_proxies:
-            logger.warning("No good proxies available in goodp.json, proceeding without proxy")
-            return None
-            
-        # Return a random good proxy
-        selected_proxy = random.choice(good_proxies)
-        logger.success(f"Using good proxy from goodp.json: {selected_proxy[:50]}...")
-        return selected_proxy
-        
-    except Exception as e:
-        logger.warning(f"Error loading good proxies: {e}, proceeding without proxy")
-        return None
+import os
 
 class StripeCharge1Checker:
-    def __init__(self, user_id=None):
+    def __init__(self):
         # Modern browser user agents
         self.user_agents = [
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
@@ -253,16 +221,6 @@ class StripeCharge1Checker:
             r'deferred',
             r'pending'
         ]
-
-        # MODIFIED: Initialize with good proxy from goodp.json only
-        self.user_id = user_id
-        self.current_proxy = None
-        if PROXY_ENABLED:
-            self.current_proxy = get_good_proxy()
-            if self.current_proxy:
-                print(f"🔄 PROXY: Using good proxy: {self.current_proxy[:50]}...")
-            else:
-                print(f"ℹ️ PROXY: No good proxies available, will proceed without proxy")
 
     def get_country_emoji(self, country_code):
         """Hardcoded country emoji mapping"""
@@ -476,37 +434,27 @@ class StripeCharge1Checker:
         delay = random.uniform(min_delay, max_delay)
         await asyncio.sleep(delay)
 
-    # MODIFIED: make_request with good proxy support only
     async def make_request(self, client, method, url, **kwargs):
-        """Make request with good proxy support and error handling - OPTIMIZED"""
+        """Make request without unnecessary delays - OPTIMIZED"""
+        headers = kwargs.get('headers', {}).copy()
+        headers.update({
+            'User-Agent': self.user_agent,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Cache-Control': 'no-cache',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate', 
+            'Sec-Fetch-Site': 'none',
+            'Upgrade-Insecure-Requests': '1'
+        })
+        kwargs['headers'] = headers
+
         try:
-            # Add headers if not present
-            if 'headers' not in kwargs:
-                kwargs['headers'] = self.get_base_headers()
-            
-            # Add timeout if not present
-            if 'timeout' not in kwargs:
-                kwargs['timeout'] = 30.0
-            
-            # Make request
-            start_time = time.time()
             response = await client.request(method, url, **kwargs)
-            response_time = time.time() - start_time
-            
-            # Update proxy stats if good proxy was used
-            if self.current_proxy and PROXY_ENABLED:
-                if response.status_code < 400:
-                    mark_proxy_success(self.current_proxy, response_time)
-                else:
-                    mark_proxy_failed(self.current_proxy)
-            
             return response
-            
         except Exception as e:
-            # Update proxy stats on failure
-            if self.current_proxy and PROXY_ENABLED:
-                mark_proxy_failed(self.current_proxy)
-            print(f"❌ Request error for {url}: {str(e)}")
+            logger.error(f"Request error: {str(e)}")
             raise e
 
     async def initialize_session(self, client):
@@ -1012,7 +960,6 @@ class StripeCharge1Checker:
                 'message': f"Processing error: {str(e)[:100]}"
             }
 
-    # MODIFIED: check_card with good proxy support
     async def check_card(self, card_details, username, user_data):
         """Main card checking method - OPTIMIZED"""
         start_time = time.time()
@@ -1067,22 +1014,12 @@ class StripeCharge1Checker:
 
             logger.user(f"User: {user_info['first_name']} {user_info['last_name']} | {email} | {user_info['phone']}")
 
-            # MODIFIED: Create HTTP client with good proxy support only
-            client_params = {
-                'timeout': 30.0,
-                'follow_redirects': True,
-                'limits': httpx.Limits(max_keepalive_connections=5, max_connections=10),
-                'http2': True
-            }
-            
-            # Add good proxy if available
-            if self.current_proxy:
-                client_params['proxy'] = self.current_proxy
-                logger.info(f"🔄 Using good proxy: {self.current_proxy[:50]}...")
-            else:
-                logger.info("ℹ️ No good proxy available, proceeding with direct connection")
-
-            async with httpx.AsyncClient(**client_params) as client:
+            async with httpx.AsyncClient(
+                timeout=30.0,
+                follow_redirects=True,
+                limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
+                http2=True
+            ) as client:
 
                 # Step 1: Initialize session
                 if not await self.initialize_session(client):
@@ -1234,8 +1171,8 @@ async def handle_stripe_charge_1(client: Client, message: Message):
 <b>Checking card... Please wait.</b>"""
         )
 
-        # MODIFIED: Create checker instance with user_id and good proxy support
-        checker = StripeCharge1Checker(user_id)
+        # Create checker instance
+        checker = StripeCharge1Checker()
 
         # Process command through universal charge processor
         if charge_processor:
