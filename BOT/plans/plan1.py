@@ -26,41 +26,22 @@ def activate_plus_plan(user_id: str, expires_at: str = None) -> bool:
     if not user:
         return False
 
-    # NEW: Check if user already has redeemed any gift code
-    # Load gift codes data to check if user has redeemed any code
-    gift_codes = load_gift_codes()
-    user_has_redeemed = False
-
-    for code_data in gift_codes.values():
-        if code_data.get("used_by") == user_id:
-            user_has_redeemed = True
-            break
-
-    # NEW: Check if user is already premium (not Free)
-    user_plan = user.get("plan", {}).get("plan", "Free")
-    is_premium = user_plan != "Free"
-
-    # If user already has redeemed a gift code, return special code
-    if user_has_redeemed and expires_at is not None:
-        return "already_redeemed"
-
-    # If user is already premium and trying to redeem gift code, return special code
-    if is_premium and expires_at is not None:
-        return "already_premium"
-
-    # Check if user already has Plus plan
+    # Check current plan
     plan = user.get("plan", {})
-    if plan.get("plan") == PLAN_NAME:
-        # Check if this is extending an existing plan
-        current_expiry = plan.get("expires_at")
-
-        # If user has permanent plan (expires_at = None) and trying to add gift code
-        if current_expiry is None and expires_at is not None:
-            # NEW: User with permanent Plus plan cannot redeem gift codes
+    current_plan = plan.get("plan", "Free")
+    current_expiry = plan.get("expires_at")
+    
+    # NEW LOGIC: User can redeem new gift code if currently Free
+    # or if trying to extend existing temporary Plus plan
+    if current_plan == PLAN_NAME and expires_at is not None:
+        # User already has Plus plan and trying to add gift code
+        
+        if current_expiry is None:
+            # User has permanent Plus plan (cannot redeem gift codes)
             return "already_premium_permanent"
-        elif current_expiry is not None and expires_at is not None:
-            # User has temporary plan, extending with new expiry
-            # Use the later expiry date
+        elif current_expiry is not None:
+            # User has temporary Plus plan
+            # Check if this is extending an existing plan
             try:
                 current_expiry_date = datetime.strptime(current_expiry, "%Y-%m-%d %H:%M:%S")
                 new_expiry_date = datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S")
@@ -70,8 +51,11 @@ def activate_plus_plan(user_id: str, expires_at: str = None) -> bool:
                     expires_at = current_expiry  # Keep existing later expiry
             except:
                 pass
-
-        return "already_active"
+            return "already_active"
+    
+    # Check if user is already premium (not Free)
+    if current_plan != "Free" and expires_at is not None:
+        return "already_premium"
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -188,7 +172,8 @@ async def check_and_expire_plans(app: Client):
                                     int(user_id),
                                     """<pre>Notification ❗️</pre>
 <b>~ Your Gift Code Plan Is Expired</b>
-<b>~ Renew your plan</b> (<code>/buy</code>)
+<b>~ You are now back to Free plan</b>
+<b>~ You can now redeem another gift code</b>
 <b>~ Contact to Owner at @SyncBlastBot</b>
                                """)
                             except Exception as e:
