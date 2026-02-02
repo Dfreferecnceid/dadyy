@@ -14,7 +14,8 @@ import html
 # File paths
 USERS_FILE = "DATA/users.json"
 CONFIG_FILE = "FILES/config.json"
-GC_FILE = "DATA/gift_codes.txt"
+GC_FILE_TXT = "DATA/gift_codes.txt"
+GC_FILE_JSON = "DATA/gift_codes.json"  # NEW: JSON format
 BANBIN_FILE = "DATA/banbin.txt"
 BANNEDU_FILE = "DATA/banned_users.txt"
 DISABLED_COMMANDS_FILE = "DATA/disabled_commands.txt"
@@ -249,9 +250,68 @@ def random_alphanumeric(length=4):
     """Generate random alphanumeric string"""
     return ''.join(random.choices(string.ascii_uppercase + string.digits, k=length))
 
+def load_gift_codes():
+    """Load gift codes from JSON file"""
+    gift_codes = {}
+
+    # Ensure DATA directory exists
+    os.makedirs("DATA", exist_ok=True)
+
+    # Try to load from JSON file first
+    if os.path.exists(GC_FILE_JSON):
+        try:
+            with open(GC_FILE_JSON, 'r') as f:
+                gift_codes = json.load(f)
+            return gift_codes
+        except:
+            # If JSON is corrupted, create new empty dict
+            return {}
+
+    # If JSON doesn't exist, check for old txt format
+    if os.path.exists(GC_FILE_TXT):
+        try:
+            # Read old txt format and convert to dict
+            with open(GC_FILE_TXT, 'r') as f:
+                lines = f.read().splitlines()
+
+            for line in lines:
+                if '|' in line:
+                    code, expiration_date_str = line.split('|')
+                    gift_codes[code] = {
+                        "expires_at": expiration_date_str,
+                        "used": False,
+                        "used_by": None,
+                        "used_at": None,
+                        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "days_valid": 0,
+                        "plan": "Plus"
+                    }
+
+            # Save as JSON for future use
+            save_gift_codes(gift_codes)
+
+            # Remove old txt file
+            try:
+                os.remove(GC_FILE_TXT)
+            except:
+                pass
+
+            return gift_codes
+        except:
+            return {}
+
+    return {}
+
+def save_gift_codes(gift_codes):
+    """Save gift codes to JSON file"""
+    with open(GC_FILE_JSON, 'w') as f:
+        json.dump(gift_codes, f, indent=4)
+
 def generate_redeem_code(days, num_codes=1):
-    """Generate redeem codes"""
+    """Generate redeem codes and save to JSON"""
     codes = []
+    gift_codes = load_gift_codes()
+
     for _ in range(num_codes):
         part1 = random_alphanumeric(4)
         part2 = random_alphanumeric(4)
@@ -260,10 +320,22 @@ def generate_redeem_code(days, num_codes=1):
         expiration_timestamp = datetime.now() + timedelta(hours=days*24)
         expiration_date_str = expiration_timestamp.strftime("%Y-%m-%d %H:%M:%S")
 
-        with open(GC_FILE, 'a') as f:
-            f.write(f"{code}|{expiration_date_str}\n")
+        # Add to gift codes dict
+        gift_codes[code] = {
+            "expires_at": expiration_date_str,
+            "used": False,
+            "used_by": None,
+            "used_at": None,
+            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "days_valid": days,
+            "plan": "Plus"
+        }
 
         codes.append((code, expiration_date_str))
+
+    # Save all codes to JSON
+    save_gift_codes(gift_codes)
+
     return codes
 
 def get_all_commands():
@@ -525,7 +597,7 @@ async def resett_command(client: Client, message: Message):
 @owner_required
 @auth_and_free_restricted  # Use the new combined decorator
 async def gc_command(client: Client, message: Message):
-    """Generate gift codes - OWNER ONLY"""
+    """Generate gift codes - OWNER ONLY - WITH JSON FORMAT"""
     args = message.text.split()
     if len(args) < 3:
         await message.reply("""<pre>#WAYNE ─[GENERATE CODE]─</pre>
@@ -536,6 +608,19 @@ async def gc_command(client: Client, message: Message):
 ⟐ <b>Result</b>: 5 codes valid for 30 days (720 hours)
 ⟐ <b>Example</b>: <code>/gc 90 1</code>
 ⟐ <b>Result</b>: 1 code valid for 90 days (2160 hours)
+━━━━━━━━━━━━━
+<b>~ NEW Features:</b>
+• Codes saved in JSON format (gift_codes.json)
+• Better tracking of used/unused codes
+• Expiration dates strictly enforced
+• User redemption tracking
+
+<b>~ Rules for Users:</b>
+• One gift code per user only
+• Premium users cannot redeem codes
+• Codes expire on specified date
+• Plus plan only (temporary)
+
 ━━━━━━━━━━━━━
 <b>~ Note:</b> <code>Maximum 10 codes at once</code>
 <b>~ Note:</b> <code>Exact 24-hour periods (not calendar days)</code>
@@ -566,20 +651,35 @@ async def gc_command(client: Client, message: Message):
 
     codes = generate_redeem_code(days, num_codes)
 
-    response = "<pre>✅ Redeem Codes Generated</pre>\n"
+    response = "<pre>✅ Redeem Codes Generated (JSON Format)</pre>\n"
     response += "━━━━━━━━━━━━━\n"
+
     for code, expiration_date in codes:
         response += f"⟐ <b>Code</b>: <code>{code}</code>\n"
 
     hours_total = days * 24
     response += f"\n⟐ <b>Expiration</b>: <code>{expiration_date}</code>\n"
     response += f"⟐ <b>Valid For</b>: <code>{hours_total} hours ({days} days)</code>\n"
+    response += f"⟐ <b>Total Codes</b>: <code>{num_codes} codes generated</code>\n"
+    response += f"⟐ <b>Format</b>: <code>Saved in gift_codes.json</code>\n"
+    response += "━━━━━━━━━━━━━\n"
+    response += "<b>~ NEW User Rules:</b>\n"
+    response += "1. <code>One gift code per user only</code>\n"
+    response += "2. <code>Premium users cannot redeem codes</code>\n"
+    response += "3. <code>Codes expire on specified date</code>\n"
+    response += "4. <code>Plus plan only (temporary)</code>\n"
     response += "━━━━━━━━━━━━━\n"
     response += "<b>~ How to Redeem Your Code:</b>\n"
-    response += "1. Use <code>/redeem &lt;your_code&gt;</code>\n"
+    response += "1. User uses <code>/redeem &lt;your_code&gt;</code>\n"
     response += f"2. Each code valid for <code>{hours_total} hours</code>\n"
-    response += "3. Enjoy your upgraded plan!\n"
-    response += "4. Redeem at @WayneCHK_bot"
+    response += "3. System tracks user redemptions\n"
+    response += "4. User cannot redeem another code\n"
+    response += "5. Premium users blocked from redeeming\n"
+    response += "━━━━━━━━━━━━━\n"
+    response += "<b>~ Admin Tools:</b>\n"
+    response += "• <code>/notused</code> - Check unused codes\n"
+    response += "• <code>/allcodes</code> - View all codes (Owner)\n"
+    response += "• <code>/checkcode CODE</code> - Check specific code\n"
 
     await message.reply(response)
 
@@ -812,63 +912,93 @@ async def broad_command(client: Client, message: Message):
 @owner_required
 @auth_and_free_restricted  # Use the new combined decorator
 async def notused_command(client: Client, message: Message):
-    """Check unused gift codes - OWNER ONLY"""
-    if not os.path.exists(GC_FILE):
+    """Check unused gift codes - OWNER ONLY - UPDATED FOR JSON"""
+    gift_codes = load_gift_codes()
+
+    if not gift_codes:
         await message.reply("""<pre>ℹ️ Notification</pre>
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: No gift codes have been generated yet.
 ━━━━━━━━━━━━━""")
         return
 
-    with open(GC_FILE, 'r') as f:
-        valid_codes = f.read().splitlines()
-
     unused_codes = []
     expired_codes = []
-    for line in valid_codes:
-        if '|' in line:
-            code, expiration_date_str = line.split('|')
-            try:
-                expiration_timestamp = datetime.strptime(expiration_date_str, "%Y-%m-%d %H:%M:%S")
-            except ValueError:
-                try:
-                    expiration_timestamp = datetime.strptime(expiration_date_str, "%Y-%m-%d")
-                    expiration_timestamp = expiration_timestamp.replace(hour=23, minute=59, second=59)
-                except:
-                    continue
+    used_codes = []
 
-            if datetime.now() > expiration_timestamp:
-                expired_codes.append((code, expiration_date_str))
+    current_time = datetime.now()
+
+    for code, data in gift_codes.items():
+        try:
+            expiration_date_str = data.get("expires_at", "")
+            if expiration_date_str:
+                expiration_time = datetime.strptime(expiration_date_str, "%Y-%m-%d %H:%M:%S")
             else:
-                unused_codes.append((code, expiration_date_str))
+                expiration_time = current_time - timedelta(days=1)  # Mark as expired if no date
+        except:
+            expiration_time = current_time - timedelta(days=1)  # Mark as expired if parsing fails
 
-    # Remove expired codes
-    with open(GC_FILE, 'w') as f:
-        for code, expiration_date in unused_codes:
-            f.write(f"{code}|{expiration_date}\n")
+        if data.get("used", False):
+            used_codes.append((code, data))
+        elif current_time > expiration_time:
+            expired_codes.append((code, data))
+        else:
+            unused_codes.append((code, data))
 
-    response = "<pre>#WAYNE ─[UNUSED GIFT CODES]─</pre>\n"
+    response = "<pre>#WAYNE ─[GIFT CODE STATUS]─</pre>\n"
+    response += "━━━━━━━━━━━━━\n"
+    response += f"<b>📊 Statistics:</b>\n"
+    response += f"⟐ <b>Total Codes</b>: <code>{len(gift_codes)}</code>\n"
+    response += f"⟐ <b>Unused Codes</b>: <code>{len(unused_codes)}</code>\n"
+    response += f"⟐ <b>Used Codes</b>: <code>{len(used_codes)}</code>\n"
+    response += f"⟐ <b>Expired Codes</b>: <code>{len(expired_codes)}</code>\n"
     response += "━━━━━━━━━━━━━\n"
 
     if unused_codes:
         response += "✅ <b>Unused Codes:</b>\n"
-        for code, expiration_date in unused_codes:
+        for code, data in unused_codes[:5]:  # Show first 5 only
             response += f"⟐ <b>Code</b>: <code>{code}</code>\n"
-            response += f"⟐ <b>Expires</b>: <code>{expiration_date}</code>\n"
+            response += f"⟐ <b>Expires</b>: <code>{data.get('expires_at', 'Unknown')}</code>\n"
+            response += f"⟐ <b>Days Valid</b>: <code>{data.get('days_valid', 0)} days</code>\n"
+            response += "━━━━━━━━━━━━━\n"
+        if len(unused_codes) > 5:
+            response += f"<code>... and {len(unused_codes) - 5} more unused codes</code>\n"
             response += "━━━━━━━━━━━━━\n"
     else:
         response += "ℹ️ <b>No unused codes found.</b>\n"
         response += "━━━━━━━━━━━━━\n"
 
-    if expired_codes:
-        response += "❌ <b>Expired Codes (Removed):</b>\n"
-        for code, expiration_date in expired_codes:
+    if used_codes:
+        response += "🔵 <b>Used Codes:</b>\n"
+        for code, data in used_codes[:3]:  # Show first 3 only
             response += f"⟐ <b>Code</b>: <code>{code}</code>\n"
-            response += f"⟐ <b>Expired</b>: <code>{expiration_date}</code>\n"
+            response += f"⟐ <b>Used By</b>: <code>{data.get('used_by', 'Unknown')}</code>\n"
+            response += f"⟐ <b>Used At</b>: <code>{data.get('used_at', 'Unknown')}</code>\n"
+            response += "━━━━━━━━━━━━━\n"
+        if len(used_codes) > 3:
+            response += f"<code>... and {len(used_codes) - 3} more used codes</code>\n"
+            response += "━━━━━━━━━━━━━\n"
+
+    if expired_codes:
+        response += "❌ <b>Expired Codes:</b>\n"
+        for code, data in expired_codes[:3]:  # Show first 3 only
+            response += f"⟐ <b>Code</b>: <code>{code}</code>\n"
+            response += f"⟐ <b>Expired</b>: <code>{data.get('expires_at', 'Unknown')}</code>\n"
+            response += "━━━━━━━━━━━━━\n"
+        if len(expired_codes) > 3:
+            response += f"<code>... and {len(expired_codes) - 3} more expired codes</code>\n"
             response += "━━━━━━━━━━━━━\n"
     else:
         response += "ℹ️ <b>No expired codes found.</b>\n"
         response += "━━━━━━━━━━━━━\n"
+
+    response += "<b>~ File Format:</b> <code>JSON (gift_codes.json)</code>\n"
+    response += "<b>~ User Rules:</b>\n"
+    response += "• One code per user only\n"
+    response += "• Premium users cannot redeem\n"
+    response += "• Codes expire as shown\n"
+    response += "• Plus plan only (temporary)\n"
+    response += "━━━━━━━━━━━━━\n"
 
     await message.reply(response)
 
@@ -956,7 +1086,7 @@ async def on_command(client: Client, message: Message):
         await message.reply(f"""<pre>✅ Command Enabled</pre>
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: Command <code>{command}</code> has been enabled globally.
-⟐ <b>Note:</b> <code>Users can now use this command again.</code>
+⟐ <b>Note</b>: <code>Users can now use this command again.</code>
 ━━━━━━━━━━━━━""")
     else:
         await message.reply(f"""<pre>❌ Enable Failed</pre>
