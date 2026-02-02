@@ -1,5 +1,6 @@
 import json
 import asyncio
+import os
 from datetime import datetime, timedelta
 from pyrogram import Client, filters
 from BOT.helper.start import USERS_FILE, load_users, save_users, load_owner_id
@@ -25,6 +26,28 @@ def activate_plus_plan(user_id: str, expires_at: str = None) -> bool:
     if not user:
         return False
 
+    # NEW: Check if user already has redeemed any gift code
+    # Load gift codes data to check if user has redeemed any code
+    gift_codes = load_gift_codes()
+    user_has_redeemed = False
+
+    for code_data in gift_codes.values():
+        if code_data.get("used_by") == user_id:
+            user_has_redeemed = True
+            break
+
+    # NEW: Check if user is already premium (not Free)
+    user_plan = user.get("plan", {}).get("plan", "Free")
+    is_premium = user_plan != "Free"
+
+    # If user already has redeemed a gift code, return special code
+    if user_has_redeemed and expires_at is not None:
+        return "already_redeemed"
+
+    # If user is already premium and trying to redeem gift code, return special code
+    if is_premium and expires_at is not None:
+        return "already_premium"
+
     # Check if user already has Plus plan
     plan = user.get("plan", {})
     if plan.get("plan") == PLAN_NAME:
@@ -33,8 +56,8 @@ def activate_plus_plan(user_id: str, expires_at: str = None) -> bool:
 
         # If user has permanent plan (expires_at = None) and trying to add gift code
         if current_expiry is None and expires_at is not None:
-            # Keep as permanent (don't add expiry to permanent plan)
-            pass
+            # NEW: User with permanent Plus plan cannot redeem gift codes
+            return "already_premium_permanent"
         elif current_expiry is not None and expires_at is not None:
             # User has temporary plan, extending with new expiry
             # Use the later expiry date
@@ -75,6 +98,56 @@ def activate_plus_plan(user_id: str, expires_at: str = None) -> bool:
     user["role"] = PLAN_NAME
     save_users(users)
     return True
+
+def load_gift_codes():
+    """Load gift codes from GC_FILE - supports both txt and json formats"""
+    GC_FILE_TXT = "DATA/gift_codes.txt"
+    GC_FILE_JSON = "DATA/gift_codes.json"
+
+    gift_codes = {}
+
+    # First try to load from JSON file
+    if os.path.exists(GC_FILE_JSON):
+        try:
+            with open(GC_FILE_JSON, 'r') as f:
+                gift_codes = json.load(f)
+            return gift_codes
+        except:
+            pass
+
+    # If JSON doesn't exist, try to load from txt and convert
+    if os.path.exists(GC_FILE_TXT):
+        try:
+            with open(GC_FILE_TXT, 'r') as f:
+                for line in f.read().splitlines():
+                    if '|' in line:
+                        code, expiration_date_str = line.split('|')
+                        gift_codes[code] = {
+                            "expires_at": expiration_date_str,
+                            "used": False,
+                            "used_by": None,
+                            "used_at": None,
+                            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "days_valid": 0  # Will be calculated
+                        }
+
+            # Save as JSON for future use
+            save_gift_codes(gift_codes)
+            return gift_codes
+        except:
+            pass
+
+    return gift_codes
+
+def save_gift_codes(gift_codes):
+    """Save gift codes to JSON file"""
+    GC_FILE_JSON = "DATA/gift_codes.json"
+
+    # Ensure DATA directory exists
+    os.makedirs("DATA", exist_ok=True)
+
+    with open(GC_FILE_JSON, 'w') as f:
+        json.dump(gift_codes, f, indent=4)
 
 async def check_and_expire_plans(app: Client):
     """Check and expire Plus plans (only for gift code ones with expiry)"""
