@@ -128,6 +128,17 @@ def is_user_premium(user_id: str) -> bool:
     user_plan = user.get("plan", {}).get("plan", "Free")
     return user_plan != "Free"
 
+def is_user_free(user_id: str) -> bool:
+    """Check if user is currently on Free plan"""
+    users = load_users()
+    user = users.get(user_id)
+
+    if not user:
+        return False
+
+    user_plan = user.get("plan", {}).get("plan", "Free")
+    return user_plan == "Free"
+
 @Client.on_message(filters.command("redeem"))
 @auth_and_free_restricted
 async def redeem_code_command(client: Client, message: Message):
@@ -158,9 +169,10 @@ async def redeem_code_command(client: Client, message: Message):
 ⟐ <b>Example</b>: <code>/redeem WAYNE-DAD-ABCD-EFGH</code>
 ━━━━━━━━━━━━━
 <b>~ Rules:</b>
-One gift code per user only.
+Free users can redeem gift codes.
 
-<b>~ Note:</b> <code>Gift codes upgrade you to Plus plan for specified days</code>""", reply_to_message_id=message.id)
+<b>~ Note:</b> <code>Gift codes upgrade you to Plus plan for specified days</code>
+<b>~ Note:</b> <code>When gift code expires, you can redeem another one</code>""", reply_to_message_id=message.id)
         return
 
     code = message.command[1].strip().upper()
@@ -199,6 +211,8 @@ One gift code per user only.
             f"""<pre>❌ Code Already Used</pre>
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: Gift code <code>{code}</code> has already been used.
+⟐ <b>Used By</b>: <code>{used_by}</code>
+⟐ <b>Used At</b>: <code>{used_at}</code>
 ━━━━━━━━━━━━━""",
             reply_to_message_id=message.id
         )
@@ -226,50 +240,41 @@ One gift code per user only.
         )
         return
 
-    # NEW: Check if user has already redeemed any gift code
-    if user_has_redeemed_code(user_id):
-        user_codes = get_user_redeemed_codes(user_id)
-        if user_codes:
-            last_code = user_codes[-1]
-            await message.reply(
-                f"""<pre>❌ Already Redeemed</pre>
-━━━━━━━━━━━━━
-⟐ <b>Message</b>: You have already redeemed a gift code.
-⟐ <b>Last Redeemed Code</b>: <code>{last_code['code']}</code>
-⟐ <b>Redeemed At</b>: <code>{last_code['used_at']}</code>
-⟐ <b>Expires At</b>: <code>{last_code['expires_at']}</code>
-━━━━━━━━━━━━━
-<b>~ Rule:</b> <code>Each user can only redeem ONE gift code</code>""",
-                reply_to_message_id=message.id
-            )
-        else:
-            await message.reply(
-                """<pre>❌ Already Redeemed</pre>
-━━━━━━━━━━━━━
-⟐ <b>Message</b>: You have already redeemed a gift code.
-⟐ <b>Rule</b>: Each user can only redeem ONE gift code
-━━━━━━━━━━━━━""",
-                reply_to_message_id=message.id
-            )
-        return
-
-    # NEW: Check if user is already premium
-    if is_user_premium(user_id):
+    # NEW LOGIC: Check if user is currently Free
+    if not is_user_free(user_id):
         user = users[user_id]
         current_plan = user.get("plan", {}).get("plan", "Free")
         current_role = user.get("role", "Free")
-
-        await message.reply(
-            f"""<pre>❌ Premium User Detected</pre>
+        current_expiry = user.get("plan", {}).get("expires_at")
+        
+        if current_expiry is None:
+            # User has permanent plan (cannot redeem)
+            await message.reply(
+                f"""<pre>❌ Permanent Plan User</pre>
 ━━━━━━━━━━━━━
-⟐ <b>Message</b>: You already have a premium plan!
+⟐ <b>Message</b>: You have a permanent {current_plan} plan.
 ⟐ <b>Current Plan</b>: <code>{current_plan}</code>
 ⟐ <b>Current Role</b>: <code>{current_role}</code>
 ━━━━━━━━━━━━━
+<b>~ Note:</b> <code>Premium users cannot redeem gift codes</code>
 <b>~ Note:</b> <code>Gift codes are for FREE users only</code>""",
-            reply_to_message_id=message.id
-        )
-        return
+                reply_to_message_id=message.id
+            )
+            return
+        else:
+            # User has temporary plan (expiry date exists)
+            await message.reply(
+                f"""<pre>❌ Already Have Active Plan</pre>
+━━━━━━━━━━━━━
+⟐ <b>Message</b>: You already have an active {current_plan} plan!
+⟐ <b>Current Plan</b>: <code>{current_plan}</code>
+⟐ <b>Plan Expires</b>: <code>{current_expiry}</code>
+⟐ <b>Current Role</b>: <code>{current_role}</code>
+━━━━━━━━━━━━━
+<b>~ Note:</b> <code>Wait for your current plan to expire</code>""",
+                reply_to_message_id=message.id
+            )
+            return
 
     # Check if code is expired
     expires_at = code_data["expires_at"]
@@ -302,11 +307,9 @@ One gift code per user only.
         expiry_time = current_time + timedelta(days=30)  # Default fallback
 
     # IMPORTANT: Upgrade user to Plus plan WITH expiry date
-    # This passes the expires_at parameter to activate_plus_plan()
     result = activate_plus_plan(user_id, expires_at)
 
     if result == "already_active":
-        # User already has Plus plan (shouldn't happen with our checks above)
         await message.reply(
             f"""<pre>⚠️ Already Active</pre>
 ━━━━━━━━━━━━━
@@ -316,30 +319,17 @@ One gift code per user only.
             reply_to_message_id=message.id
         )
         return
-    elif result == "already_redeemed":
-        # User already redeemed a gift code
-        await message.reply(
-            """<pre>❌ Already Redeemed</pre>
-━━━━━━━━━━━━━
-⟐ <b>Message</b>: You have already redeemed a gift code.
-⟐ <b>Rule</b>: Each user can only redeem ONE gift code
-━━━━━━━━━━━━━""",
-            reply_to_message_id=message.id
-        )
-        return
     elif result == "already_premium":
-        # User is already premium
         await message.reply(
-            """<pre>❌ Premium User</pre>
+            """<pre>❌ Already Premium</pre>
 ━━━━━━━━━━━━━
-⟐ <b>Message</b>: Premium users cannot redeem gift codes.
-⟐ <b>Rule</b>: Gift codes are for FREE users only
+⟐ <b>Message</b>: You already have a premium plan.
+⟐ <b>Rule</b>: Wait for your current plan to expire first
 ━━━━━━━━━━━━━""",
             reply_to_message_id=message.id
         )
         return
     elif result == "already_premium_permanent":
-        # User has permanent Plus plan
         await message.reply(
             """<pre>❌ Permanent Plan User</pre>
 ━━━━━━━━━━━━━
@@ -368,8 +358,7 @@ One gift code per user only.
 • Mass Limit: 10 cards
 
 <b>~ Note:</b> <code>Enjoy your temporary Plus plan benefits!</code>
-<b>~ Note:</b> <code>Plan will expire on {expires_at}</code>
-<b>~ Note:</b> <code>You cannot redeem another gift code</code>"""
+<b>~ Note:</b> <code>Plan will expire on {expires_at}</code>"""
     else:
         await message.reply(
             """<pre>❌ Redeem Failed</pre>
@@ -428,7 +417,10 @@ async def mycode_command(client: Client, message: Message):
     user = users[user_id]
     plan = user.get("plan", {})
     current_plan = plan.get("plan", "Free")
-    expires_at = plan.get("expires_at", "Never (Permanent)" if plan.get("expires_at") is None else plan.get("expires_at"))
+    current_expiry = plan.get("expires_at", "Never (Permanent)" if plan.get("expires_at") is None else plan.get("expires_at"))
+    
+    # Check if user is currently Free
+    is_free = is_user_free(user_id)
 
     # Check if user has redeemed any codes
     user_codes = get_user_redeemed_codes(user_id)
@@ -437,9 +429,9 @@ async def mycode_command(client: Client, message: Message):
 ━━━━━━━━━━━━━
 ⟐ <b>User ID</b>: <code>{user_id}</code>
 ⟐ <b>Current Plan</b>: <code>{current_plan}</code>
-⟐ <b>Plan Expires</b>: <code>{expires_at}</code>
-⟐ <b>Total Redeems</b>: <code>{len(user_codes)}</code>
-⟐ <b>Can Redeem Another</b>: <code>{'❌ No' if user_has_redeemed_code(user_id) else '✅ Yes'}</code>
+⟐ <b>Plan Expires</b>: <code>{current_expiry}</code>
+⟐ <b>Current Status</b>: <code>{'✅ Free (Can Redeem)' if is_free else '❌ Premium (Cannot Redeem)'}</code>
+⟐ <b>Total Redeemed Codes</b>: <code>{len(user_codes)}</code>
 ━━━━━━━━━━━━━"""
 
     if user_codes:
@@ -447,7 +439,7 @@ async def mycode_command(client: Client, message: Message):
         for idx, code_info in enumerate(user_codes[:10], 1):  # Show max 10 codes
             response += f"{idx}. <code>{code_info['code']}</code>\n"
             response += f"   └ Used: <code>{code_info['used_at']}</code>\n"
-            response += f"   └ Expires: <code>{code_info['expires_at']}</code>\n"
+            response += f"   └ Expired: <code>{code_info['expires_at']}</code>\n"
             response += f"   └ Plan: <code>{code_info['plan']}</code>\n"
 
         if len(user_codes) > 10:
@@ -457,16 +449,13 @@ async def mycode_command(client: Client, message: Message):
         response += "<code>No gift codes redeemed yet.</code>\n"
 
     response += """━━━━━━━━━━━━━
-<b>~ Rules:</b>
-• One gift code per user only
+<b>~ New Rules:</b>
+• FREE users can redeem gift codes
 • Premium users cannot redeem codes
-• Codes expire as specified
-• Plus plan only (temporary)
 
 <b>~ How to Get Codes:</b>
-• Ask admin for gift codes
 • Use <code>/redeem CODE</code> to activate
-• Each code gives temporary Plus plan benefits"""
+• Each code gives Plus plan benefits"""
 
     await message.reply(response, reply_to_message_id=message.id)
 
@@ -575,8 +564,9 @@ async def checkcode_command(client: Client, message: Message):
 • Mass Limit: 10 cards
 
 <b>~ Rules:</b>
-• One code per user only
+• Free users can redeem codes
 • Premium users cannot redeem
+• After expiration, user can redeem another code
 • Expires on date shown""",
             reply_to_message_id=message.id
         )
