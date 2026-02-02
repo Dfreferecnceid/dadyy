@@ -2,51 +2,151 @@ import json
 import random
 import string
 from datetime import datetime, timedelta
+import os
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from BOT.helper.start import USERS_FILE, load_users, save_users, load_owner_id
 from BOT.plans.plan1 import activate_plus_plan
-import os
+from BOT.helper.Admins import (
+    is_command_disabled, get_command_offline_message,
+    is_user_restricted_for_command
+)
+from BOT.helper.permissions import auth_and_free_restricted
 
 user_redeem_cooldowns = {}
 REDEEM_DELAY_SECONDS = 90  # 1 minute 30 seconds
-REDEEM_PLAN_NAME = "Redeem Code"
+REDEEM_PLAN_NAME = "Plus"  # Gift codes give Plus plan
 REDEEM_BADGE = "🎁"
 DEFAULT_BADGE = "🧿"
 DEFAULT_ANTISPAM = 15
 DEFAULT_MLIMIT = 5
 
 OWNER_ID = load_owner_id()
-GC_FILE = "DATA/gift_codes.txt"  # Gift codes from /gc command
+GC_FILE_TXT = "DATA/gift_codes.txt"  # Old txt format
+GC_FILE_JSON = "DATA/gift_codes.json"  # New JSON format
 
 def load_gift_codes():
-    """Load gift codes from GC_FILE"""
-    if not os.path.exists(GC_FILE):
-        return {}
-
+    """Load gift codes from JSON file with proper structure"""
     gift_codes = {}
-    with open(GC_FILE, 'r') as f:
-        for line in f.read().splitlines():
+
+    # Ensure DATA directory exists
+    os.makedirs("DATA", exist_ok=True)
+
+    # Try to load from JSON file first
+    if os.path.exists(GC_FILE_JSON):
+        try:
+            with open(GC_FILE_JSON, 'r') as f:
+                gift_codes = json.load(f)
+            return gift_codes
+        except Exception as e:
+            print(f"Error loading JSON gift codes: {e}")
+            # If JSON is corrupted, try to convert from txt
+            return convert_txt_to_json()
+
+    # If JSON doesn't exist, try to convert from txt
+    return convert_txt_to_json()
+
+def convert_txt_to_json():
+    """Convert old txt format to new JSON format"""
+    gift_codes = {}
+
+    if not os.path.exists(GC_FILE_TXT):
+        # Create empty JSON file
+        save_gift_codes(gift_codes)
+        return gift_codes
+
+    try:
+        with open(GC_FILE_TXT, 'r') as f:
+            lines = f.read().splitlines()
+
+        for line in lines:
             if '|' in line:
                 code, expiration_date_str = line.split('|')
                 gift_codes[code] = {
                     "expires_at": expiration_date_str,
                     "used": False,
                     "used_by": None,
-                    "used_at": None
+                    "used_at": None,
+                    "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "days_valid": 0,
+                    "plan": "Plus"
                 }
-    return gift_codes
+
+        # Save as JSON and remove old txt file
+        save_gift_codes(gift_codes)
+        try:
+            os.remove(GC_FILE_TXT)
+        except:
+            pass
+
+        return gift_codes
+    except Exception as e:
+        print(f"Error converting txt to JSON: {e}")
+        return {}
 
 def save_gift_codes(gift_codes):
-    """Save gift codes to GC_FILE"""
-    with open(GC_FILE, 'w') as f:
-        for code, data in gift_codes.items():
-            if not data["used"]:  # Only save unused codes
-                f.write(f"{code}|{data['expires_at']}\n")
+    """Save gift codes to JSON file"""
+    # Ensure DATA directory exists
+    os.makedirs("DATA", exist_ok=True)
+
+    with open(GC_FILE_JSON, 'w') as f:
+        json.dump(gift_codes, f, indent=4)
+
+def user_has_redeemed_code(user_id: str) -> bool:
+    """Check if user has already redeemed any gift code"""
+    gift_codes = load_gift_codes()
+
+    for code, data in gift_codes.items():
+        if data.get("used_by") == user_id:
+            return True
+    return False
+
+def get_user_redeemed_codes(user_id: str):
+    """Get all codes redeemed by a user"""
+    gift_codes = load_gift_codes()
+    user_codes = []
+
+    for code, data in gift_codes.items():
+        if data.get("used_by") == user_id:
+            user_codes.append({
+                "code": code,
+                "used_at": data.get("used_at"),
+                "expires_at": data.get("expires_at"),
+                "plan": data.get("plan", "Plus")
+            })
+
+    return user_codes
+
+def is_user_premium(user_id: str) -> bool:
+    """Check if user already has premium plan (not Free)"""
+    users = load_users()
+    user = users.get(user_id)
+
+    if not user:
+        return False
+
+    user_plan = user.get("plan", {}).get("plan", "Free")
+    return user_plan != "Free"
 
 @Client.on_message(filters.command("redeem"))
+@auth_and_free_restricted
 async def redeem_code_command(client: Client, message: Message):
     """Handle gift code redemption from /gc command"""
+    # Check if command is disabled
+    command_text = message.text.split()[0] if message.text else ""
+    if is_command_disabled(command_text):
+        await message.reply(get_command_offline_message(command_text))
+        return
+
+    # Check if user is restricted
+    if is_user_restricted_for_command(message.from_user.id, command_text):
+        await message.reply("""<pre>🚫 Access Restricted</pre>
+━━━━━━━━━━━━━
+⟐ <b>Message</b>: You are restricted from using this command.
+⟐ <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
+━━━━━━━━━━━━━""")
+        return
+
     users = load_users()
     user_id = str(message.from_user.id)
 
@@ -57,12 +157,15 @@ async def redeem_code_command(client: Client, message: Message):
 ⟐ <b>Usage</b>: <code>/redeem &lt;gift_code&gt;</code>
 ⟐ <b>Example</b>: <code>/redeem WAYNE-DAD-ABCD-EFGH</code>
 ━━━━━━━━━━━━━
+<b>~ Rules:</b>
+One gift code per user only.
+
 <b>~ Note:</b> <code>Gift codes upgrade you to Plus plan for specified days</code>""", reply_to_message_id=message.id)
         return
 
     code = message.command[1].strip().upper()
 
-    # Check if it's a valid gift code format - FIXED: Remove length check
+    # Check if it's a valid gift code format
     if not code.startswith("WAYNE-DAD-"):
         await message.reply(
             f"""<pre>❌ Invalid Code Format</pre>
@@ -82,10 +185,6 @@ async def redeem_code_command(client: Client, message: Message):
             f"""<pre>❌ Code Not Found</pre>
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: Gift code <code>{code}</code> not found.
-⟐ <b>Possible Reasons</b>:
-   • Code doesn't exist
-   • Code has been deleted
-   • Wrong code entered
 ━━━━━━━━━━━━━""",
             reply_to_message_id=message.id
         )
@@ -94,14 +193,12 @@ async def redeem_code_command(client: Client, message: Message):
     code_data = gift_codes[code]
 
     if code_data["used"]:
-        used_by = code_data['used_by'] or 'Unknown'
-        used_at = code_data['used_at'] or 'Unknown'
+        used_by = code_data.get('used_by') or 'Unknown'
+        used_at = code_data.get('used_at') or 'Unknown'
         await message.reply(
             f"""<pre>❌ Code Already Used</pre>
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: Gift code <code>{code}</code> has already been used.
-⟐ <b>Used By</b>: <code>{used_by}</code>
-⟐ <b>Used At</b>: <code>{used_at}</code>
 ━━━━━━━━━━━━━""",
             reply_to_message_id=message.id
         )
@@ -129,6 +226,51 @@ async def redeem_code_command(client: Client, message: Message):
         )
         return
 
+    # NEW: Check if user has already redeemed any gift code
+    if user_has_redeemed_code(user_id):
+        user_codes = get_user_redeemed_codes(user_id)
+        if user_codes:
+            last_code = user_codes[-1]
+            await message.reply(
+                f"""<pre>❌ Already Redeemed</pre>
+━━━━━━━━━━━━━
+⟐ <b>Message</b>: You have already redeemed a gift code.
+⟐ <b>Last Redeemed Code</b>: <code>{last_code['code']}</code>
+⟐ <b>Redeemed At</b>: <code>{last_code['used_at']}</code>
+⟐ <b>Expires At</b>: <code>{last_code['expires_at']}</code>
+━━━━━━━━━━━━━
+<b>~ Rule:</b> <code>Each user can only redeem ONE gift code</code>""",
+                reply_to_message_id=message.id
+            )
+        else:
+            await message.reply(
+                """<pre>❌ Already Redeemed</pre>
+━━━━━━━━━━━━━
+⟐ <b>Message</b>: You have already redeemed a gift code.
+⟐ <b>Rule</b>: Each user can only redeem ONE gift code
+━━━━━━━━━━━━━""",
+                reply_to_message_id=message.id
+            )
+        return
+
+    # NEW: Check if user is already premium
+    if is_user_premium(user_id):
+        user = users[user_id]
+        current_plan = user.get("plan", {}).get("plan", "Free")
+        current_role = user.get("role", "Free")
+
+        await message.reply(
+            f"""<pre>❌ Premium User Detected</pre>
+━━━━━━━━━━━━━
+⟐ <b>Message</b>: You already have a premium plan!
+⟐ <b>Current Plan</b>: <code>{current_plan}</code>
+⟐ <b>Current Role</b>: <code>{current_role}</code>
+━━━━━━━━━━━━━
+<b>~ Note:</b> <code>Gift codes are for FREE users only</code>""",
+            reply_to_message_id=message.id
+        )
+        return
+
     # Check if code is expired
     expires_at = code_data["expires_at"]
     current_time = datetime.now()
@@ -146,82 +288,88 @@ async def redeem_code_command(client: Client, message: Message):
                 reply_to_message_id=message.id
             )
             return
-    except Exception as e:
-        # If date parsing fails, assume code is valid
-        print(f"Error parsing expiry date: {e}")
 
-    # Calculate days remaining
-    try:
-        expiry_time = datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S")
+        # Calculate days remaining
         days_remaining = (expiry_time - current_time).days
         hours_remaining = int((expiry_time - current_time).seconds / 3600)
         if days_remaining < 0:
             days_remaining = 0
             hours_remaining = 0
-    except:
+    except Exception as e:
+        # If date parsing fails, assume code is valid but can't calculate days
         days_remaining = "Unknown"
         hours_remaining = "Unknown"
+        expiry_time = current_time + timedelta(days=30)  # Default fallback
 
     # IMPORTANT: Upgrade user to Plus plan WITH expiry date
     # This passes the expires_at parameter to activate_plus_plan()
     result = activate_plus_plan(user_id, expires_at)
 
     if result == "already_active":
-        # User already has Plus plan, just extend expiry and add credits
-        user = users[user_id]
-
-        # Update expiry date from gift code (if needed)
-        current_expiry = user["plan"].get("expires_at")
-        if current_expiry is None:
-            # User has permanent plan, keep it permanent (don't add expiry)
-            pass
-        elif current_expiry is not None:
-            # User already has temporary plan, update to new expiry if later
-            try:
-                current_expiry_time = datetime.strptime(current_expiry, "%Y-%m-%d %H:%M:%S")
-                new_expiry_time = datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S")
-                if new_expiry_time > current_expiry_time:
-                    user["plan"]["expires_at"] = expires_at
-                    days_remaining = (new_expiry_time - current_time).days
-                    hours_remaining = int((new_expiry_time - current_time).seconds / 3600)
-                else:
-                    # Keep existing later expiry
-                    expires_at = current_expiry
-            except:
-                pass
-
-        # Add Plus plan credit bonus (200 credits)
-        current_credits = user["plan"]["credits"]
-        if current_credits != "∞":
-            try:
-                current_credits = int(current_credits)
-                new_credits = current_credits + 200  # Plus plan bonus
-                user["plan"]["credits"] = str(new_credits)
-            except:
-                user["plan"]["credits"] = "200"
-
-        response = f"""<pre>✅ Gift Code Redeemed</pre>
+        # User already has Plus plan (shouldn't happen with our checks above)
+        await message.reply(
+            f"""<pre>⚠️ Already Active</pre>
 ━━━━━━━━━━━━━
-⟐ <b>Message</b>: Gift code <code>{code}</code> redeemed successfully!
-⟐ <b>Status</b>: Plus plan extended
+⟐ <b>Message</b>: You already have an active Plus plan.
 ⟐ <b>Expires At</b>: <code>{expires_at}</code>
-⟐ <b>Days Remaining</b>: <code>{days_remaining} days ({hours_remaining} hours)</code>
-⟐ <b>Bonus</b>: 200 credits added
-⟐ <b>User ID</b>: <code>{user_id}</code>
+━━━━━━━━━━━━━""",
+            reply_to_message_id=message.id
+        )
+        return
+    elif result == "already_redeemed":
+        # User already redeemed a gift code
+        await message.reply(
+            """<pre>❌ Already Redeemed</pre>
 ━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Your Plus plan has been extended with gift code benefits</code>"""
+⟐ <b>Message</b>: You have already redeemed a gift code.
+⟐ <b>Rule</b>: Each user can only redeem ONE gift code
+━━━━━━━━━━━━━""",
+            reply_to_message_id=message.id
+        )
+        return
+    elif result == "already_premium":
+        # User is already premium
+        await message.reply(
+            """<pre>❌ Premium User</pre>
+━━━━━━━━━━━━━
+⟐ <b>Message</b>: Premium users cannot redeem gift codes.
+⟐ <b>Rule</b>: Gift codes are for FREE users only
+━━━━━━━━━━━━━""",
+            reply_to_message_id=message.id
+        )
+        return
+    elif result == "already_premium_permanent":
+        # User has permanent Plus plan
+        await message.reply(
+            """<pre>❌ Permanent Plan User</pre>
+━━━━━━━━━━━━━
+⟐ <b>Message</b>: You have a permanent Plus plan.
+⟐ <b>Rule</b>: Permanent plan users cannot redeem gift codes
+━━━━━━━━━━━━━""",
+            reply_to_message_id=message.id
+        )
+        return
     elif result:
-        # Successfully upgraded to Plus plan
-        response = f"""<pre>✅ Gift Code Redeemed</pre>
+        # Successfully upgraded to Plus plan via gift code
+        response = f"""<pre>✅ Gift Code Redeemed Successfully!</pre>
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: Gift code <code>{code}</code> redeemed successfully!
-⟐ <b>Status</b>: Upgraded to Plus Plan
+⟐ <b>Status</b>: Upgraded to Plus Plan (Temporary)
 ⟐ <b>Expires At</b>: <code>{expires_at}</code>
 ⟐ <b>Days Remaining</b>: <code>{days_remaining} days ({hours_remaining} hours)</code>
 ⟐ <b>Bonus</b>: 200 credits added
 ⟐ <b>User ID</b>: <code>{user_id}</code>
 ━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Enjoy your Plus plan benefits!</code>"""
+<b>~ Benefits:</b>
+• Plus Plan features enabled
+• 200 Credits added
+• Reduced Anti-Spam (13s)
+• Private Mode enabled
+• Mass Limit: 10 cards
+
+<b>~ Note:</b> <code>Enjoy your temporary Plus plan benefits!</code>
+<b>~ Note:</b> <code>Plan will expire on {expires_at}</code>
+<b>~ Note:</b> <code>You cannot redeem another gift code</code>"""
     else:
         await message.reply(
             """<pre>❌ Redeem Failed</pre>
@@ -248,6 +396,21 @@ async def redeem_code_command(client: Client, message: Message):
 @Client.on_message(filters.command(["mycode", ".mycode"]))
 async def mycode_command(client: Client, message: Message):
     """Check user's redeem code status"""
+    # Check if command is disabled
+    command_text = message.text.split()[0] if message.text else ""
+    if is_command_disabled(command_text):
+        await message.reply(get_command_offline_message(command_text))
+        return
+
+    # Check if user is restricted
+    if is_user_restricted_for_command(message.from_user.id, command_text):
+        await message.reply("""<pre>🚫 Access Restricted</pre>
+━━━━━━━━━━━━━
+⟐ <b>Message</b>: You are restricted from using this command.
+⟐ <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
+━━━━━━━━━━━━━""")
+        return
+
     users = load_users()
     user_id = str(message.from_user.id)
 
@@ -264,28 +427,19 @@ async def mycode_command(client: Client, message: Message):
 
     user = users[user_id]
     plan = user.get("plan", {})
-    keyredeem = plan.get("keyredeem", 0)
     current_plan = plan.get("plan", "Free")
     expires_at = plan.get("expires_at", "Never (Permanent)" if plan.get("expires_at") is None else plan.get("expires_at"))
 
-    # Load gift codes to find which ones user used
-    gift_codes = load_gift_codes()
-    user_codes = []
-
-    for code, data in gift_codes.items():
-        if data["used_by"] == user_id:
-            user_codes.append({
-                "code": code,
-                "used_at": data["used_at"],
-                "expires_at": data["expires_at"]
-            })
+    # Check if user has redeemed any codes
+    user_codes = get_user_redeemed_codes(user_id)
 
     response = f"""<pre>#WAYNE ─[MY CODE STATUS]─</pre>
 ━━━━━━━━━━━━━
 ⟐ <b>User ID</b>: <code>{user_id}</code>
 ⟐ <b>Current Plan</b>: <code>{current_plan}</code>
 ⟐ <b>Plan Expires</b>: <code>{expires_at}</code>
-⟐ <b>Total Redeems</b>: <code>{keyredeem}</code>
+⟐ <b>Total Redeems</b>: <code>{len(user_codes)}</code>
+⟐ <b>Can Redeem Another</b>: <code>{'❌ No' if user_has_redeemed_code(user_id) else '✅ Yes'}</code>
 ━━━━━━━━━━━━━"""
 
     if user_codes:
@@ -294,6 +448,7 @@ async def mycode_command(client: Client, message: Message):
             response += f"{idx}. <code>{code_info['code']}</code>\n"
             response += f"   └ Used: <code>{code_info['used_at']}</code>\n"
             response += f"   └ Expires: <code>{code_info['expires_at']}</code>\n"
+            response += f"   └ Plan: <code>{code_info['plan']}</code>\n"
 
         if len(user_codes) > 10:
             response += f"\n<b>...</b> <code>and {len(user_codes) - 10} more codes</code>\n"
@@ -302,16 +457,37 @@ async def mycode_command(client: Client, message: Message):
         response += "<code>No gift codes redeemed yet.</code>\n"
 
     response += """━━━━━━━━━━━━━
+<b>~ Rules:</b>
+• One gift code per user only
+• Premium users cannot redeem codes
+• Codes expire as specified
+• Plus plan only (temporary)
+
 <b>~ How to Get Codes:</b>
 • Ask admin for gift codes
 • Use <code>/redeem CODE</code> to activate
-• Each code gives Plus plan benefits"""
+• Each code gives temporary Plus plan benefits"""
 
     await message.reply(response, reply_to_message_id=message.id)
 
 @Client.on_message(filters.command(["checkcode", ".checkcode"]))
 async def checkcode_command(client: Client, message: Message):
     """Check if a gift code is valid"""
+    # Check if command is disabled
+    command_text = message.text.split()[0] if message.text else ""
+    if is_command_disabled(command_text):
+        await message.reply(get_command_offline_message(command_text))
+        return
+
+    # Check if user is restricted
+    if is_user_restricted_for_command(message.from_user.id, command_text):
+        await message.reply("""<pre>🚫 Access Restricted</pre>
+━━━━━━━━━━━━━
+⟐ <b>Message</b>: You are restricted from using this command.
+⟐ <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
+━━━━━━━━━━━━━""")
+        return
+
     if len(message.command) < 2:
         await message.reply(
             """<pre>#WAYNE ─[CHECK CODE]─</pre>
@@ -355,14 +531,12 @@ async def checkcode_command(client: Client, message: Message):
     code_data = gift_codes[code]
 
     if code_data["used"]:
-        used_by = code_data['used_by'] or 'Unknown'
-        used_at = code_data['used_at'] or 'Unknown'
+        used_by = code_data.get('used_by') or 'Unknown'
+        used_at = code_data.get('used_at') or 'Unknown'
         await message.reply(
             f"""<pre>❌ Code Already Used</pre>
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: Gift code <code>{code}</code> has been used.
-⟐ <b>Used By</b>: <code>{used_by}</code>
-⟐ <b>Used At</b>: <code>{used_at}</code>
 ⟐ <b>Status</b>: ❌ Not Available
 ━━━━━━━━━━━━━""",
             reply_to_message_id=message.id
@@ -391,12 +565,19 @@ async def checkcode_command(client: Client, message: Message):
 ⟐ <b>Expires At</b>: <code>{expires_at}</code>
 ⟐ <b>Time Remaining</b>: <code>{days_remaining} days ({hours_remaining} hours)</code>
 ⟐ <b>Used</b>: <code>{'Yes' if code_data['used'] else 'No'}</code>
+⟐ <b>Created At</b>: <code>{code_data.get('created_at', 'Unknown')}</code>
 ━━━━━━━━━━━━━
 <b>~ Benefits:</b>
 • Upgrades to Plus Plan
 • 200 Credits Bonus
 • Reduced Antispam (13s)
-• Private Mode Enabled""",
+• Private Mode Enabled
+• Mass Limit: 10 cards
+
+<b>~ Rules:</b>
+• One code per user only
+• Premium users cannot redeem
+• Expires on date shown""",
             reply_to_message_id=message.id
         )
 
@@ -417,6 +598,12 @@ async def checkcode_command(client: Client, message: Message):
 @Client.on_message(filters.command(["allcodes", ".allcodes"]))
 async def allcodes_command(client: Client, message: Message):
     """Show all gift codes (OWNER ONLY)"""
+    # Check if command is disabled
+    command_text = message.text.split()[0] if message.text else ""
+    if is_command_disabled(command_text):
+        await message.reply(get_command_offline_message(command_text))
+        return
+
     user_id = str(message.from_user.id)
 
     if user_id != OWNER_ID:
