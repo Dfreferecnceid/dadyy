@@ -451,12 +451,14 @@ def auth_and_free_restricted(func):
                 )
                 return
 
-            # Group is authorized - check command type
-            user_id = message.from_user.id
+            # Group is authorized - ALLOW ALL PROXY COMMANDS WITHOUT FURTHER CHECKS
+            # This is the FIX: Proxy commands should be allowed in authorized groups
+            if is_proxy_command(command_text):
+                return await func(client, message)
 
             # Check for admin commands first
             if is_admin_command(command_text):
-                if not is_user_admin(user_id):
+                if not is_user_admin(message.from_user.id):
                     await message.reply("""<pre>⛔ Admin Only</pre>
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: This command is for admin users only.
@@ -467,14 +469,10 @@ def auth_and_free_restricted(func):
             if is_auth_command(command_text):
                 return await func(client, message)
 
-            # Proxy commands are available to all users in authorized groups
-            if is_proxy_command(command_text):
-                return await func(client, message)
-
             # Charge commands need credit check
             if is_charge_command(command_text):
                 # Check credits
-                has_credits, credit_msg = check_credits_for_charge(user_id, command_text)
+                has_credits, credit_msg = check_credits_for_charge(message.from_user.id, command_text)
                 if not has_credits:
                     await message.reply(credit_msg)
                     return
