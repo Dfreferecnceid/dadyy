@@ -90,7 +90,7 @@ class ShopifyLogger:
         masked_cc = cc[:6] + "******" + cc[-4:] if len(cc) > 10 else cc
 
         log_msg = f"""
-🛒 [SHOPIFY HTTP CHECKOUT]
+🛒 [SHOPIFY CHECKOUT]
    ├── Check ID: {self.check_id}
    ├── User ID: {self.user_id or 'N/A'}
    ├── Card: {masked_cc}
