@@ -1115,8 +1115,6 @@ async def validate_proxy_command(client, message: Message):
         response += f"\n... and {len(results) - 10} more proxies\n"
 
     response += "━━━━━━━━━━━━━\n"
-    response += "<b>~ Note:</b> <code>Valid proxies are automatically added to global pool</code>"
-    response += "<b>~ Note:</b> <code>Gates will only use valid, non-dead proxies</code>"
 
     await msg.edit(response)
 
