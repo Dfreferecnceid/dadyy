@@ -24,7 +24,6 @@ PROXY_FILE = "DATA/proxy.json"
 GLOBAL_PROXY_FILE = "FILES/proxy.csv"
 VALID_PROXY_FILE = "DATA/valid_proxies.json"
 DEAD_PROXY_FILE = "DATA/dead_proxies.json"
-USER_PROXY_TRACK_FILE = "DATA/user_proxy_tracking.json"
 
 # Lock for thread-safe operations
 _proxy_lock = threading.Lock()
@@ -38,29 +37,12 @@ def is_owner(user_id: int) -> bool:
     except:
         return False
 
-def load_user_proxy_tracking():
-    """Load which user added which proxy"""
-    try:
-        if os.path.exists(USER_PROXY_TRACK_FILE):
-            with open(USER_PROXY_TRACK_FILE, "r") as f:
-                return json.load(f)
-    except:
-        pass
-    return {}
-
-def save_user_proxy_tracking(tracking_data):
-    """Save user proxy tracking data"""
-    try:
-        with open(USER_PROXY_TRACK_FILE, "w") as f:
-            json.dump(tracking_data, f, indent=2)
-    except:
-        pass
-
 class ProxyManager:
     """Thread-safe proxy manager with dual-site validation"""
 
     def __init__(self):
-        self.user_proxies: Dict[str, str] = {}
+        self.user_proxies: Dict[str, List[str]] = {}  # user_id -> list of proxies
+        self.user_proxy_map: Dict[str, str] = {}  # proxy -> user_id for ownership
         self.valid_proxies: List[str] = []
         self.dead_proxies: Set[str] = set()
         self.perm_dead_proxies: Set[str] = set()
@@ -69,13 +51,12 @@ class ProxyManager:
         self.executor = ThreadPoolExecutor(max_workers=50)
         self.last_validation = 0
         self.last_cleanup = time.time()
-        self.user_proxy_tracking = load_user_proxy_tracking()
 
         print("🔄 Initializing Proxy Manager...")
         self.load_and_validate_all_proxies()
 
     def normalize_proxy(self, proxy_raw: str) -> Optional[str]:
-        """ORIGINAL: Normalize proxy string to URL format - HTTP ONLY"""
+        """Normalize proxy string to URL format - HTTP ONLY"""
         proxy_raw = proxy_raw.strip()
 
         if not proxy_raw:
@@ -87,19 +68,19 @@ class ProxyManager:
             return proxy_raw.replace("https://", "http://")
 
         # Format: USER:PASS@HOST:PORT
-        match1 = re.match(r"(.+?):(.+?)@([a-zA-Z0-9\.\-]+):(\d+)", proxy_raw)
+        match1 = re.fullmatch(r"(.+?):(.+?)@([a-zA-Z0-9\.\-]+):(\d+)", proxy_raw)
         if match1:
             user, pwd, host, port = match1.groups()
             return f"http://{user}:{pwd}@{host}:{port}"
 
         # Format: HOST:PORT:USER:PASS
-        match2 = re.match(r"([a-zA-Z0-9\.\-]+):(\d+):(.+?):(.+)", proxy_raw)
+        match2 = re.fullmatch(r"([a-zA-Z0-9\.\-]+):(\d+):(.+?):(.+)", proxy_raw)
         if match2:
             host, port, user, pwd = match2.groups()
             return f"http://{user}:{pwd}@{host}:{port}"
 
         # Format: HOST:PORT (no auth)
-        match3 = re.match(r"([a-zA-Z0-9\.\-]+):(\d+)", proxy_raw)
+        match3 = re.fullmatch(r"([a-zA-Z0-9\.\-]+):(\d+)", proxy_raw)
         if match3:
             host, port = match3.groups()
             return f"http://{host}:{port}"
@@ -115,11 +96,24 @@ class ProxyManager:
             if os.path.exists(PROXY_FILE):
                 try:
                     with open(PROXY_FILE, "r") as f:
-                        self.user_proxies = json.load(f)
-                    print(f"✅ Loaded {len(self.user_proxies)} user proxies")
+                        data = json.load(f)
+                        # Load user proxies with backward compatibility
+                        if isinstance(data, dict) and "user_proxies" in data:
+                            self.user_proxies = data.get("user_proxies", {})
+                            self.user_proxy_map = data.get("user_proxy_map", {})
+                        else:
+                            # Old format - convert
+                            self.user_proxies = {}
+                            self.user_proxy_map = {}
+                            for user_id, proxy in data.items():
+                                if proxy:
+                                    self.user_proxies.setdefault(str(user_id), []).append(proxy)
+                                    self.user_proxy_map[proxy] = str(user_id)
+                    print(f"✅ Loaded {len(self.user_proxy_map)} user proxies from {len(self.user_proxies)} users")
                 except Exception as e:
                     print(f"❌ Error loading user proxies: {e}")
                     self.user_proxies = {}
+                    self.user_proxy_map = {}
 
             # Load previously validated proxies
             self._load_valid_proxies()
@@ -129,7 +123,7 @@ class ProxyManager:
 
             if new_proxies:
                 print(f"📥 Found {len(new_proxies)} new proxies in CSV, validating with dual-site check...")
-                self._validate_proxy_batch_dual(new_proxies)
+                self._validate_proxy_batch_dual(new_proxies, owner_id="system")
             else:
                 print(f"⚠️ No proxies found in {GLOBAL_PROXY_FILE}")
 
@@ -183,7 +177,7 @@ class ProxyManager:
             for proxy in normalized_proxies:
                 if (proxy not in self.valid_proxies and 
                     proxy not in self.perm_dead_proxies and
-                    proxy not in self.user_proxies.values()):
+                    proxy not in self.user_proxy_map):
                     new_proxies.append(proxy)
 
             return new_proxies
@@ -233,7 +227,7 @@ class ProxyManager:
 
         return best_result
 
-    def _validate_proxy_batch_dual(self, proxies: List[str]):
+    def _validate_proxy_batch_dual(self, proxies: List[str], owner_id: str = "system"):
         """Validate a batch of proxies with dual-site checking"""
         if self.validation_in_progress:
             print("⚠️ Validation already in progress, skipping...")
@@ -259,26 +253,40 @@ class ProxyManager:
                 try:
                     result = future.result(timeout=12)  # (is_valid, response_time, ip, site)
                     if result[0]:  # Valid proxy
-                        self.valid_proxies.append(proxy)
-                        self.proxy_stats[proxy] = {
-                            'success': 1,
-                            'fails': 0,
-                            'response_time': result[1],
-                            'ip': result[2],
-                            'site': result[3],
-                            'last_used': time.time()
-                        }
+                        with _proxy_lock:
+                            self.valid_proxies.append(proxy)
+                            self.proxy_stats[proxy] = {
+                                'success': 1,
+                                'fails': 0,
+                                'response_time': result[1],
+                                'ip': result[2],
+                                'site': result[3],
+                                'last_used': time.time(),
+                                'owner': owner_id if owner_id != "system" else "global"
+                            }
+                            # Track user ownership
+                            if owner_id != "system":
+                                self.user_proxy_map[proxy] = owner_id
+                                self.user_proxies.setdefault(owner_id, []).append(proxy)
                         valid_count += 1
-                        print(f"✅ Proxy validated via {result[3]}: {proxy[:50]}...")
+                        print(f"✅ Proxy validated via {result[3]}: {proxy[:60]}...")
                     else:
-                        self.perm_dead_proxies.add(proxy)
+                        with _proxy_lock:
+                            self.perm_dead_proxies.add(proxy)
+                            if owner_id != "system":
+                                self.user_proxy_map[proxy] = owner_id
+                                self.user_proxies.setdefault(owner_id, []).append(proxy)
                         dead_count += 1
-                        print(f"❌ Proxy dead: {proxy[:50]}...")
+                        print(f"❌ Proxy dead: {proxy[:60]}...")
 
                 except Exception as e:
-                    self.perm_dead_proxies.add(proxy)
+                    with _proxy_lock:
+                        self.perm_dead_proxies.add(proxy)
+                        if owner_id != "system":
+                            self.user_proxy_map[proxy] = owner_id
+                            self.user_proxies.setdefault(owner_id, []).append(proxy)
                     dead_count += 1
-                    print(f"❌ Proxy error: {proxy[:50]}... - {str(e)[:50]}")
+                    print(f"❌ Proxy error: {proxy[:60]}... - {str(e)[:50]}")
 
             print(f"📊 Validation Complete: {valid_count} valid, {dead_count} dead")
             self.last_validation = time.time()
@@ -295,11 +303,21 @@ class ProxyManager:
                 'valid': self.valid_proxies,
                 'dead': list(self.perm_dead_proxies),
                 'stats': self.proxy_stats,
+                'user_proxies': self.user_proxies,
+                'user_proxy_map': self.user_proxy_map,
                 'last_updated': time.time()
             }
 
             with open(VALID_PROXY_FILE, "w") as f:
                 json.dump(data, f, indent=2)
+
+            # Also save user proxies separately
+            user_data = {
+                'user_proxies': self.user_proxies,
+                'user_proxy_map': self.user_proxy_map
+            }
+            with open(PROXY_FILE, "w") as f:
+                json.dump(user_data, f, indent=2)
 
             print(f"💾 Saved {len(self.valid_proxies)} valid proxies to {VALID_PROXY_FILE}")
 
@@ -312,16 +330,26 @@ class ProxyManager:
             # Clean dead proxies periodically
             self._clean_dead_proxies()
 
-            # 1. Check user-specific proxy first
             user_str = str(user_id)
+            
+            # 1. Check user's own proxies first
             if user_str in self.user_proxies:
-                proxy = self.user_proxies[user_str]
-                if proxy not in self.dead_proxies and proxy not in self.perm_dead_proxies:
+                user_proxy_list = self.user_proxies[user_str]
+                # Filter out dead proxies
+                available_user_proxies = [p for p in user_proxy_list 
+                                         if p not in self.dead_proxies 
+                                         and p not in self.perm_dead_proxies
+                                         and p in self.valid_proxies]
+                
+                if available_user_proxies:
+                    proxy = random.choice(available_user_proxies)
                     self._update_stats(proxy)
                     return proxy
 
-            # 2. Use validated proxy pool
-            available_proxies = [p for p in self.valid_proxies if p not in self.dead_proxies]
+            # 2. Use validated global proxy pool (excluding other users' proxies)
+            available_proxies = [p for p in self.valid_proxies 
+                               if p not in self.dead_proxies 
+                               and self.user_proxy_map.get(p) in [None, "global", "system"]]
 
             if not available_proxies:
                 return None
@@ -351,13 +379,15 @@ class ProxyManager:
     def _update_stats(self, proxy: str):
         """Update proxy usage statistics"""
         if proxy not in self.proxy_stats:
+            owner = self.user_proxy_map.get(proxy, "global")
             self.proxy_stats[proxy] = {
                 'success': 0,
                 'fails': 0,
                 'response_time': 5.0,
                 'ip': 'Unknown',
                 'site': 'Unknown',
-                'last_used': time.time()
+                'last_used': time.time(),
+                'owner': owner
             }
         else:
             self.proxy_stats[proxy]['last_used'] = time.time()
@@ -401,7 +431,7 @@ class ProxyManager:
 
         self.last_cleanup = current
 
-    def validate_single_proxy(self, proxy_raw: str) -> Tuple[bool, str, float, str]:
+    def validate_single_proxy(self, proxy_raw: str, owner_id: str = "system") -> Tuple[bool, str, float, str]:
         """Validate a single proxy immediately with dual-site check"""
         proxy_url = self.normalize_proxy(proxy_raw)
 
@@ -428,20 +458,27 @@ class ProxyManager:
                     'response_time': response_time,
                     'ip': ip,
                     'site': site,
-                    'last_used': time.time()
+                    'last_used': time.time(),
+                    'owner': owner_id if owner_id != "system" else "global"
                 }
-                # Track which user added this proxy
-                # Note: We can't track user here since this is called from /vpx command
+                # Track user ownership
+                if owner_id != "system":
+                    self.user_proxy_map[proxy_url] = owner_id
+                    self.user_proxies.setdefault(owner_id, []).append(proxy_url)
                 self._save_valid_proxies()
             return True, ip, response_time, site
         else:
             with _proxy_lock:
                 self.perm_dead_proxies.add(proxy_url)
+                # Still track ownership even if dead
+                if owner_id != "system":
+                    self.user_proxy_map[proxy_url] = owner_id
+                    self.user_proxies.setdefault(owner_id, []).append(proxy_url)
                 self._save_valid_proxies()
             return False, f"Failed on both sites", response_time, "Failed"
 
-    def add_proxies_bulk(self, proxies_text: str, user_id: int = None) -> Dict[str, int]:
-        """Add multiple proxies from text (bulk addition) - TRACK USER WHO ADDED"""
+    def add_proxies_bulk(self, proxies_text: str, user_id: str) -> Dict[str, int]:
+        """Add multiple proxies from text (bulk addition)"""
         lines = proxies_text.strip().split('\n')
         normalized_proxies = []
 
@@ -452,30 +489,21 @@ class ProxyManager:
                 if proxy:
                     normalized_proxies.append(proxy)
 
-        # Filter out already known
+        # Filter out already known (owned by this user or global)
         new_proxies = []
         for proxy in normalized_proxies:
-            if (proxy not in self.valid_proxies and 
-                proxy not in self.perm_dead_proxies):
+            proxy_owner = self.user_proxy_map.get(proxy)
+            if proxy_owner is None or proxy_owner == user_id:
                 new_proxies.append(proxy)
 
         if not new_proxies:
             return {'total': 0, 'new': 0, 'duplicate': len(normalized_proxies)}
 
-        # Validate new proxies
-        self._validate_proxy_batch_dual(new_proxies)
-        
-        # Track which user added these proxies
-        if user_id:
-            user_str = str(user_id)
-            for proxy in new_proxies:
-                # Add to tracking
-                self.user_proxy_tracking[proxy] = user_str
-            save_user_proxy_tracking(self.user_proxy_tracking)
-        
+        # Validate new proxies with user ownership
+        self._validate_proxy_batch_dual(new_proxies, owner_id=user_id)
         self._save_valid_proxies()
 
-        stats = self.get_stats()
+        stats = self.get_stats_for_user(user_id)
         return {
             'total': len(normalized_proxies),
             'new': len(new_proxies),
@@ -484,8 +512,8 @@ class ProxyManager:
             'available_now': stats['available_now']
         }
 
-    def remove_proxies_bulk(self, proxies_text: str, user_id: int = None) -> Dict[str, int]:
-        """Remove multiple proxies from text - ONLY USER CAN REMOVE THEIR OWN"""
+    def remove_proxies_bulk(self, proxies_text: str, user_id: str) -> Dict[str, int]:
+        """Remove multiple proxies from text (user can only remove their own)"""
         lines = proxies_text.strip().split('\n')
         normalized_proxies = []
 
@@ -499,43 +527,44 @@ class ProxyManager:
         removed_count = 0
         with _proxy_lock:
             for proxy in normalized_proxies:
-                # Check if user can remove this proxy
-                can_remove = False
-                if user_id and proxy in self.user_proxy_tracking:
-                    # User can remove if they added it
-                    if self.user_proxy_tracking[proxy] == str(user_id):
-                        can_remove = True
-                elif is_owner(user_id):
-                    # Owner can remove any proxy
-                    can_remove = True
-                
-                if can_remove:
+                # Check if user owns this proxy
+                proxy_owner = self.user_proxy_map.get(proxy)
+                if proxy_owner == user_id:
                     # Remove from valid proxies
                     if proxy in self.valid_proxies:
                         self.valid_proxies.remove(proxy)
                         removed_count += 1
 
-                    # Remove from stats
+                    # Remove from user's list
+                    if user_id in self.user_proxies:
+                        if proxy in self.user_proxies[user_id]:
+                            self.user_proxies[user_id].remove(proxy)
+                            if not self.user_proxies[user_id]:
+                                del self.user_proxies[user_id]
+
+                    # Remove from stats and maps
                     if proxy in self.proxy_stats:
                         del self.proxy_stats[proxy]
+                    
+                    if proxy in self.user_proxy_map:
+                        del self.user_proxy_map[proxy]
 
                     # Remove from dead sets
                     self.dead_proxies.discard(proxy)
                     self.perm_dead_proxies.discard(proxy)
-                    
-                    # Remove from tracking
-                    if proxy in self.user_proxy_tracking:
-                        del self.user_proxy_tracking[proxy]
 
         if removed_count > 0:
             self._save_valid_proxies()
-            save_user_proxy_tracking(self.user_proxy_tracking)
 
         return {
             'requested': len(normalized_proxies),
             'removed': removed_count,
-            'remaining': len(self.valid_proxies)
+            'remaining': self.get_user_proxy_count(user_id)
         }
+
+    def get_user_proxy_count(self, user_id: str) -> int:
+        """Get count of proxies owned by user"""
+        return len(self.user_proxies.get(user_id, []))
 
     def remove_all_proxies(self) -> int:
         """Remove all proxies from global pool"""
@@ -545,7 +574,8 @@ class ProxyManager:
             self.dead_proxies = set()
             self.perm_dead_proxies = set()
             self.proxy_stats = {}
-            self.user_proxy_tracking = {}
+            self.user_proxies = {}
+            self.user_proxy_map = {}
 
             # Also clear CSV file
             try:
@@ -554,56 +584,109 @@ class ProxyManager:
                 pass
 
             self._save_valid_proxies()
-            save_user_proxy_tracking({})
 
         return removed_count
 
-    def get_stats(self, user_id: int = None) -> Dict:
-        """Get statistics about proxy usage - FILTER BY USER IF SPECIFIED"""
+    def get_stats_for_user(self, user_id: str) -> Dict:
+        """Get statistics about user's own proxies"""
         with _proxy_lock:
-            # Calculate success rates
+            user_proxy_list = self.user_proxies.get(user_id, [])
+            
+            # Calculate user's proxy stats
+            valid_count = 0
+            dead_count = 0
+            temp_dead_count = 0
+            
+            user_proxy_performance = []
+            
+            for proxy in user_proxy_list:
+                is_valid = proxy in self.valid_proxies
+                is_dead = proxy in self.perm_dead_proxies
+                is_temp_dead = proxy in self.dead_proxies
+                
+                if is_valid:
+                    valid_count += 1
+                elif is_dead:
+                    dead_count += 1
+                elif is_temp_dead:
+                    temp_dead_count += 1
+                
+                # Get performance stats
+                if proxy in self.proxy_stats:
+                    stats = self.proxy_stats[proxy]
+                    success = stats.get('success', 0)
+                    fails = stats.get('fails', 0)
+                    total = success + fails
+                    rate = (success / total * 100) if total > 0 else 0
+                    
+                    user_proxy_performance.append({
+                        'proxy': proxy,  # User sees complete proxy
+                        'success': success,
+                        'fails': fails,
+                        'rate': rate,
+                        'response_time': stats.get('response_time', 0),
+                        'site': stats.get('site', 'Unknown'),
+                        'status': '✅' if proxy not in self.dead_proxies else '❌',
+                        'valid': is_valid
+                    })
+
+            user_proxy_performance.sort(key=lambda x: x['rate'], reverse=True)
+
+            return {
+                'total_valid': valid_count,
+                'total_dead': dead_count,
+                'temp_dead': temp_dead_count,
+                'available_now': len([p for p in user_proxy_list if p in self.valid_proxies and p not in self.dead_proxies]),
+                'user_proxies': user_proxy_performance,
+                'total_owned': len(user_proxy_list)
+            }
+
+    def get_stats(self, requesting_user_id: str = None) -> Dict:
+        """Get full statistics about proxy usage (owner sees ALL proxies)"""
+        with _proxy_lock:
+            is_owner_user = is_owner(int(requesting_user_id)) if requesting_user_id else False
+            
+            # Calculate overall stats
             proxy_performance = []
             
-            # Filter proxies based on user
-            proxies_to_show = []
-            if user_id and not is_owner(user_id):
-                # Regular user: only show proxies they added
-                user_str = str(user_id)
-                for proxy in self.valid_proxies:
-                    if proxy in self.user_proxy_tracking and self.user_proxy_tracking[proxy] == user_str:
-                        proxies_to_show.append(proxy)
-            else:
-                # Owner: show all proxies
-                proxies_to_show = self.valid_proxies
-
-            for proxy in proxies_to_show:
-                stats = self.proxy_stats.get(proxy, {})
+            for proxy, stats in self.proxy_stats.items():
+                # Owner sees ALL proxies, regular users see only their own
+                proxy_owner = stats.get('owner', 'global')
+                
+                if not is_owner_user and proxy_owner != requesting_user_id:
+                    continue  # Regular users only see their own proxies
+                    
                 success = stats.get('success', 0)
                 fails = stats.get('fails', 0)
                 total = success + fails
                 rate = (success / total * 100) if total > 0 else 0
+                
                 proxy_performance.append({
-                    'proxy': proxy,  # FULL proxy, not truncated
+                    'proxy': proxy,  # Complete proxy shown
                     'success': success,
                     'fails': fails,
                     'rate': rate,
                     'response_time': stats.get('response_time', 0),
                     'site': stats.get('site', 'Unknown'),
-                    'status': '✅' if proxy not in self.dead_proxies else '❌'
+                    'status': '✅' if proxy not in self.dead_proxies else '❌',
+                    'owner': proxy_owner,
+                    'is_owner': is_owner_user
                 })
 
             proxy_performance.sort(key=lambda x: x['rate'], reverse=True)
 
+            available_proxies = [p for p in self.valid_proxies if p not in self.dead_proxies]
+            
             return {
                 'total_valid': len(self.valid_proxies),
-                'total_user': len(self.user_proxies),
+                'total_user': len(self.user_proxy_map),
                 'total_dead': len(self.perm_dead_proxies),
                 'temp_dead': len(self.dead_proxies),
-                'available_now': len([p for p in self.valid_proxies if p not in self.dead_proxies]),
+                'available_now': len(available_proxies),
                 'top_proxies': proxy_performance[:10],
                 'last_validation': self.last_validation,
                 'validation_in_progress': self.validation_in_progress,
-                'user_proxies': len([p for p in self.valid_proxies if user_id and str(user_id) in self.user_proxy_tracking.values()]) if user_id else 0
+                'is_owner': is_owner_user
             }
 
     def trigger_validation(self):
@@ -611,18 +694,21 @@ class ProxyManager:
         if self.validation_in_progress:
             return "Validation already in progress"
         
-        # Reload proxies from CSV and validate
+        # Load new proxies from CSV
         new_proxies = self._load_proxies_from_csv()
+        
         if new_proxies:
-            self._validate_proxy_batch_dual(new_proxies)
-            self._save_valid_proxies()
-            return f"Validation started for {len(new_proxies)} proxies"
+            # Start validation in background
+            import threading
+            validation_thread = threading.Thread(
+                target=self._validate_proxy_batch_dual,
+                args=(new_proxies, "system"),
+                daemon=True
+            )
+            validation_thread.start()
+            return f"Started validation of {len(new_proxies)} new proxies"
         else:
-            # Validate existing proxies
-            all_proxies = self.valid_proxies.copy()
-            self._validate_proxy_batch_dual(all_proxies)
-            self._save_valid_proxies()
-            return f"Validation started for {len(all_proxies)} existing proxies"
+            return "No new proxies to validate"
 
 # Global proxy manager instance
 proxy_manager = ProxyManager()
@@ -711,7 +797,7 @@ def test_proxy(proxy_str: str) -> bool:
 PROXY_ENABLED = True
 
 # ==============================================
-# COMMAND HANDLERS - FIXED: NO ADMIN CHECKS
+# NEW COMMAND HANDLERS
 # ==============================================
 
 @Client.on_message(filters.command(["addpx", ".addpx"]))
@@ -775,7 +861,7 @@ async def add_proxy_command(client, message: Message):
     else:
         await message.reply("""<pre>#WAYNE 〔/addpx〕</pre>
 ━━━━━━━━━━━━━
-<pre>Add proxies to global pool</pre>
+<pre>Add proxies to your personal pool</pre>
 <pre>Methods:</pre>
 1. <code>/addpx proxy1:port</code> (single)
 2. <code>/addpx proxy1:port\\nproxy2:port</code> (multiple lines)
@@ -784,54 +870,55 @@ async def add_proxy_command(client, message: Message):
 <pre>Formats Supported:</pre>
 <code>• ip:port</code>
 <code>• user:pass@ip:port</code>
-<code>• ip:port:user:pass</code>
+<code>• ip:port:user:pass</code> (NEW: supports your format!)
 <code>• http://ip:port</code>
 ━━━━━━━━━━━━━
 <pre>Examples:</pre>
-<code>/addpx 192.168.1.1:8080</code>
-<code>/addpx user:pass@proxy.com:8080</code>
 <code>/addpx 204.12.199.52:8888:user_8786443f:T5f1464aSzM1FGSj</code>
-<code>/addpx evo-pro.porterproxies.com:62345:PP_MLXEA0ROCN-country-US:dp81eqnp</code>
+<code>/addpx user:pass@proxy.com:8080</code>
+<code>/addpx 192.168.1.1:8080</code>
 ━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Proxies auto-validate and classify as good/bad</code>
-<b>~ Note:</b> <code>Available for all users</code>
-<b>~ Note:</b> <code>You can only see and remove proxies you added</code>""")
+<b>~ Note:</b> <code>Proxies auto-validate and are added to YOUR personal pool</code>
+<b>~ Note:</b> <code>Only you can see and use your own proxies</code>
+<b>~ Note:</b> <code>Available for all users in authorized groups</code>""")
         return
 
-    # Process proxies with user tracking
-    result = proxy_manager.add_proxies_bulk(proxies_text, message.from_user.id)
+    # Process proxies with user ownership
+    user_id_str = str(message.from_user.id)
+    result = proxy_manager.add_proxies_bulk(proxies_text, user_id_str)
 
     if result['total'] == 0:
         await msg.edit("""<pre>⚠️ No Proxies Found</pre>
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: No valid proxy formats found in input.
-⟐ <b>Tip</b>: <code>Check your proxy format (ip:port or user:pass@ip:port or ip:port:user:pass)</code>
+⟐ <b>Tip</b>: <code>Check your proxy format (ip:port:user:pass or user:pass@ip:port)</code>
 ━━━━━━━━━━━━━""")
         return
 
-    # Get updated stats for this user
-    stats = proxy_manager.get_stats(message.from_user.id)
+    # Get user's stats
+    user_stats = proxy_manager.get_stats_for_user(user_id_str)
 
-    await msg.edit(f"""<pre>✅ Proxies Added</pre>
+    await msg.edit(f"""<pre>✅ Proxies Added to Your Pool</pre>
 ━━━━━━━━━━━━━
 <b>Processing Results:</b>
 ⟐ Total Input: <code>{result['total']}</code>
 ⟐ New Proxies: <code>{result['new']}</code>
 ⟐ Duplicates: <code>{result['duplicate']}</code>
 ━━━━━━━━━━━━━
-<b>Your Proxy Status:</b>
-⟐ Your Valid Proxies: <code>{stats['user_proxies']}</code>
-⟐ Global Valid Proxies: <code>{result['valid_now']}</code>
-⟐ Available Now: <code>{result['available_now']}</code>
+<b>Your Pool Status:</b>
+⟐ Your Valid Proxies: <code>{user_stats['total_valid']}</code>
+⟐ Available Now: <code>{user_stats['available_now']}</code>
+⟐ Dead Proxies: <code>{user_stats['total_dead']}</code>
+⟐ Total Owned: <code>{user_stats['total_owned']}</code>
 ━━━━━━━━━━━━━
 <b>~ Note:</b> <code>Proxies validated with dual-site check (ipinfo.io + httpbin.org)</code>
-<b>~ Note:</b> <code>You can only see and remove proxies you added</code>
+<b>~ Note:</b> <code>Only YOU can see and use these proxies (complete details shown to you)</code>
 <b>~ Tip:</b> <code>Use /vpx to validate specific proxies</code>""")
 
 @Client.on_message(filters.command(["rmvpx", ".rmvpx"]))
 @auth_and_free_restricted
 async def remove_proxy_command(client, message: Message):
-    """Remove proxies (single or bulk) - AVAILABLE TO ALL USERS (OWN PROXIES ONLY)"""
+    """Remove proxies (single or bulk) - AVAILABLE TO ALL USERS (only own proxies)"""
 
     # Check if command is disabled
     command_text = message.text.split()[0] if message.text else ""
@@ -857,7 +944,7 @@ async def remove_proxy_command(client, message: Message):
             with open(file_path, 'r') as f:
                 proxies_text = f.read()
             os.remove(file_path)
-            await msg.edit("<pre>🔍 Removing proxies from file...</pre>")
+            await msg.edit("<pre>🔍 Removing your proxies from file...</pre>")
         except Exception as e:
             await msg.edit(f"""<pre>❌ File Error</pre>
 ━━━━━━━━━━━━━
@@ -869,34 +956,34 @@ async def remove_proxy_command(client, message: Message):
     # Check for text in message
     elif len(message.command) > 1:
         proxies_text = message.text.split(maxsplit=1)[1]
-        msg = await message.reply("<pre>🔍 Removing proxies from text...</pre>")
+        msg = await message.reply("<pre>🔍 Removing your proxies...</pre>")
 
     else:
         await message.reply("""<pre>#WAYNE 〔/rmvpx〕</pre>
 ━━━━━━━━━━━━━
-<pre>Remove proxies from global pool</pre>
+<pre>Remove YOUR proxies from your pool</pre>
 <pre>Methods:</pre>
 1. <code>/rmvpx proxy1:port</code> (single)
 2. <code>/rmvpx proxy1:port\\nproxy2:port</code> (multiple)
 3. <b>Send .txt file</b> with /rmvpx command
 ━━━━━━━━━━━━━
-<pre>Note:</b> You can only remove proxies that you added</pre>
-<b>~ Note:</b> <code>Available for all users (own proxies only)</code>""")
+<pre>Note:</b> You can only remove YOUR OWN proxies</pre>
+<b>~ Note:</b> <code>Available for all users in authorized groups</code>""")
         return
 
-    # Remove proxies with user restriction
-    result = proxy_manager.remove_proxies_bulk(proxies_text, message.from_user.id)
+    # Remove proxies (user can only remove their own)
+    user_id_str = str(message.from_user.id)
+    result = proxy_manager.remove_proxies_bulk(proxies_text, user_id_str)
 
-    await msg.edit(f"""<pre>{'✅ Proxies Removed' if result['removed'] > 0 else '⚠️ No Proxies Removed'}</pre>
+    await msg.edit(f"""<pre>{'✅ Your Proxies Removed' if result['removed'] > 0 else '⚠️ No Proxies Removed'}</pre>
 ━━━━━━━━━━━━━
 <b>Removal Results:</b>
 ⟐ Requested: <code>{result['requested']}</code>
-⟐ Removed: <code>{result['removed']}</code>
-⟐ Remaining: <code>{result['remaining']}</code>
+⟐ Removed (Yours): <code>{result['removed']}</code>
+⟐ Your Remaining: <code>{result['remaining']}</code>
 ━━━━━━━━━━━━━
-<b>~ Note:</b> <code>You can only remove proxies that you added</code>
-<b>~ Note:</b> <code>Owner can remove any proxy</code>
-<b>~ Tip:</b> <code>Use /rmvall to clear everything (Owner Only)</code>""")
+<b>~ Note:</b> <code>You can only remove proxies that YOU own</code>
+<b>~ Note:</b> <code>Use /addpx to add new proxies to your pool</code>""")
 
 @Client.on_message(filters.command(["rmvall", ".rmvall"]))
 @auth_and_free_restricted
@@ -935,6 +1022,7 @@ async def remove_all_proxies_command(client, message: Message):
 <b>Action:</b> Clears all valid, dead, and temporary proxies
 <b>CSV File:</b> Will be emptied
 <b>Stats:</b> Will be reset
+<b>User Proxies:</b> Will be removed for ALL users
 ━━━━━━━━━━━━━
 <pre>To confirm, type:</pre>
 <code>/rmvall confirm</code>
@@ -945,7 +1033,7 @@ async def remove_all_proxies_command(client, message: Message):
     msg = await message.reply("<pre>🗑️ Removing ALL proxies...</pre>")
 
     # Get count before removal
-    stats_before = proxy_manager.get_stats()
+    stats_before = proxy_manager.get_stats(str(message.from_user.id))
 
     # Remove all
     removed_count = proxy_manager.remove_all_proxies()
@@ -961,13 +1049,14 @@ async def remove_all_proxies_command(client, message: Message):
 <b>CSV File:</b> <code>Cleared</code>
 <b>Valid Proxies File:</b> <code>Cleared</code>
 <b>Stats File:</b> <code>Reset</code>
+<b>User Proxies:</b> <code>Cleared for all users</code>
 ━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Proxy pool is now empty. Add new proxies with /addpx</code>""")
+<b>~ Note:</b> <code>Proxy pool is now empty. Users can add new proxies with /addpx</code>""")
 
 @Client.on_message(filters.command(["vpx", ".vpx"]))
 @auth_and_free_restricted
 async def validate_proxy_command(client, message: Message):
-    """Validate specific proxies - AVAILABLE TO ALL USERS"""
+    """Validate specific proxies - AVAILABLE TO ALL USERS (shows complete proxy to user)"""
 
     # Check if command is disabled
     command_text = message.text.split()[0] if message.text else ""
@@ -993,8 +1082,8 @@ async def validate_proxy_command(client, message: Message):
 2. <code>/vpx proxy1:port\\nproxy2:port</code> (multiple)
 3. <b>Send .txt file</b> with /vpx command
 ━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Available for all users</code>
-<b>~ Note:</b> <code>Valid proxies are automatically added to pool</code>"""
+<b>~ Note:</b> <code>Shows complete proxy details (no masking)</code>
+<b>~ Note:</b> <code>Available for all users in authorized groups</code>"""
 
         await message.reply(usage)
         return
@@ -1022,19 +1111,21 @@ async def validate_proxy_command(client, message: Message):
     # Parse proxies
     lines = proxies_text.strip().split('\n')
     proxies_to_test = []
+    
+    user_id_str = str(message.from_user.id)
 
     for line in lines:
         line = line.strip()
         if line and not line.startswith('#'):
             proxy = proxy_manager.normalize_proxy(line)
             if proxy:
-                proxies_to_test.append((line, proxy))  # Keep original for display
+                proxies_to_test.append((line, proxy))
 
     if not proxies_to_test:
         await msg.edit("""<pre>❌ No Valid Formats</pre>
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: No valid proxy formats found.
-⟐ <b>Tip</b>: <code>Use ip:port or user:pass@ip:port or ip:port:user:pass format</code>
+⟐ <b>Tip</b>: <code>Use ip:port:user:pass or user:pass@ip:port format</code>
 ━━━━━━━━━━━━━""")
         return
 
@@ -1042,14 +1133,14 @@ async def validate_proxy_command(client, message: Message):
     results = []
 
     for original, proxy_url in proxies_to_test:
-        is_valid, info, response_time, site = proxy_manager.validate_single_proxy(original)
+        is_valid, info, response_time, site = proxy_manager.validate_single_proxy(original, user_id_str)
 
-        # SHOW COMPLETE PROXY (not truncated)
-        display = proxy_url  # Show full proxy
+        # User sees complete proxy (no masking)
+        display = proxy_url
 
         results.append({
-            'proxy': display,
-            'original': original,
+            'proxy': display,  # Complete proxy shown
+            'full_proxy': proxy_url,
             'valid': is_valid,
             'info': info,
             'time': response_time,
@@ -1070,10 +1161,9 @@ async def validate_proxy_command(client, message: Message):
 
     for i, r in enumerate(results[:10], 1):  # Show first 10
         status = "✅" if r['valid'] else "❌"
-        # Show complete proxy in code tags
         response += f"{i}. {status} <code>{r['proxy']}</code>\n"
         if r['valid']:
-            response += f"   → IP: {r['info']} | {r['time']:.2f}s | {r['site']}\n"
+            response += f"   → {r['info']} | {r['time']:.2f}s | {r['site']}\n"
         else:
             response += f"   → {r['info']}\n"
 
@@ -1081,15 +1171,15 @@ async def validate_proxy_command(client, message: Message):
         response += f"\n... and {len(results) - 10} more proxies\n"
 
     response += "━━━━━━━━━━━━━\n"
-    response += "<b>~ Note:</b> <code>Valid proxies are automatically added to pool</code>\n"
-    response += "<b>~ Note:</b> <code>You can only see and remove proxies you added</code>"
+    response += "<b>~ Note:</b> <code>Valid proxies added to your personal pool</code>"
+    response += "\n<b>~ Note:</b> <code>Only you can see and use these proxies (complete details shown)</code>"
 
     await msg.edit(response)
 
 @Client.on_message(filters.command(["pxstats", ".pxstats"]))
 @auth_and_free_restricted
 async def proxy_stats_handler(client, message: Message):
-    """Show detailed proxy statistics - OWNER ONLY (with auto-validation)"""
+    """Show detailed proxy statistics - OWNER ONLY with auto-validation"""
 
     # Check if command is disabled
     command_text = message.text.split()[0] if message.text else ""
@@ -1108,62 +1198,84 @@ async def proxy_stats_handler(client, message: Message):
 
     # Check if owner
     if not is_owner(message.from_user.id):
-        # Regular users can see their own stats
-        msg = await message.reply("<pre>📊 Fetching your proxy statistics...</pre>")
-        stats = proxy_manager.get_stats(message.from_user.id)
+        # Show user their own stats instead of owner stats
+        user_id_str = str(message.from_user.id)
+        user_stats = proxy_manager.get_stats_for_user(user_id_str)
         
         response = f"""<pre>📊 Your Proxy Statistics</pre>
 ━━━━━━━━━━━━━━━
-<b>Your Proxy Status:</b>
-⟐ Your Valid Proxies: <code>{stats['user_proxies']}</code>
-⟐ Global Valid Proxies: <code>{stats['total_valid']}</code>
-⟐ Available Now: <code>{stats['available_now']}</code>
+<b>Your Pool Status:</b>
+⟐ Your Valid Proxies: <code>{user_stats['total_valid']}</code>
+⟐ Available Now: <code>{user_stats['available_now']}</code>
+⟐ Dead Proxies: <code>{user_stats['total_dead']}</code>
+⟐ Temporary Dead: <code>{user_stats['temp_dead']}</code>
+⟐ Total Owned: <code>{user_stats['total_owned']}</code>
 ━━━━━━━━━━━━━━━
-<b>~ Note:</b> <code>You can only see and remove proxies you added</code>
-<b>~ Note:</b> <code>Owner can see all proxies with /pxstats</code>
-<b>~ Tip:</b> <code>Use /addpx to add more proxies</code>"""
+<b>Your Proxies (Complete Details):</b>\n"""
+
+        for i, proxy_data in enumerate(user_stats['user_proxies'][:5], 1):
+            proxy = proxy_data['proxy']  # Complete proxy shown
+            success = proxy_data['success']
+            fails = proxy_data['fails']
+            rate = proxy_data['rate']
+            rt = proxy_data['response_time']
+            site = proxy_data.get('site', 'Unknown')
+            status = proxy_data['status']
+            valid = "✅ Valid" if proxy_data['valid'] else "❌ Invalid"
+            
+            response += f"{i}. {status} <code>{proxy}</code>\n"
+            response += f"   → {valid} | {rate:.1f}% | {rt:.2f}s | {site} | {success}✅ {fails}❌\n"
+
+        if len(user_stats['user_proxies']) > 5:
+            response += f"\n... and {len(user_stats['user_proxies']) - 5} more of your proxies\n"
+
+        response += "━━━━━━━━━━━━━━━\n"
+        response += "<b>~ Note:</b> <code>You can only see your own proxies</code>"
+        response += "\n<b>~ Note:</b> <code>Owner can see ALL proxies with /pxstats</code>"
+        response += "\n<b>~ Note:</b> <code>Use /addpx to add more proxies</code>"
         
-        await msg.edit(response)
+        await message.reply(response)
         return
 
-    # Owner: Start auto-validation and show all stats
-    msg = await message.reply("<pre>🔄 Starting proxy validation...</pre>")
+    msg = await message.reply("<pre>🔄 Triggering proxy validation...</pre>")
     
-    # Trigger validation
-    validation_result = proxy_manager.trigger_validation()
+    # Trigger auto-validation (owner only)
+    validation_msg = proxy_manager.trigger_validation()
     
-    # Wait a bit for validation to progress
+    # Wait a bit for validation to start
     await asyncio.sleep(2)
     
-    # Get updated stats
-    stats = proxy_manager.get_stats()
+    # Get stats with owner view (sees ALL proxies)
+    user_id_str = str(message.from_user.id)
+    stats = proxy_manager.get_stats(user_id_str)
 
-    response = f"""<pre>📊 Proxy Statistics (Owner View)</pre>
+    response = f"""<pre>📊 Proxy Statistics (👑 Owner View - ALL PROXIES)</pre>
 ━━━━━━━━━━━━━━━
-<b>Pool Status:</b>
+<b>Global Pool Status:</b>
 ⟐ Valid Proxies: <code>{stats['total_valid']}</code>
 ⟐ Available Now: <code>{stats['available_now']}</code>
 ⟐ User Proxies: <code>{stats['total_user']}</code>
 ⟐ Dead Proxies: <code>{stats['total_dead']}</code>
 ⟐ Temporary Dead: <code>{stats['temp_dead']}</code>
+<b>Auto-Validation:</b> <code>{validation_msg}</code>
 ━━━━━━━━━━━━━━━
-<b>Validation Status:</b>
-⟐ <code>{validation_result}</code>
-━━━━━━━━━━━━━━━
-<b>Top Performing Proxies:</b>\n"""
+<b>Top Performing Proxies (Complete Details):</b>\n"""
 
     for i, proxy_data in enumerate(stats['top_proxies'][:5], 1):
-        proxy = proxy_data['proxy']  # FULL proxy, not truncated
+        proxy = proxy_data['proxy']  # Complete proxy shown to owner
         success = proxy_data['success']
         fails = proxy_data['fails']
         rate = proxy_data['rate']
         rt = proxy_data['response_time']
         site = proxy_data.get('site', 'Unknown')
         status = proxy_data['status']
+        owner = proxy_data.get('owner', 'global')
 
-        # Show complete proxy in code tags
-        response += f"{i}. {status} <code>{proxy}</code>\n"
-        response += f"   → {rate:.1f}% | {rt:.2f}s | {site} | {success}✅ {fails}❌\n"
+        # Show ownership indicator
+        owner_indicator = "👑" if owner == "system" else "👤" if owner != "global" else "🌍"
+        
+        response += f"{i}. {status} {owner_indicator} <code>{proxy}</code>\n"
+        response += f"   → {rate:.1f}% | {rt:.2f}s | {site} | {success}✅ {fails}❌ | Owner: {owner}\n"
 
     response += "━━━━━━━━━━━━━━━\n"
 
@@ -1174,7 +1286,8 @@ async def proxy_stats_handler(client, message: Message):
         response += f"<b>Last Validation:</b> <code>{mins_ago:.1f} minutes ago</code>\n"
 
     response += "<b>Test Method:</b> Dual-site (ipinfo.io → httpbin.org)\n"
-    response += "<b>Usage:</b> Personal proxy → Fastest global proxy\n"
-    response += "<b>~ Note:</b> <code>Owner Only Command (shows all proxies)</code>"
+    response += "<b>Proxy Visibility:</b> Users see their own complete proxies only\n"
+    response += "<b>Owner Sees:</b> ALL proxies with complete details\n"
+    response += "<b>~ Note:</b> <code>Auto-validation triggered on /pxstats command (Owner Only)</code>"
 
     await msg.edit(response)
