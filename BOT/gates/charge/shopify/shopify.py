@@ -1235,7 +1235,8 @@ class ShopifyChargeChecker:
             # Generate stable ID for merchandise lines
             stable_id = f"stable-{random.randint(1000, 9999)}"
             
-            # CORRECTED payload - RESTORED FULL DELIVERY STRUCTURE FROM OLD SCRIPT
+            # CORRECTED payload - EXACTLY MATCHING OLD WORKING SCRIPT STRUCTURE
+            # The key fix: noDeliveryRequired is an EMPTY ARRAY, not boolean or null
             json_data = {
                 "operationName": "SubmitForCompletion",
                 "variables": {
@@ -1248,7 +1249,7 @@ class ShopifyChargeChecker:
                             "lines": [],
                             "acceptUnexpectedDiscounts": True,
                         },
-                        # CORRECTED DELIVERY STRUCTURE - FULL OBJECT WITH PICKUP
+                        # CORRECTED DELIVERY STRUCTURE - EXACTLY LIKE OLD SCRIPT
                         "delivery": {
                             "deliveryLines": [{
                                 "destination": {
@@ -1281,7 +1282,7 @@ class ShopifyChargeChecker:
                                 },
                                 "destinationChanged": True
                             }],
-                            "noDeliveryRequired": [],  # EMPTY ARRAY - NOT BOOLEAN!
+                            "noDeliveryRequired": [],  # EMPTY ARRAY - EXACTLY LIKE OLD SCRIPT
                             "useProgressiveRates": False,
                             "prefetchShippingRatesStrategy": None,
                             "supportsSplitShipping": True
