@@ -928,8 +928,8 @@ async def remove_proxy_command(client, message: Message):
 ⟐ Removed: <code>{result['removed']}</code>
 ⟐ Remaining: <code>{result['remaining']}</code>
 ━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Only removes proxies you added to global pool</code>
-<b>~ Tip:</b> <code>Use /rmvall to clear everything (Owner Only)</code>""")
+<b>~ Note:</b> <code>Only removes proxies you added to global pool</code>""")
+
 
 @Client.on_message(filters.command(["rmvall", ".rmvall"]))
 @auth_and_free_restricted
