@@ -24,7 +24,7 @@ PROXY_FILE = "DATA/proxy.json"
 GLOBAL_PROXY_FILE = "FILES/proxy.csv"
 VALID_PROXY_FILE = "DATA/valid_proxies.json"
 DEAD_PROXY_FILE = "DATA/dead_proxies.json"
-USER_PROXY_TRACK_FILE = "DATA/user_proxy_tracking.json"  # NEW: Track which user added which proxy
+USER_PROXY_TRACK_FILE = "DATA/user_proxy_tracking.json"
 
 # Lock for thread-safe operations
 _proxy_lock = threading.Lock()
@@ -69,13 +69,13 @@ class ProxyManager:
         self.executor = ThreadPoolExecutor(max_workers=50)
         self.last_validation = 0
         self.last_cleanup = time.time()
-        self.user_proxy_tracking = load_user_proxy_tracking()  # NEW: Track user-proxy relationship
+        self.user_proxy_tracking = load_user_proxy_tracking()
 
         print("🔄 Initializing Proxy Manager...")
         self.load_and_validate_all_proxies()
 
     def normalize_proxy(self, proxy_raw: str) -> Optional[str]:
-        """Normalize proxy string to URL format - HTTP ONLY"""
+        """ORIGINAL: Normalize proxy string to URL format - HTTP ONLY"""
         proxy_raw = proxy_raw.strip()
 
         if not proxy_raw:
@@ -87,19 +87,19 @@ class ProxyManager:
             return proxy_raw.replace("https://", "http://")
 
         # Format: USER:PASS@HOST:PORT
-        match1 = re.fullmatch(r"(.+?):(.+?)@([a-zA-Z0-9\.\-]+):(\d+)", proxy_raw)
+        match1 = re.match(r"(.+?):(.+?)@([a-zA-Z0-9\.\-]+):(\d+)", proxy_raw)
         if match1:
             user, pwd, host, port = match1.groups()
             return f"http://{user}:{pwd}@{host}:{port}"
 
         # Format: HOST:PORT:USER:PASS
-        match2 = re.fullmatch(r"([a-zA-Z0-9\.\-]+):(\d+):(.+?):(.+)", proxy_raw)
+        match2 = re.match(r"([a-zA-Z0-9\.\-]+):(\d+):(.+?):(.+)", proxy_raw)
         if match2:
             host, port, user, pwd = match2.groups()
             return f"http://{user}:{pwd}@{host}:{port}"
 
         # Format: HOST:PORT (no auth)
-        match3 = re.fullmatch(r"([a-zA-Z0-9\.\-]+):(\d+)", proxy_raw)
+        match3 = re.match(r"([a-zA-Z0-9\.\-]+):(\d+)", proxy_raw)
         if match3:
             host, port = match3.groups()
             return f"http://{host}:{port}"
@@ -791,6 +791,7 @@ async def add_proxy_command(client, message: Message):
 <code>/addpx 192.168.1.1:8080</code>
 <code>/addpx user:pass@proxy.com:8080</code>
 <code>/addpx 204.12.199.52:8888:user_8786443f:T5f1464aSzM1FGSj</code>
+<code>/addpx evo-pro.porterproxies.com:62345:PP_MLXEA0ROCN-country-US:dp81eqnp</code>
 ━━━━━━━━━━━━━
 <b>~ Note:</b> <code>Proxies auto-validate and classify as good/bad</code>
 <b>~ Note:</b> <code>Available for all users</code>
