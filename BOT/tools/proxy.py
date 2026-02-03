@@ -629,20 +629,25 @@ class ProxyManager:
             # Calculate success rates
             proxy_performance = []
             for proxy, stats in self.proxy_stats.items():
-                success = stats.get('success', 0)
-                fails = stats.get('fails', 0)
-                total = success + fails
-                rate = (success / total * 100) if total > 0 else 0
-                proxy_performance.append({
-                    'proxy': proxy,  # Show complete proxy
-                    'success': success,
-                    'fails': fails,
-                    'rate': rate,
-                    'response_time': stats.get('response_time', 0),
-                    'site': stats.get('site', 'Unknown'),
-                    'status': '✅' if proxy not in self.dead_proxies and proxy not in self.perm_dead_proxies else '❌'
-                })
+                # Only include VALID proxies (not in dead or perm_dead lists)
+                if (proxy in self.valid_proxies and 
+                    proxy not in self.dead_proxies and 
+                    proxy not in self.perm_dead_proxies):
+                    success = stats.get('success', 0)
+                    fails = stats.get('fails', 0)
+                    total = success + fails
+                    rate = (success / total * 100) if total > 0 else 0
+                    proxy_performance.append({
+                        'proxy': proxy,  # Show complete proxy
+                        'success': success,
+                        'fails': fails,
+                        'rate': rate,
+                        'response_time': stats.get('response_time', 0),
+                        'site': stats.get('site', 'Unknown'),
+                        'status': '✅'
+                    })
 
+            # Sort by success rate (highest first)
             proxy_performance.sort(key=lambda x: x['rate'], reverse=True)
 
             # Count available proxies (not in any dead list)
@@ -657,7 +662,7 @@ class ProxyManager:
                 'total_dead': len(self.perm_dead_proxies),
                 'temp_dead': len(self.dead_proxies),
                 'available_now': available_now,
-                'top_proxies': proxy_performance[:10],
+                'all_valid_proxies': proxy_performance,  # ALL valid proxies, not just top 10
                 'last_validation': self.last_validation,
                 'validation_in_progress': self.validation_in_progress,
                 'failure_threshold': self.failure_threshold
@@ -1160,9 +1165,10 @@ async def proxy_stats_handler(client, message: Message):
 ⟐ Auto-cleanup: <code>Every 5 minutes</code>
 ⟐ Permanent Dead: <code>After 30 minutes</code>
 ━━━━━━━━━━━━━━━
-<b>Top Performing Proxies:</b>\n"""
+<b>All Valid Proxies ({len(stats['all_valid_proxies'])}):</b>\n"""
 
-    for i, proxy_data in enumerate(stats['top_proxies'][:5], 1):
+    # Show ALL valid proxies, not just top 5
+    for i, proxy_data in enumerate(stats['all_valid_proxies'], 1):
         proxy = proxy_data['proxy']  # SHOW COMPLETE PROXY - NO TRUNCATION
         success = proxy_data['success']
         fails = proxy_data['fails']
