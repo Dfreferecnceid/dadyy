@@ -634,7 +634,7 @@ class ProxyManager:
                 total = success + fails
                 rate = (success / total * 100) if total > 0 else 0
                 proxy_performance.append({
-                    'proxy': proxy,
+                    'proxy': proxy,  # Show complete proxy
                     'success': success,
                     'fails': fails,
                     'rate': rate,
@@ -1076,15 +1076,12 @@ async def validate_proxy_command(client, message: Message):
     for original, proxy_url in proxies_to_test:
         is_valid, info, response_time, site = proxy_manager.validate_single_proxy(original)
 
-        # Shorten for display
-        if '@' in proxy_url:
-            display = '...' + proxy_url.split('@')[-1][:30]
-        else:
-            display = proxy_url.replace('http://', '')[:30]
+        # SHOW COMPLETE PROXY - NO TRUNCATION
+        display = proxy_url
 
         results.append({
             'proxy': display,
-            'original': original[:40],
+            'original': original,
             'valid': is_valid,
             'info': info,
             'time': response_time,
@@ -1166,7 +1163,7 @@ async def proxy_stats_handler(client, message: Message):
 <b>Top Performing Proxies:</b>\n"""
 
     for i, proxy_data in enumerate(stats['top_proxies'][:5], 1):
-        proxy = proxy_data['proxy']
+        proxy = proxy_data['proxy']  # SHOW COMPLETE PROXY - NO TRUNCATION
         success = proxy_data['success']
         fails = proxy_data['fails']
         rate = proxy_data['rate']
@@ -1174,13 +1171,7 @@ async def proxy_stats_handler(client, message: Message):
         site = proxy_data.get('site', 'Unknown')
         status = proxy_data['status']
 
-        # Shorten for display
-        if '@' in proxy:
-            short_proxy = '...' + proxy.split('@')[-1][-25:]
-        else:
-            short_proxy = proxy.replace('http://', '')[:25]
-
-        response += f"{i}. {status} <code>{short_proxy}</code>\n"
+        response += f"{i}. {status} <code>{proxy}</code>\n"
         response += f"   → {rate:.1f}% | {rt:.2f}s | {site} | {success}✅ {fails}❌\n"
 
     response += "━━━━━━━━━━━━━━━\n"
@@ -1191,7 +1182,7 @@ async def proxy_stats_handler(client, message: Message):
         mins_ago = (time.time() - stats['last_validation']) / 60 if stats['last_validation'] else 999
         response += f"<b>Last Validation:</b> <code>{mins_ago:.1f} minutes ago</code>\n"
 
-    response += "<b>Test Method:</b>\n"
+    response += "<b>Test Method:</b> Dual-site check (ipinfo.io + httpbin.org)\n"
     response += "<b>Proxy Policy:</b> All gates use ALL valid proxies from global pool\n"
     response += "<b>Dead Proxy Handling:</b> Auto-removed after verification\n"
     response += "<b>~ Note:</b> <code>Owner Only Command</code>"
