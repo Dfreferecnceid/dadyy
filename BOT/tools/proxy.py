@@ -860,7 +860,7 @@ async def add_proxy_command(client, message: Message):
 ⟐ Available Now: <code>{result['available_now']}</code>
 ⟐ Known Dead: <code>{stats['total_dead']}</code>
 ━━━━━━━━━━━━━
-<b>~ Tip:</b> <code>Use /vpx to validate specific proxies</code>"""
+<b>~ Tip:</b> <code>Use /vpx to validate specific proxies</code>""")
 
 @Client.on_message(filters.command(["rmvpx", ".rmvpx"]))
 @auth_and_free_restricted
