@@ -216,12 +216,10 @@ def is_admin_command(command_text):
         "ban", "unban", "looser",
         # BIN management
         "banbin", "unbanbin",
-        # Group management (EXACT commands only)
+        # Group management
         "add", "rmv",
         # Owner only commands
-        "gc", "broad", "notused", "off", "on", "plans", "plan", "resett",
-        # Proxy management - owner only
-        "pxstats", "rmvall"
+        "gc", "broad", "notused", "off", "on", "plans", "plan", "resett"
     ]
 
     # Remove prefixes
@@ -234,12 +232,11 @@ def is_allowed_for_free_users(command_text):
     if not command_text:
         return False
 
-    # FIXED: Free users in private chat can use these commands
-    # UPDATED: Added proxy commands for all users
+    # FIXED: Free users in private chat can ONLY use these basic commands
+    # NO auth/charge/gate commands allowed in private for free users
     allowed_commands = [
-        "start", "register", "cmds", "info", "buy", "redeem",
-        # Proxy commands - available for all users
-        "addpx", "rmvpx", "vpx"
+        "start", "register", "cmds", "info", "buy", "redeem"
+        # Removed: "gen", "fake", "gate", "bin", "sk", "au", "chk", "bu", "ad", "sq"
     ]
 
     # Remove prefixes
@@ -272,6 +269,7 @@ def is_auth_command(command_text):
         return False
 
     # Auth commands are free for everyone BUT ONLY IN AUTHORIZED GROUPS
+    # UPDATED: Added "sq" for Square auth
     auth_commands = ["au", "chk", "bu", "ad", "sq"]
 
     # Remove prefixes
@@ -286,6 +284,7 @@ def is_gate_command(command_text):
         return False
 
     # All gate-related commands
+    # UPDATED: Added "sq" for Square auth
     gate_commands = [
         # Auth commands
         "au", "chk", "bu", "ad", "sq",
@@ -311,38 +310,6 @@ def is_user_admin(user_id):
     user_role = user_data.get("role", "Free")
 
     return user_role in ["Owner", "Admin"]
-
-# NEW: Check if command is a proxy command (available for all users)
-def is_proxy_command(command_text):
-    """Check if command is a proxy command (available for all users)"""
-    if not command_text:
-        return False
-
-    # Proxy commands that are available for all authenticated users
-    proxy_commands = ["addpx", "rmvpx", "vpx"]
-
-    # Remove prefixes
-    clean_command = command_text.lstrip('/').lstrip('.').lstrip('$').lower().split()[0]
-
-    return clean_command in proxy_commands
-
-# NEW: Check if command is EXACT /add or /rmv (group management)
-def is_exact_group_command(command_text):
-    """Check if command is exactly /add or /rmv (not /addpx, /rmvpx, etc.)"""
-    if not command_text:
-        return False
-    
-    # Exact commands only (case insensitive)
-    exact_commands = [
-        "/add", ".add",  # Group add command
-        "/rmv", ".rmv"   # Group remove command
-    ]
-    
-    # Get the full command without splitting
-    full_command = command_text.strip().lower()
-    
-    # Check if it matches exactly (not as prefix)
-    return full_command in exact_commands
 
 # NEW: Check credits for charge commands - FIXED VERSION
 def check_credits_for_charge(user_id, command_text):
@@ -412,7 +379,7 @@ def check_credits_for_charge(user_id, command_text):
         # Fallback: allow command if credit check fails
         return True, f"Error checking credits: {str(e)}"
 
-# UPDATED: Combined decorator with credit check for charge commands - FIXED
+# UPDATED: Combined decorator with credit check for charge commands - FIXED FOR FREE USERS
 def auth_and_free_restricted(func):
     """Combined decorator that checks both group authorization and free user restrictions - FIXED"""
     async def wrapper(client, message):
@@ -441,9 +408,9 @@ def auth_and_free_restricted(func):
 
         # ========== GROUP CHECKS ==========
         if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
-            # FIXED: Check for EXACT /add and /rmv commands (not /addpx, /rmvpx, etc.)
-            # Only check exact matches for group management commands
-            if is_exact_group_command(command_text):
+            # Allow /add and /rmv commands in any group (for owner to authorize)
+            # FIXED: Check for EXACT commands, not prefixes
+            if command_text.lower() in ['/add', '.add', '/rmv', '.rmv']:
                 # Check if user is admin/owner for these commands
                 if not is_user_admin(message.from_user.id):
                     await message.reply("""<pre>⛔ Admin Only</pre>
@@ -476,10 +443,6 @@ def auth_and_free_restricted(func):
 ⟐ <b>Message</b>: This command is for admin users only.
 ━━━━━━━━━━━━━""")
                     return
-
-            # Proxy commands are available for all users in authorized groups
-            if is_proxy_command(command_text):
-                return await func(client, message)
 
             # Auth commands are free for all users in authorized groups
             if is_auth_command(command_text):
@@ -544,14 +507,10 @@ def auth_and_free_restricted(func):
                 return await func(client, message)
 
             # ========== FREE USER IN PRIVATE CHAT ==========
-            # Free users in private chat have restricted access
+            # Free users in private chat have VERY restricted access
 
             # Check if it's a basic allowed command
             if is_allowed_for_free_users(command_text):
-                return await func(client, message)
-
-            # Proxy commands are available for all users in private too
-            if is_proxy_command(command_text):
                 return await func(client, message)
 
             # FIXED: Free users CANNOT use any gate/charge/auth commands in private
@@ -633,10 +592,6 @@ async def is_premium_user(message: Message) -> bool:
 
             if is_auth_command(clean_command):
                 return True  # Auth commands are free for all
-
-            # Check if it's a proxy command (available for all)
-            if is_proxy_command(clean_command):
-                return True  # Proxy commands are available for all
 
             # Check if it's an admin command
             if is_admin_command(clean_command):
@@ -748,10 +703,6 @@ async def check_private_access(message: Message) -> bool:
 
             # Check auth commands (free for all)
             if is_auth_command(clean_command):
-                return True
-
-            # Check proxy commands (available for all)
-            if is_proxy_command(clean_command):
                 return True
 
             allowed_commands = [
