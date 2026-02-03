@@ -216,12 +216,12 @@ def is_admin_command(command_text):
         "ban", "unban", "looser",
         # BIN management
         "banbin", "unbanbin",
-        # Group management
+        # Group management (EXACT commands only)
         "add", "rmv",
         # Owner only commands
         "gc", "broad", "notused", "off", "on", "plans", "plan", "resett",
-        # NEW: Keep pxstats as owner only, but addpx, rmvpx, vpx are NOT admin commands
-        "pxstats", "rmvall"  # These remain owner only
+        # Proxy management - owner only
+        "pxstats", "rmvall"
     ]
 
     # Remove prefixes
@@ -240,7 +240,6 @@ def is_allowed_for_free_users(command_text):
         "start", "register", "cmds", "info", "buy", "redeem",
         # Proxy commands - available for all users
         "addpx", "rmvpx", "vpx"
-        # Removed: "gen", "fake", "gate", "bin", "sk", "au", "chk", "bu", "ad", "sq"
     ]
 
     # Remove prefixes
@@ -273,7 +272,6 @@ def is_auth_command(command_text):
         return False
 
     # Auth commands are free for everyone BUT ONLY IN AUTHORIZED GROUPS
-    # UPDATED: Added "sq" for Square auth
     auth_commands = ["au", "chk", "bu", "ad", "sq"]
 
     # Remove prefixes
@@ -288,7 +286,6 @@ def is_gate_command(command_text):
         return False
 
     # All gate-related commands
-    # UPDATED: Added "sq" for Square auth
     gate_commands = [
         # Auth commands
         "au", "chk", "bu", "ad", "sq",
@@ -328,6 +325,24 @@ def is_proxy_command(command_text):
     clean_command = command_text.lstrip('/').lstrip('.').lstrip('$').lower().split()[0]
 
     return clean_command in proxy_commands
+
+# NEW: Check if command is EXACT /add or /rmv (group management)
+def is_exact_group_command(command_text):
+    """Check if command is exactly /add or /rmv (not /addpx, /rmvpx, etc.)"""
+    if not command_text:
+        return False
+    
+    # Exact commands only (case insensitive)
+    exact_commands = [
+        "/add", ".add",  # Group add command
+        "/rmv", ".rmv"   # Group remove command
+    ]
+    
+    # Get the full command without splitting
+    full_command = command_text.strip().lower()
+    
+    # Check if it matches exactly (not as prefix)
+    return full_command in exact_commands
 
 # NEW: Check credits for charge commands - FIXED VERSION
 def check_credits_for_charge(user_id, command_text):
@@ -397,7 +412,7 @@ def check_credits_for_charge(user_id, command_text):
         # Fallback: allow command if credit check fails
         return True, f"Error checking credits: {str(e)}"
 
-# UPDATED: Combined decorator with credit check for charge commands - FIXED FOR FREE USERS
+# UPDATED: Combined decorator with credit check for charge commands - FIXED
 def auth_and_free_restricted(func):
     """Combined decorator that checks both group authorization and free user restrictions - FIXED"""
     async def wrapper(client, message):
@@ -426,9 +441,9 @@ def auth_and_free_restricted(func):
 
         # ========== GROUP CHECKS ==========
         if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
-            # Allow /add and /rmv commands in any group (for owner to authorize)
-            if text.startswith('/add') or text.startswith('.add') or \
-               text.startswith('/rmv') or text.startswith('.rmv'):
+            # FIXED: Check for EXACT /add and /rmv commands (not /addpx, /rmvpx, etc.)
+            # Only check exact matches for group management commands
+            if is_exact_group_command(command_text):
                 # Check if user is admin/owner for these commands
                 if not is_user_admin(message.from_user.id):
                     await message.reply("""<pre>⛔ Admin Only</pre>
@@ -529,7 +544,7 @@ def auth_and_free_restricted(func):
                 return await func(client, message)
 
             # ========== FREE USER IN PRIVATE CHAT ==========
-            # Free users in private chat have VERY restricted access
+            # Free users in private chat have restricted access
 
             # Check if it's a basic allowed command
             if is_allowed_for_free_users(command_text):
