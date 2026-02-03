@@ -232,11 +232,11 @@ def is_allowed_for_free_users(command_text):
     if not command_text:
         return False
 
-    # FIXED: Free users in private chat can ONLY use these basic commands
-    # NO auth/charge/gate commands allowed in private for free users
+    # FIXED: Added proxy commands for all users
     allowed_commands = [
-        "start", "register", "cmds", "info", "buy", "redeem"
-        # Removed: "gen", "fake", "gate", "bin", "sk", "au", "chk", "bu", "ad", "sq"
+        "start", "register", "cmds", "info", "buy", "redeem",
+        # PROXY COMMANDS ADDED HERE:
+        "addpx", "rmvpx", "vpx"
     ]
 
     # Remove prefixes
@@ -408,8 +408,8 @@ def auth_and_free_restricted(func):
 
         # ========== GROUP CHECKS ==========
         if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
-            # Allow /add and /rmv commands in any group (for owner to authorize)
-            # FIXED: Check for EXACT commands, not prefixes
+            # FIXED: Check for EXACT /add and /rmv commands only (not /addpx or /rmvpx)
+            # Check if command is exactly /add, .add, /rmv, or .rmv
             if command_text.lower() in ['/add', '.add', '/rmv', '.rmv']:
                 # Check if user is admin/owner for these commands
                 if not is_user_admin(message.from_user.id):
@@ -458,7 +458,7 @@ def auth_and_free_restricted(func):
                 # Credits check passed, continue to command
                 return await func(client, message)
 
-            # Other commands (gen, fake, bin, etc.)
+            # Other commands (gen, fake, bin, etc.) - INCLUDING PROXY COMMANDS
             return await func(client, message)
 
         # ========== PRIVATE CHAT CHECKS ==========
