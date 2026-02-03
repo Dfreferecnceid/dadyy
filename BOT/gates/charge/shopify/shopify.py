@@ -298,6 +298,9 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
         response_display = raw_response.split("DECLINED - ")[-1]
         # Take only first line if multiple lines
         response_display = response_display.split('\n')[0]
+        # Remove colon and anything after it for generic errors
+        if ":" in response_display:
+            response_display = response_display.split(":")[0].strip()
         # Trim to reasonable length
         if len(response_display) > 50:
             response_display = response_display[:47] + "..."
@@ -305,9 +308,18 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
         response_display = "ORDER_PLACED - Payment successful"
     elif "APPROVED - " in raw_response:
         response_display = "APPROVED - Payment successful"
+    elif "GENERIC_ERROR" in raw_response:
+        response_display = "GENERIC_ERROR"
+    elif "PROXY_DEAD" in raw_response:
+        response_display = "PROXY_DEAD"
+    elif "NO_PROXY_AVAILABLE" in raw_response:
+        response_display = "NO_PROXY_AVAILABLE"
     else:
         # Take first 50 characters of any other response
         response_display = raw_response[:50] + "..." if len(raw_response) > 50 else raw_response
+        # Remove colon and anything after it for generic errors
+        if ":" in response_display:
+            response_display = response_display.split(":")[0].strip()
 
     raw_response_upper = raw_response.upper()
 
@@ -405,7 +417,7 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
     profile_display = f"『{badge}』{clean_name}"
 
     result = f"""
-<b>[#Shopify Charge] | WAYNE</b> ✦
+<b>「$cmd → /sh」| | WAYNE</b> ✦
 ━━━━━━━━━━━━━━━
 <b>[•] Card</b>- <code>{fullcc}</code>
 <b>[•] Gateway</b> - <b>Shopify Charge 0.55$</b>
@@ -706,10 +718,10 @@ class ShopifyHTTPCheckout:
                     # Try to get a new proxy for next attempt
                     self.proxy_url = get_proxy_for_user(self.user_id, "random")
                     if not self.proxy_url:
-                        return False, "NO_PROXY_AVAILABLE - No working proxies found"
+                        return False, "NO_PROXY_AVAILABLE"
                     self.random_delay(2, 4)
                     continue
-                return False, f"PROXY_DEAD - Proxy connection failed: {str(e)[:50]}"
+                return False, "PROXY_DEAD"
             except requests.exceptions.ConnectTimeout as e:
                 self.logger.error_log("TIMEOUT", f"Connection timeout: {str(e)}", f"Attempt {attempt + 1}")
                 mark_proxy_failed(self.proxy_url)
@@ -717,10 +729,10 @@ class ShopifyHTTPCheckout:
                 if attempt < max_retries - 1:
                     self.proxy_url = get_proxy_for_user(self.user_id, "random")
                     if not self.proxy_url:
-                        return False, "NO_PROXY_AVAILABLE - No working proxies found"
+                        return False, "NO_PROXY_AVAILABLE"
                     self.random_delay(2, 4)
                     continue
-                return False, f"PROXY_DEAD - Connection timeout: {str(e)[:50]}"
+                return False, "PROXY_DEAD"
             except Exception as e:
                 self.logger.error_log("CHECKOUT_ERROR", str(e), f"Attempt {attempt + 1}")
                 if attempt < max_retries - 1:
@@ -743,7 +755,7 @@ class ShopifyHTTPCheckout:
                 self.proxy_url = get_proxy_for_user(self.user_id, "random")
                 if not self.proxy_url:
                     self.logger.error_log("NO_PROXY", "No working proxies available in system")
-                    return False, "NO_PROXY_AVAILABLE - No working proxies found in system"
+                    return False, "NO_PROXY_AVAILABLE"
                 
                 # Test the proxy quickly
                 start_test = time.time()
@@ -770,16 +782,16 @@ class ShopifyHTTPCheckout:
                         self.proxy_status = "Dead 🚫"
                         mark_proxy_failed(self.proxy_url)
                         self.logger.error_log("PROXY", f"Proxy test failed with status: {test_resp.status_code}")
-                        return False, "PROXY_DEAD - Proxy test failed"
+                        return False, "PROXY_DEAD"
                         
                 except Exception as e:
                     self.proxy_status = "Dead 🚫"
                     mark_proxy_failed(self.proxy_url)
                     self.logger.error_log("PROXY", f"Proxy test error: {str(e)[:50]}")
-                    return False, f"PROXY_DEAD - {str(e)[:50]}"
+                    return False, "PROXY_DEAD"
             else:
                 self.logger.error_log("PROXY", "Proxy system not available")
-                return False, "PROXY_SYSTEM_UNAVAILABLE - Proxy system not loaded"
+                return False, "PROXY_SYSTEM_UNAVAILABLE"
 
             # Step 1: Initialize session and get homepage WITH PROXY
             self.step(1, "INIT SESSION", "Getting homepage with proxy", f"Proxy: {self.proxy_url[:30]}...")
@@ -815,17 +827,17 @@ class ShopifyHTTPCheckout:
                 self.logger.error_log("PROXY", f"Proxy error on homepage: {str(e)}")
                 mark_proxy_failed(self.proxy_url)
                 self.proxy_status = "Dead 🚫"
-                return False, f"PROXY_DEAD - Proxy error: {str(e)[:50]}"
+                return False, "PROXY_DEAD"
             except requests.exceptions.ConnectTimeout as e:
                 self.logger.error_log("TIMEOUT", f"Connection timeout on homepage: {str(e)}")
                 mark_proxy_failed(self.proxy_url)
                 self.proxy_status = "Dead 🚫"
-                return False, f"PROXY_DEAD - Connection timeout: {str(e)[:50]}"
+                return False, "PROXY_DEAD"
             except Exception as e:
                 self.logger.error_log("CONNECTION", f"Homepage error: {str(e)}")
                 mark_proxy_failed(self.proxy_url)
                 self.proxy_status = "Dead 🚫"
-                return False, f"Connection error: {str(e)[:50]}"
+                return False, f"Connection error: {str(e)}"
 
             self.random_delay(1, 2)
 
@@ -907,10 +919,10 @@ class ShopifyHTTPCheckout:
                 self.logger.error_log("PROXY", f"Proxy error on cart add: {str(e)}")
                 mark_proxy_failed(self.proxy_url)
                 self.proxy_status = "Dead 🚫"
-                return False, f"PROXY_DEAD - Proxy error: {str(e)[:50]}"
+                return False, "PROXY_DEAD"
             except Exception as e:
                 self.logger.error_log("CART_ERROR", f"Cart add error: {str(e)}")
-                return False, f"Cart add error: {str(e)[:50]}"
+                return False, f"Cart add error: {str(e)}"
 
             self.random_delay(1, 2)
 
@@ -929,7 +941,7 @@ class ShopifyHTTPCheckout:
                 self.logger.error_log("PROXY", f"Proxy error on cart page: {str(e)}")
                 mark_proxy_failed(self.proxy_url)
                 self.proxy_status = "Dead 🚫"
-                return False, f"PROXY_DEAD - Proxy error: {str(e)[:50]}"
+                return False, "PROXY_DEAD"
 
             self.random_delay(1, 2)
 
@@ -970,10 +982,10 @@ class ShopifyHTTPCheckout:
                 self.logger.error_log("PROXY", f"Proxy error on checkout start: {str(e)}")
                 mark_proxy_failed(self.proxy_url)
                 self.proxy_status = "Dead 🚫"
-                return False, f"PROXY_DEAD - Proxy error: {str(e)[:50]}"
+                return False, "PROXY_DEAD"
             except Exception as e:
                 self.logger.error_log("CHECKOUT_START", f"Checkout start error: {str(e)}")
-                return False, f"Checkout start error: {str(e)[:50]}"
+                return False, f"Checkout start error: {str(e)}"
 
             self.random_delay(2, 3)
 
@@ -1205,6 +1217,9 @@ class ShopifyHTTPCheckout:
                     proposal_resp = resp.json()
                     if 'errors' in proposal_resp and proposal_resp['errors']:
                         error_msg = proposal_resp['errors'][0].get('message', 'Unknown error')
+                        # Remove colon and anything after it
+                        if ":" in error_msg:
+                            error_msg = error_msg.split(":")[0].strip()
                         return False, f"Proposal error: {error_msg}"
                 except Exception as e:
                     return False, f"Failed to parse Proposal response: {str(e)}"
@@ -1213,10 +1228,10 @@ class ShopifyHTTPCheckout:
                 self.logger.error_log("PROXY", f"Proxy error on proposal: {str(e)}")
                 mark_proxy_failed(self.proxy_url)
                 self.proxy_status = "Dead 🚫"
-                return False, f"PROXY_DEAD - Proxy error: {str(e)[:50]}"
+                return False, "PROXY_DEAD"
             except Exception as e:
                 self.logger.error_log("PROPOSAL_ERROR", f"Proposal error: {str(e)}")
-                return False, f"Proposal error: {str(e)[:50]}"
+                return False, f"Proposal error: {str(e)}"
 
             self.random_delay(1, 2)
 
@@ -1237,7 +1252,7 @@ class ShopifyHTTPCheckout:
                 'sec-fetch-mode': 'cors',
                 'sec-fetch-site': 'same-origin',
                 'sec-fetch-storage-access': 'active',
-                'shopify-identification-signature': f'eyJraWQiOiJ2MSIsImFsZyI6IkhTMjU2In0.{self.generate_random_string(100)}.{self.generate_random_string(43)}',
+                'shopify-identification-signature': f'eyJraWQiOiJ2MS", "alg": "HS256"}.{self.generate_random_string(100)}.{self.generate_random_string(43)}',
                 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36'
             }
 
@@ -1292,10 +1307,10 @@ class ShopifyHTTPCheckout:
                 self.logger.error_log("PROXY", f"Proxy error on PCI: {str(e)}")
                 mark_proxy_failed(self.proxy_url)
                 self.proxy_status = "Dead 🚫"
-                return False, f"PROXY_DEAD - Proxy error: {str(e)[:50]}"
+                return False, "PROXY_DEAD"
             except Exception as e:
                 self.logger.error_log("PCI_ERROR", f"PCI error: {str(e)}")
-                return False, f"PCI error: {str(e)[:50]}"
+                return False, f"PCI error: {str(e)}"
 
             self.random_delay(1, 2)
 
@@ -1529,6 +1544,9 @@ class ShopifyHTTPCheckout:
 
                     if 'errors' in submit_resp and submit_resp['errors']:
                         error_msg = submit_resp['errors'][0].get('message', 'Unknown error')
+                        # Remove colon and anything after it
+                        if ":" in error_msg:
+                            error_msg = error_msg.split(":")[0].strip()
                         return False, f"Submit error: {error_msg}"
 
                     data = submit_resp.get('data', {}).get('submitForCompletion', {})
@@ -1558,17 +1576,17 @@ class ShopifyHTTPCheckout:
                 self.logger.error_log("PROXY", f"Proxy error on submit: {str(e)}")
                 mark_proxy_failed(self.proxy_url)
                 self.proxy_status = "Dead 🚫"
-                return False, f"PROXY_DEAD - Proxy error: {str(e)[:50]}"
+                return False, "PROXY_DEAD"
             except Exception as e:
                 self.logger.error_log("SUBMIT_ERROR", f"Submit error: {str(e)}")
-                return False, f"Submit error: {str(e)[:50]}"
+                return False, f"Submit error: {str(e)}"
 
         except requests.exceptions.RequestException as e:
             self.logger.error_log("NETWORK", f"Network error: {str(e)}")
-            return False, f"Network error: {str(e)[:50]}"
+            return False, f"Network error: {str(e)}"
         except Exception as e:
             self.logger.error_log("UNKNOWN", f"Checkout error: {str(e)}")
-            return False, f"Checkout error: {str(e)[:50]}"
+            return False, f"Checkout error: {str(e)}"
 
     def poll_receipt(self, headers):
         """Poll for receipt status WITH PROXY"""
@@ -1613,6 +1631,9 @@ class ShopifyHTTPCheckout:
                         error_info = receipt_data.get('processingError', {})
                         error_code = error_info.get('code', 'UNKNOWN')
                         error_msg = error_info.get('messageUntranslated', 'Payment failed')
+                        # Remove colon and anything after it
+                        if ":" in error_msg:
+                            error_msg = error_msg.split(":")[0].strip()
                         return False, f"DECLINED - {error_code}: {error_msg}"
 
                     elif receipt_type == 'ProcessedReceipt':
@@ -1635,12 +1656,12 @@ class ShopifyHTTPCheckout:
                 self.logger.error_log("PROXY", f"Proxy error on poll: {str(e)}")
                 mark_proxy_failed(self.proxy_url)
                 self.proxy_status = "Dead 🚫"
-                return False, f"PROXY_DEAD - Proxy error: {str(e)[:50]}"
+                return False, "PROXY_DEAD"
             except Exception as e:
-                return False, f"Poll error: {str(e)[:50]}"
+                return False, f"Poll error: {str(e)}"
 
         except Exception as e:
-            return False, f"Poll error: {str(e)[:50]}"
+            return False, f"Poll error: {str(e)}"
 
 
 # ========== MAIN CHECKER CLASS ==========
@@ -1769,11 +1790,9 @@ async def handle_shopify_charge(client: Client, message: Message):
 ━━━━━━━━━━━━━
 🠪 <b>Command</b>: <code>/sh</code> or <code>.sh</code> or <code>$sh</code>
 🠪 <b>Usage</b>: <code>/sh cc|mm|yy|cvv</code>
-🠪 <b>Example</b>: <code>/sh 4111111111111111|12|2025|123</code>
+🠪 <b>Example</b>: <code>/sh 4111111111111111|12|2030|123</code>
 ━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Charges via Shopify gateway (Deducts 2 credits AFTER check completes)</code>
-<b>~ Note:</b> <code>Uses HTTP API for fast checkout with proxy system</code>
-<b>~ Note:</b> <code>Requires working proxies in system</code>""")
+<b>~ Note:</b> <code>Charges via Shopify gateway (Deducts 2 credits AFTER check completes)</code>""")
             return
 
         card_details = args[1].strip()
@@ -1805,19 +1824,16 @@ async def handle_shopify_charge(client: Client, message: Message):
 
         processing_msg = await message.reply(
             f"""
-<b>[Shopify Charge 0.55$] | #WAYNE</b> ✦
+<b>「$cmd → /sh」| | #WAYNE</b> ✦
 ━━━━━━━━━━━━━━━
 <b>[•] Card</b>- <code>{cc}|{mes}|{ano}|{cvv}</code>
 <b>[•] Gateway</b> - <b>Shopify Charge 0.55$</b>
-<b>[•] Status</b>- <code>Getting proxy...</code>
-<b>[•] Response</b>- <code>Acquiring proxy from pool...</code>
+<b>[•] Status</b>- <code>Processing...</code>
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
 <b>[+] Plan:</b> {plan_name}
 <b>[+] User:</b> @{username}
-<b>[+] Method:</b> HTTP API with Proxy
-<b>[+] Proxy Status:</b> Checking...
 ━━━━━━━━━━━━━━━
-<b>Starting proxy checkout... Please wait.</b>
+<b>Starting checkout... Please wait.</b>
 """
         )
 
