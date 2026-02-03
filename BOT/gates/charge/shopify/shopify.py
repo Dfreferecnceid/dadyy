@@ -430,7 +430,7 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
 <b>[+] Country</b>: <code>{bin_info['country']} - [{bin_info['flag']}]</code>
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
 <b>[ﾒ] Checked By</b>: {profile_display} [<code>{plan} {badge}</code>]
-<b>[ϟ] Dev</b> ➺ <b><i>DADYY</i></b>
+<b>[ϟ] Dev</b> ➺</b> <b><i>DADYY</i></b>
 ━━━━━━━━━━━━━━━
 <b>[ﾒ] T/t</b>: <code>[{timet:.2f} 𝐬]</code> <b>|P/x:</b> [<code>{proxy_status}</code>]
 """
