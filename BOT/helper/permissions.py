@@ -318,6 +318,21 @@ def is_proxy_command(command_text):
 
     return clean_command in proxy_commands
 
+# NEW: Check if command is a group management command (admin only)
+def is_group_management_command(command_text):
+    """Check if command is for group management (admin only)"""
+    if not command_text:
+        return False
+
+    # Group management commands (Owner/Admin only)
+    group_commands = ["add", "rmv"]
+    
+    # Remove prefixes
+    clean_command = command_text.lstrip('/').lstrip('.').lstrip('$').lower().split()[0]
+    
+    # Check exact match for group commands (not partial)
+    return clean_command in group_commands
+
 # NEW: Check if user has admin privileges
 def is_user_admin(user_id):
     """Check if user is admin or owner"""
@@ -427,10 +442,10 @@ def auth_and_free_restricted(func):
 
         # ========== GROUP CHECKS ==========
         if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
-            # Allow /add and /rmv commands in any group (for owner to authorize)
-            if text.startswith('/add') or text.startswith('.add') or \
-               text.startswith('/rmv') or text.startswith('.rmv'):
-                # Check if user is admin/owner for these commands
+            # FIXED: Check for EXACT group management commands first
+            # /add (for groups) is admin only, /addpx (for proxies) is for all users
+            if is_group_management_command(command_text):
+                # Check if user is admin/owner for group management commands
                 if not is_user_admin(message.from_user.id):
                     await message.reply("""<pre>⛔ Admin Only</pre>
 ━━━━━━━━━━━━━
@@ -451,14 +466,16 @@ def auth_and_free_restricted(func):
                 )
                 return
 
-            # Group is authorized - ALLOW ALL PROXY COMMANDS WITHOUT FURTHER CHECKS
-            # This is the FIX: Proxy commands should be allowed in authorized groups
+            # Group is authorized - check command type
+            user_id = message.from_user.id
+
+            # Check proxy commands FIRST (available to all in authorized groups)
             if is_proxy_command(command_text):
                 return await func(client, message)
 
-            # Check for admin commands first
+            # Check for admin commands
             if is_admin_command(command_text):
-                if not is_user_admin(message.from_user.id):
+                if not is_user_admin(user_id):
                     await message.reply("""<pre>⛔ Admin Only</pre>
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: This command is for admin users only.
@@ -472,7 +489,7 @@ def auth_and_free_restricted(func):
             # Charge commands need credit check
             if is_charge_command(command_text):
                 # Check credits
-                has_credits, credit_msg = check_credits_for_charge(message.from_user.id, command_text)
+                has_credits, credit_msg = check_credits_for_charge(user_id, command_text)
                 if not has_credits:
                     await message.reply(credit_msg)
                     return
@@ -514,6 +531,17 @@ def auth_and_free_restricted(func):
 ━━━━━━━━━━━━━""")
                     return
                 # Admin users can use admin commands in private
+                return await func(client, message)
+
+            # Check group management commands in private (admin only)
+            if is_group_management_command(command_text):
+                if not is_user_admin(message.from_user.id):
+                    await message.reply("""<pre>⛔ Admin Only</pre>
+━━━━━━━━━━━━━
+⟐ <b>Message</b>: This command is for admin users only.
+━━━━━━━━━━━━━""")
+                    return
+                # Admin users can use group commands in private
                 return await func(client, message)
 
             # Check if user is premium (Owner, Admin, or has private access ON)
@@ -630,6 +658,14 @@ async def is_premium_user(message: Message) -> bool:
 ━━━━━━━━━━━━━""")
                 return False
 
+            # Check if it's a group management command
+            if is_group_management_command(clean_command):
+                await message.reply("""<pre>⛔ Admin Only</pre>
+━━━━━━━━━━━━━
+⟐ <b>Message</b>: This command is for admin users only.
+━━━━━━━━━━━━━""")
+                return False
+
             # Check if user is in an authorized group
             if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
                 if is_group_authorized(message.chat.id):
@@ -724,6 +760,14 @@ async def check_private_access(message: Message) -> bool:
 
             # Check admin commands
             if is_admin_command(clean_command):
+                await message.reply("""<pre>⛔ Admin Only</pre>
+━━━━━━━━━━━━━
+⟐ <b>Message</b>: This command is for admin users only.
+━━━━━━━━━━━━━""")
+                return False
+
+            # Check group management commands
+            if is_group_management_command(clean_command):
                 await message.reply("""<pre>⛔ Admin Only</pre>
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: This command is for admin users only.
