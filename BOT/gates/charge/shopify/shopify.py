@@ -537,47 +537,6 @@ class ShopifyHTTPCheckout:
         timestamp = self.generate_timestamp()
         return f"{self.checkout_token}-{timestamp}"
 
-    # RESTORED: Original extraction patterns that were working
-    def extract_session_token_from_html_aggressive(self, html_content):
-        """Aggressively extract session token from HTML using all possible patterns"""
-        session_token = None
-
-        # ORIGINAL PATTERNS - These were working before
-        patterns = [
-            (r'x-checkout-one-session-token["\']?\s*[:=]\s*["\']([A-Za-z0-9_-]{100,})["\']', "Script assignment"),
-            (r'"x-checkout-one-session-token"[:\s]+"([A-Za-z0-9_-]{100,})"', "JSON property"),
-            (r'sessionToken["\']?\s*[:=]\s*["\']([A-Za-z0-9_-]{100,}\.[A-Za-z0-9_-]{100,})["\']', "Session token JWT"),
-            (r'"sessionToken"[:\s]+"([A-Za-z0-9_-]{100,}\.[A-Za-z0-9_-]{100,})"', "SessionToken JSON"),
-            (r'window\.__INITIAL_STATE__.*?"sessionToken"[:\s]+"([^"]{100,})"', "Initial state"),
-            (r'window\.__DATA__.*?"sessionToken"[:\s]+"([^"]{100,})"', "Window data"),
-            (r'"checkout-one".*?"token"[:\s]+"([^"]{100,})"', "Checkout one token"),
-        ]
-
-        for pattern, source in patterns:
-            match = re.search(pattern, html_content, re.IGNORECASE | re.DOTALL)
-            if match:
-                candidate = match.group(1)
-                if len(candidate) > 100 and '.' in candidate:
-                    session_token = candidate
-                    self.logger.data_extracted("Session Token (Aggressive)", session_token[:50] + "...", source)
-                    return session_token
-
-        # ORIGINAL JWT PATTERNS
-        jwt_patterns = [
-            r'[A-Za-z0-9_-]{100,200}\.[A-Za-z0-9_-]{100,200}\.[A-Za-z0-9_-]{40,100}',
-            r'["\']([A-Za-z0-9_-]{150,300}\.[A-Za-z0-9_-]{50,150})["\']',
-        ]
-
-        for pattern in jwt_patterns:
-            matches = re.findall(pattern, html_content)
-            for match in matches:
-                if len(match) > 150 and '.' in match and 'checkout' in html_content.lower():
-                    session_token = match
-                    self.logger.data_extracted("Session Token (JWT Search)", session_token[:50] + "...", "Regex pattern")
-                    return session_token
-
-        return None
-
     def extract_bootstrap_data(self, html_content):
         try:
             patterns = [
@@ -618,7 +577,8 @@ class ShopifyHTTPCheckout:
         except:
             return None
 
-    async def get_checkout_page_with_token(self, max_retries=3):
+    async def get_checkout_page(self, max_retries=3):
+        """Get checkout page - no token extraction from HTML anymore"""
         for attempt in range(max_retries):
             try:
                 self.step(5 if attempt == 0 else 5 + attempt, "LOAD CHECKOUT", 
@@ -653,31 +613,8 @@ class ShopifyHTTPCheckout:
 
                 self.logger.data_extracted("Response Headers", str(dict(resp.headers)), "HTTP Response")
 
-                # RESTORED: Use extraction only, no generation
-                self.session_token = self.extract_session_token_from_html_aggressive(page_content)
-
-                if not self.session_token:
-                    self.logger.error_log("TOKEN", f"Could not extract real session token from HTML (Attempt {attempt + 1})")
-                    # DEBUG: Save HTML to file for analysis
-                    try:
-                        debug_file = f"/tmp/shopify_debug_{self.check_id}_{attempt}.html"
-                        with open(debug_file, 'w', encoding='utf-8') as f:
-                            f.write(page_content)
-                        self.logger.error_log("DEBUG", f"HTML saved to {debug_file}")
-                    except:
-                        pass
-                    if attempt < max_retries - 1:
-                        await self.random_delay(2, 4)
-                        continue
-                    else:
-                        return False, "SESSION_TOKEN_NOT_FOUND"
-
-                self.graphql_session_token = self.construct_graphql_session_token()
-
-                if self.session_token and self.graphql_session_token:
-                    self.logger.data_extracted("Final Session Token", self.session_token[:50] + "...", "Success")
-                    self.logger.data_extracted("GraphQL Session Token", self.graphql_session_token, "Constructed")
-                    return True, page_content
+                # Token will be obtained from Proposal response, not HTML
+                return True, page_content
 
             except httpx.ProxyError as e:
                 self.logger.error_log("PROXY", f"Proxy error: {str(e)}", f"Attempt {attempt + 1}")
@@ -710,7 +647,7 @@ class ShopifyHTTPCheckout:
                     continue
                 return False, f"Checkout page error: {str(e)}"
 
-        return False, "SESSION_TOKEN_NOT_FOUND"
+        return False, "CHECKOUT_PAGE_FAILED"
 
     async def execute_checkout(self, cc, mes, ano, cvv):
         try:
@@ -938,7 +875,8 @@ class ShopifyHTTPCheckout:
 
             await self.random_delay(2, 3)
 
-            success, page_content = await self.get_checkout_page_with_token(max_retries=3)
+            # Step 5: Load checkout page (no token extraction from HTML)
+            success, page_content = await self.get_checkout_page(max_retries=3)
 
             if not success:
                 return False, page_content
@@ -964,15 +902,20 @@ class ShopifyHTTPCheckout:
 
             await self.random_delay(2, 3)
 
+            # Step 6: Submit Proposal mutation - TOKEN WILL BE EXTRACTED FROM RESPONSE
             self.step(6, "SUBMIT PROPOSAL", "Submitting checkout proposal with proxy", self.email)
 
             graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
 
             stable_id = self.generate_uuid()
 
+            # Use placeholder session token for first proposal request
+            # Real token will be returned in response headers
+            temp_session_token = self.construct_graphql_session_token()
+
             proposal_variables = {
                 "sessionInput": {
-                    "sessionToken": self.graphql_session_token
+                    "sessionToken": temp_session_token
                 },
                 "queueToken": f"{self.generate_random_string(43)}==",
                 "discounts": {
@@ -1132,7 +1075,7 @@ class ShopifyHTTPCheckout:
                 'shopify-checkout-client': 'checkout-web/1.0',
                 'shopify-checkout-source': f'id="{self.checkout_token}", type="cn"',
                 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36',
-                'x-checkout-one-session-token': self.session_token,
+                # Don't send x-checkout-one-session-token for first request
                 'x-checkout-web-build-id': '0e1aa4a2d0226841954371a4b7b45388eaac3ef4',
                 'x-checkout-web-deploy-stage': 'production',
                 'x-checkout-web-server-handling': 'fast',
@@ -1159,6 +1102,32 @@ class ShopifyHTTPCheckout:
                 if resp.status_code != 200:
                     return False, f"Proposal failed: {resp.status_code}"
 
+                # FIXED: Extract session token from response headers
+                resp_headers = dict(resp.headers)
+                self.session_token = resp_headers.get('x-checkout-one-session-token')
+                
+                if not self.session_token:
+                    # Try to extract from response body if present
+                    try:
+                        proposal_resp = resp.json()
+                        # Check if token is in response data
+                        if 'data' in proposal_resp and 'proposal' in proposal_resp['data']:
+                            proposal_data = proposal_resp['data']['proposal']
+                            if 'sessionToken' in proposal_data:
+                                self.session_token = proposal_data['sessionToken']
+                    except:
+                        pass
+                
+                if not self.session_token:
+                    self.logger.error_log("TOKEN", "Could not extract session token from Proposal response headers or body")
+                    return False, "SESSION_TOKEN_NOT_FOUND"
+
+                self.logger.data_extracted("Session Token from Proposal", self.session_token[:50] + "...", "Response Headers")
+                
+                # Update graphql session token with real one
+                self.graphql_session_token = self.session_token
+
+                # Check for errors in response
                 try:
                     proposal_resp = resp.json()
                     if 'errors' in proposal_resp and proposal_resp['errors']:
@@ -1180,6 +1149,7 @@ class ShopifyHTTPCheckout:
 
             await self.random_delay(1, 2)
 
+            # Step 7: Create payment session with PCI
             self.step(7, "CREATE PAYMENT", "Creating payment session with PCI and proxy")
 
             pci_headers = {
@@ -1296,6 +1266,7 @@ class ShopifyHTTPCheckout:
 
             await self.random_delay(1, 2)
 
+            # Step 8: Submit for completion
             self.step(8, "SUBMIT PAYMENT", "Submitting payment for processing with proxy")
 
             attempt_token = f"{self.checkout_token}-{self.generate_random_string(12)}"
