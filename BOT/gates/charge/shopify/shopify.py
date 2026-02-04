@@ -340,8 +340,11 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
 
     raw_response_upper = raw_response.upper()
 
+    # Check for NO RECEIPT ID first (before success checks) - THIS IS THE FIX
+    if "NO RECEIPT ID" in raw_response_upper:
+        status_flag = "Declined ❌"
     # Check for SUCCESS indicators
-    if any(keyword in raw_response_upper for keyword in [
+    elif any(keyword in raw_response_upper for keyword in [
         "ORDER_PLACED", "SUBMITSUCCESS", "SUCCESSFUL", "APPROVED", "RECEIPT",
         "COMPLETED", "PAYMENT_SUCCESS", "CHARGE_SUCCESS", "THANK_YOU",
         "ORDER_CONFIRMATION", "YOUR_ORDER_IS_CONFIRMED", "ORDER_CONFIRMED",
