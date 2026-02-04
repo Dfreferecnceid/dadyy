@@ -376,7 +376,7 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
         "THERE WAS AN ISSUE PROCESSING YOUR PAYMENT", "PAYMENT ISSUE",
         "ISSUE PROCESSING", "PAYMENT ERROR", "PAYMENT PROBLEM",
         "TRY AGAIN OR USE A DIFFERENT PAYMENT METHOD", "CARD WAS DECLINED",
-        "YOUR PAYMENT COULDN'T BE PROCESSED", "PAYMENT FAILED"
+        "YOUR PAYMENT COULDN'T BE PROCESSED", "PAYMENT_FAILED"
     ]):
         status_flag = "Declined ❌"
     # Check for INSUFFICIENT FUNDS
@@ -741,13 +741,16 @@ class ShopifyHTTPCheckout:
                     'sec-fetch-site': 'cross-site'
                 }
 
-                # Use proxy for this request
-                proxies = {
-                    'http://': self.proxy_url,
-                    'https://': self.proxy_url
-                } if self.proxy_url else None
+                # Use proxy for this request - FIXED httpx proxy format
+                proxies = None
+                if self.proxy_url:
+                    # httpx proxy format: "http://user:pass@host:port" or "http://host:port"
+                    proxies = {
+                        'http://': self.proxy_url,
+                        'https://': self.proxy_url
+                    }
 
-                async with httpx.AsyncClient(proxies=proxies, timeout=30.0) as client:
+                async with httpx.AsyncClient(timeout=30.0, proxies=proxies) as client:
                     resp = await client.get(checkout_url, headers=checkout_headers, params=checkout_params)
 
                 if resp.status_code != 200:
@@ -825,11 +828,16 @@ class ShopifyHTTPCheckout:
                     self.logger.error_log("NO_PROXY", "No working proxies available in system")
                     return False, "NO_PROXY_AVAILABLE"
                 
-                # Test the proxy quickly
+                # Test the proxy quickly - SIMPLIFIED TEST (no ipinfo.io)
                 start_test = time.time()
                 try:
-                    async with httpx.AsyncClient(proxies={'http://': self.proxy_url, 'https://': self.proxy_url}, timeout=5.0) as client:
-                        test_resp = await client.get("https://ipinfo.io/json")
+                    # Simple test: try to access Google with proxy
+                    proxies = {
+                        'http://': self.proxy_url,
+                        'https://': self.proxy_url
+                    }
+                    async with httpx.AsyncClient(proxies=proxies, timeout=5.0) as client:
+                        test_resp = await client.get("http://www.google.com", headers={'User-Agent': 'Mozilla/5.0'})
                     
                     self.proxy_response_time = time.time() - start_test
                     
@@ -860,19 +868,24 @@ class ShopifyHTTPCheckout:
 
             shopify_y, shopify_s = self.generate_tracking_ids()
 
-            # Create cookies dict for async client
-            self.cookies = {
+            # Create cookies dict
+            cookies = {
                 'localization': 'US',
                 '_shopify_y': shopify_y,
                 '_shopify_s': shopify_s,
                 'cart_currency': 'USD'
             }
 
+            # Create httpx client with proxy - FIXED: Don't pass proxies in __init__, use transport
+            proxies = {
+                'http://': self.proxy_url,
+                'https://': self.proxy_url
+            }
+
             # First request with proxy - ASYNC
             start_time = time.time()
             try:
-                proxies = {'http://': self.proxy_url, 'https://': self.proxy_url} if self.proxy_url else None
-                async with httpx.AsyncClient(cookies=self.cookies, proxies=proxies, timeout=30.0) as self.session:
+                async with httpx.AsyncClient(proxies=proxies, timeout=30.0, cookies=cookies) as self.session:
                     resp = await self.session.get(self.base_url, headers=self.headers)
                     request_time = time.time() - start_time
                     
@@ -1321,7 +1334,11 @@ class ShopifyHTTPCheckout:
 
                     try:
                         # PCI request needs its own session with proxy - ASYNC
-                        pci_proxies = {'http://': self.proxy_url, 'https://': self.proxy_url} if self.proxy_url else None
+                        pci_proxies = {
+                            'http://': self.proxy_url,
+                            'https://': self.proxy_url
+                        } if self.proxy_url else None
+                        
                         async with httpx.AsyncClient(proxies=pci_proxies, timeout=30.0) as pci_session:
                             resp = await pci_session.post(
                                 'https://checkout.pci.shopifyinc.com/sessions',
