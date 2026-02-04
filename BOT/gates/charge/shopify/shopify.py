@@ -350,7 +350,7 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
         "ORDER #", "PROCESSEDRECEIPT", "THANK YOU", "PAYMENT_SUCCESSFUL",
         "PROCESSINGRECEIPT", "AUTHORIZED", "YOUR ORDER IS CONFIRMED"
     ]):
-        status_flag = "Charged 💎"
+        status_flag = "Charged ✅"
     # Check for CAPTCHA
     elif any(keyword in raw_response_upper for keyword in [
         "CAPTCHA", "SOLVE THE CAPTCHA", "CAPTCHA_METADATA_MISSING", 
