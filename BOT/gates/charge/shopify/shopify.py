@@ -162,7 +162,7 @@ class ShopifyLogger:
             "CAPTCHA": "🛡️", "DECLINED": "💳", "FRAUD": "🚫",
             "TIMEOUT": "⏰", "CONNECTION": "🔌", "UNKNOWN": "❓",
             "PROXY": "🔧", "NO_PROXY": "🚫", "PCI": "💳",
-            "RETRY": "🔄"
+            "RETRY": "🔄", "TOKEN_INVALID": "🔄"
         }
         error_icon = error_icons.get(error_type, "⚠️")
         log_msg = f"{error_icon} ERROR [{error_type}]: {message}"
@@ -759,8 +759,16 @@ class ShopifyHTTPCheckout:
 
                 try:
                     transport = httpx.AsyncHTTPTransport(proxy=self.proxy_url) if self.proxy_url else None
-                    async with httpx.AsyncClient(transport=transport, timeout=30.0) as client:
+                    # IMPORTANT: Create client with follow_redirects=True to handle redirects properly
+                    async with httpx.AsyncClient(transport=transport, timeout=30.0, follow_redirects=True) as client:
                         resp = await client.get(checkout_url, headers=checkout_headers, params=checkout_params)
+
+                    # Check if we were redirected away from checkout (indicates invalid token)
+                    final_url = str(resp.url)
+                    if '/checkouts/cn/' not in final_url and attempt < max_retries - 1:
+                        self.logger.error_log("TOKEN_INVALID", f"Redirected to non-checkout URL: {final_url[:50]}...", f"Attempt {attempt + 1}")
+                        await self.random_delay(2, 4)
+                        continue
 
                     if resp.status_code != 200:
                         self.logger.error_log("CHECKOUT_PAGE", f"Status: {resp.status_code}", f"Attempt {attempt + 1}")
@@ -874,7 +882,7 @@ class ShopifyHTTPCheckout:
                 start_test = time.time()
                 try:
                     transport = httpx.AsyncHTTPTransport(proxy=self.proxy_url)
-                    async with httpx.AsyncClient(transport=transport, timeout=5.0) as client:
+                    async with httpx.AsyncClient(transport=transport, timeout=5.0, follow_redirects=True) as client:
                         test_resp = await client.get("http://www.google.com", headers={'User-Agent': 'Mozilla/5.0'})
                     
                     self.proxy_response_time = time.time() - start_test
@@ -917,7 +925,8 @@ class ShopifyHTTPCheckout:
             try:
                 transport = httpx.AsyncHTTPTransport(proxy=self.proxy_url)
                 
-                async with httpx.AsyncClient(transport=transport, cookies=cookies, timeout=30.0) as self.session:
+                # IMPORTANT: Use follow_redirects=True in client
+                async with httpx.AsyncClient(transport=transport, cookies=cookies, timeout=30.0, follow_redirects=True) as self.session:
                     resp = await self.session.get(self.base_url, headers=self.headers)
                     request_time = time.time() - start_time
                     
@@ -1047,13 +1056,12 @@ class ShopifyHTTPCheckout:
                     }
 
                     try:
-                        # IMPORTANT: Use allow_redirects=True to follow redirects
+                        # IMPORTANT: Use follow_redirects=True (already set in client)
                         resp = await self.session.post(
                             f"{self.base_url}/cart",
                             headers=checkout_start_headers,
                             data={'checkout': ''},
-                            timeout=30.0,
-                            follow_redirects=True  # FOLLOW REDIRECTS!
+                            timeout=30.0
                         )
 
                         # Check response text first - token might be in HTML
@@ -1117,6 +1125,12 @@ class ShopifyHTTPCheckout:
                     success, page_content = await self.get_checkout_page_with_token(max_retries=3)
 
                     if not success:
+                        # If we get here and page_content contains "Failed to load checkout: 302", 
+                        # it means the checkout token is invalid - restart checkout
+                        if "302" in str(page_content) and retry_count < max_retries:
+                            self.logger.step(5, "CHECKOUT RETRY", f"Invalid checkout token (302), restarting checkout (Attempt {retry_count + 1}/{max_retries})", status="RETRY")
+                            self.reset_session()
+                            return await self.execute_checkout(cc, mes, ano, cvv, retry_count + 1, max_retries)
                         return False, page_content
 
                     bootstrap_data = self.extract_bootstrap_data(page_content)
@@ -1397,7 +1411,7 @@ class ShopifyHTTPCheckout:
 
                     try:
                         pci_transport = httpx.AsyncHTTPTransport(proxy=self.proxy_url) if self.proxy_url else None
-                        async with httpx.AsyncClient(transport=pci_transport, timeout=30.0) as pci_session:
+                        async with httpx.AsyncClient(transport=pci_transport, timeout=30.0, follow_redirects=True) as pci_session:
                             resp = await pci_session.post(
                                 'https://checkout.pci.shopifyinc.com/sessions',
                                 headers=pci_headers,
