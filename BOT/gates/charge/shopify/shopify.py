@@ -765,10 +765,10 @@ class ShopifyHTTPCheckout:
 
                     # Check if we were redirected away from checkout (indicates invalid token)
                     final_url = str(resp.url)
-                    if '/checkouts/cn/' not in final_url and attempt < max_retries - 1:
+                    if '/checkouts/cn/' not in final_url:
                         self.logger.error_log("TOKEN_INVALID", f"Redirected to non-checkout URL: {final_url[:50]}...", f"Attempt {attempt + 1}")
-                        await self.random_delay(2, 4)
-                        continue
+                        # Return specific error code for invalid token so we can restart from Step 4
+                        return False, "INVALID_CHECKOUT_TOKEN"
 
                     if resp.status_code != 200:
                         self.logger.error_log("CHECKOUT_PAGE", f"Status: {resp.status_code}", f"Attempt {attempt + 1}")
@@ -1044,94 +1044,126 @@ class ShopifyHTTPCheckout:
 
                     await self.random_delay(1, 2)
 
-                    # Step 4: Start checkout - CRITICAL FIX HERE
-                    self.step(4, "START CHECKOUT", "Initiating checkout process with proxy")
-
-                    checkout_start_headers = {
-                        **self.headers,
-                        'content-type': 'application/x-www-form-urlencoded',
-                        'origin': self.base_url,
-                        'referer': self.product_url,
-                        'sec-fetch-site': 'same-origin'
-                    }
-
-                    try:
-                        # IMPORTANT: Use follow_redirects=True (already set in client)
-                        resp = await self.session.post(
-                            f"{self.base_url}/cart",
-                            headers=checkout_start_headers,
-                            data={'checkout': ''},
-                            timeout=30.0
-                        )
-
-                        # Check response text first - token might be in HTML
-                        response_text = resp.text
+                    # CRITICAL FIX: Loop for Step 4 and 5 to allow restarting from Step 4 on token invalid
+                    checkout_attempts = 0
+                    max_checkout_attempts = 2  # Try Step 4→5 twice max
+                    
+                    while checkout_attempts < max_checkout_attempts:
+                        checkout_attempts += 1
                         
-                        # Try to extract token from response text FIRST
-                        token_match = re.search(r'"checkoutToken":"([a-f0-9]+)"', response_text)
-                        if token_match:
-                            self.checkout_token = token_match.group(1)
-                            self.logger.data_extracted("Checkout Token (from text)", self.checkout_token[:20] + "...", "Response HTML")
-                        else:
-                            # Try from URL if not in text
-                            current_url = str(resp.url)
-                            self.checkout_token = self.extract_checkout_token(current_url)
+                        # Step 4: Start checkout - Generate fresh checkout token
+                        self.step(4, "START CHECKOUT", f"Initiating checkout process with proxy (Attempt {checkout_attempts}/{max_checkout_attempts})")
+
+                        checkout_start_headers = {
+                            **self.headers,
+                            'content-type': 'application/x-www-form-urlencoded',
+                            'origin': self.base_url,
+                            'referer': self.product_url,
+                            'sec-fetch-site': 'same-origin'
+                        }
+
+                        try:
+                            # IMPORTANT: Use follow_redirects=True (already set in client)
+                            resp = await self.session.post(
+                                f"{self.base_url}/cart",
+                                headers=checkout_start_headers,
+                                data={'checkout': ''},
+                                timeout=30.0
+                            )
+
+                            # Check response text first - token might be in HTML
+                            response_text = resp.text
                             
-                            if not self.checkout_token:
-                                # Try alternative patterns in response text
-                                alternative_patterns = [
-                                    r'checkout_token["\']?\s*[:=]\s*["\']([a-f0-9]+)["\']',
-                                    r'token["\']?\s*[:=]\s*["\']([a-f0-9]+)["\']',
-                                    r'data-checkout-token["\']?\s*[:=]\s*["\']([a-f0-9]+)["\']'
-                                ]
+                            # Try to extract token from response text FIRST
+                            token_match = re.search(r'"checkoutToken":"([a-f0-9]+)"', response_text)
+                            if token_match:
+                                self.checkout_token = token_match.group(1)
+                                self.logger.data_extracted("Checkout Token (from text)", self.checkout_token[:20] + "...", "Response HTML")
+                            else:
+                                # Try from URL if not in text
+                                current_url = str(resp.url)
+                                self.checkout_token = self.extract_checkout_token(current_url)
                                 
-                                for pattern in alternative_patterns:
-                                    match = re.search(pattern, response_text, re.IGNORECASE)
-                                    if match:
-                                        self.checkout_token = match.group(1)
-                                        self.logger.data_extracted("Checkout Token (alt pattern)", self.checkout_token[:20] + "...", f"Pattern: {pattern}")
+                                if not self.checkout_token:
+                                    # Try alternative patterns in response text
+                                    alternative_patterns = [
+                                        r'checkout_token["\']?\s*[:=]\s*["\']([a-f0-9]+)["\']',
+                                        r'token["\']?\s*[:=]\s*["\']([a-f0-9]+)["\']',
+                                        r'data-checkout-token["\']?\s*[:=]\s*["\']([a-f0-9]+)["\']'
+                                    ]
+                                    
+                                    for pattern in alternative_patterns:
+                                        match = re.search(pattern, response_text, re.IGNORECASE)
+                                        if match:
+                                            self.checkout_token = match.group(1)
+                                            self.logger.data_extracted("Checkout Token (alt pattern)", self.checkout_token[:20] + "...", f"Pattern: {pattern}")
+                                            break
+
+                            if not self.checkout_token:
+                                # Last resort: try to find any hex token in response
+                                hex_pattern = r'[a-f0-9]{32,}'
+                                matches = re.findall(hex_pattern, response_text)
+                                for match in matches:
+                                    if len(match) >= 32:
+                                        self.checkout_token = match
+                                        self.logger.data_extracted("Checkout Token (hex search)", self.checkout_token[:20] + "...", "Hex pattern match")
                                         break
 
-                        if not self.checkout_token:
-                            # Last resort: try to find any hex token in response
-                            hex_pattern = r'[a-f0-9]{32,}'
-                            matches = re.findall(hex_pattern, response_text)
-                            for match in matches:
-                                if len(match) >= 32:
-                                    self.checkout_token = match
-                                    self.logger.data_extracted("Checkout Token (hex search)", self.checkout_token[:20] + "...", "Hex pattern match")
-                                    break
+                            if not self.checkout_token:
+                                # Log the response for debugging
+                                self.logger.data_extracted("Response URL", str(resp.url), "For debugging")
+                                self.logger.data_extracted("Response Preview", response_text[:200], "First 200 chars")
+                                return False, "Could not extract checkout token"
 
-                        if not self.checkout_token:
-                            # Log the response for debugging
-                            self.logger.data_extracted("Response URL", str(resp.url), "For debugging")
-                            self.logger.data_extracted("Response Preview", response_text[:200], "First 200 chars")
-                            return False, "Could not extract checkout token"
+                            self.logger.data_extracted("Checkout Token", self.checkout_token[:20] + "...", "Successfully extracted")
 
-                        self.logger.data_extracted("Checkout Token", self.checkout_token[:20] + "...", "Successfully extracted")
+                        except (httpx.ProxyError, httpx.ConnectError) as e:
+                            self.logger.error_log("PROXY", f"Proxy error on checkout start: {str(e)}")
+                            mark_proxy_failed(self.proxy_url)
+                            self.proxy_status = "Dead 🚫"
+                            return False, "PROXY_DEAD"
+                        except Exception as e:
+                            self.logger.error_log("CHECKOUT_START", f"Checkout start error: {str(e)}")
+                            return False, f"Checkout start error: {str(e)[:50]}"
 
-                    except (httpx.ProxyError, httpx.ConnectError) as e:
-                        self.logger.error_log("PROXY", f"Proxy error on checkout start: {str(e)}")
-                        mark_proxy_failed(self.proxy_url)
-                        self.proxy_status = "Dead 🚫"
-                        return False, "PROXY_DEAD"
-                    except Exception as e:
-                        self.logger.error_log("CHECKOUT_START", f"Checkout start error: {str(e)}")
-                        return False, f"Checkout start error: {str(e)[:50]}"
+                        await self.random_delay(2, 3)
 
-                    await self.random_delay(2, 3)
+                        # Step 5: Get checkout page with session token extraction
+                        success, page_content = await self.get_checkout_page_with_token(max_retries=3)
 
-                    # Step 5: Get checkout page with session token extraction
-                    success, page_content = await self.get_checkout_page_with_token(max_retries=3)
+                        if success:
+                            # Successfully got checkout page, break out of retry loop
+                            break
+                        elif page_content == "INVALID_CHECKOUT_TOKEN":
+                            # Token was invalid, clear it and retry from Step 4 if we haven't exceeded attempts
+                            self.logger.error_log("TOKEN_INVALID", f"Checkout token invalid, restarting from Step 4 (Attempt {checkout_attempts}/{max_checkout_attempts})")
+                            self.checkout_token = None
+                            self.session_token = None
+                            self.graphql_session_token = None
+                            if checkout_attempts >= max_checkout_attempts:
+                                # Max attempts reached, return error
+                                if retry_count < max_retries:
+                                    self.logger.step(5, "FULL RETRY", f"Max checkout attempts reached, doing full retry (Attempt {retry_count + 1}/{max_retries})", status="RETRY")
+                                    self.reset_session()
+                                    return await self.execute_checkout(cc, mes, ano, cvv, retry_count + 1, max_retries)
+                                return False, "ERROR_RETRY"
+                            # Otherwise continue loop to retry Step 4
+                            continue
+                        else:
+                            # Other error from get_checkout_page_with_token
+                            if retry_count < max_retries:
+                                self.logger.step(5, "CHECKOUT RETRY", f"Checkout page error: {page_content}, retrying (Attempt {retry_count + 1}/{max_retries})", status="RETRY")
+                                self.reset_session()
+                                return await self.execute_checkout(cc, mes, ano, cvv, retry_count + 1, max_retries)
+                            return False, page_content
 
+                    # If we exhausted all checkout attempts without success
                     if not success:
-                        # If we get here and page_content contains "Failed to load checkout: 302", 
-                        # it means the checkout token is invalid - restart checkout
-                        if "302" in str(page_content) and retry_count < max_retries:
-                            self.logger.step(5, "CHECKOUT RETRY", f"Invalid checkout token (302), restarting checkout (Attempt {retry_count + 1}/{max_retries})", status="RETRY")
+                        if retry_count < max_retries:
+                            self.logger.step(5, "FULL RETRY", f"All checkout attempts failed, doing full retry (Attempt {retry_count + 1}/{max_retries})", status="RETRY")
                             self.reset_session()
                             return await self.execute_checkout(cc, mes, ano, cvv, retry_count + 1, max_retries)
-                        return False, page_content
+                        return False, "ERROR_RETRY"
 
                     bootstrap_data = self.extract_bootstrap_data(page_content)
                     self.logger.data_extracted("Bootstrap Data", str(list(bootstrap_data.keys())), "Page")
@@ -1355,6 +1387,11 @@ class ShopifyHTTPCheckout:
                                 error_msg = proposal_resp['errors'][0].get('message', 'Unknown error')
                                 if ":" in error_msg:
                                     error_msg = error_msg.split(":")[0].strip()
+                                # Check for invalid session token error - restart from Step 4
+                                if "Invalid session token" in error_msg and retry_count < max_retries:
+                                    self.logger.step(6, "SESSION RETRY", f"Invalid session token in Proposal, restarting from Step 4 (Attempt {retry_count + 1}/{max_retries})", status="RETRY")
+                                    self.reset_session()
+                                    return await self.execute_checkout(cc, mes, ano, cvv, retry_count + 1, max_retries)
                                 return False, f"Proposal error: {error_msg}"
                         except Exception as e:
                             return False, f"Failed to parse Proposal response: {str(e)[:50]}"
@@ -1689,6 +1726,11 @@ class ShopifyHTTPCheckout:
                                 error_msg = submit_resp['errors'][0].get('message', 'Unknown error')
                                 if ":" in error_msg:
                                     error_msg = error_msg.split(":")[0].strip()
+                                # Check for invalid session token error - restart from Step 4
+                                if "Invalid session token" in error_msg and retry_count < max_retries:
+                                    self.logger.step(8, "SESSION RETRY", f"Invalid session token in Submit, restarting from Step 4 (Attempt {retry_count + 1}/{max_retries})", status="RETRY")
+                                    self.reset_session()
+                                    return await self.execute_checkout(cc, mes, ano, cvv, retry_count + 1, max_retries)
                                 return False, f"Submit error: {error_msg}"
 
                             data = submit_resp.get('data', {}).get('submitForCompletion', {})
