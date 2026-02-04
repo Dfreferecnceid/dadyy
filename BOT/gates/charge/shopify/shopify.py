@@ -1810,9 +1810,8 @@ async def handle_shopify_charge(client: Client, message: Message):
 🠪 <b>Usage</b>: <code>/sh cc|mm|yy|cvv</code>
 🠪 <b>Example</b>: <code>/sh 4111111111111111|12|2025|123</code>
 ━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Charges via Shopify gateway (Deducts 2 credits AFTER check completes)</code>
-<b>~ Note:</b> <code>Uses HTTP API for fast checkout with proxy system</code>
-<b>~ Note:</b> <code>Requires working proxies in system</code>""")
+<b>~ Note:</b> <code>Charges via Shopify gateway (Deducts 2 credits AFTER check completes)</code>""")
+            
             return
 
         card_details = args[1].strip()
@@ -1837,7 +1836,6 @@ async def handle_shopify_charge(client: Client, message: Message):
             await message.reply("""<pre>❌ Proxy System Unavailable</pre>
 ━━━━━━━━━━━━━
 🠪 <b>Message</b>: Proxy system is not available.
-🠪 <b>Solution</b>: <code>Ensure BOT/tools/proxy.py exists and is working</code>
 🠪 <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
 ━━━━━━━━━━━━━""")
             return
@@ -1853,10 +1851,8 @@ async def handle_shopify_charge(client: Client, message: Message):
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
 <b>[+] Plan:</b> {plan_name}
 <b>[+] User:</b> @{username}
-<b>[+] Method:</b> HTTP API with Proxy
-<b>[+] Proxy Status:</b> Checking...
 ━━━━━━━━━━━━━━━
-<b>Starting proxy checkout... Please wait.</b>
+<b>Processing... Please wait.</b>
 """
         )
 
