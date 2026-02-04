@@ -1562,7 +1562,7 @@ class ShopifyHTTPCheckout:
                     self.receipt_id = receipt.get('id')
 
                     if not self.receipt_id:
-                        return False, "No receipt ID in submit response"
+                        return False, "DECLINED - No receipt ID in submit response"
 
                     self.logger.data_extracted("Receipt ID", self.receipt_id, "Submit")
 
