@@ -741,47 +741,46 @@ class ShopifyHTTPCheckout:
                     'sec-fetch-site': 'cross-site'
                 }
 
-                # Use proxy for this request - FIXED httpx proxy format
-                proxies = None
-                if self.proxy_url:
-                    # httpx proxy format: "http://user:pass@host:port" or "http://host:port"
-                    proxies = {
-                        'http://': self.proxy_url,
-                        'https://': self.proxy_url
-                    }
+                # Use proxy for this request
+                try:
+                    # Create httpx client with proxy transport
+                    transport = httpx.AsyncHTTPTransport(proxy=self.proxy_url) if self.proxy_url else None
+                    async with httpx.AsyncClient(transport=transport, timeout=30.0) as client:
+                        resp = await client.get(checkout_url, headers=checkout_headers, params=checkout_params)
 
-                async with httpx.AsyncClient(timeout=30.0, proxies=proxies) as client:
-                    resp = await client.get(checkout_url, headers=checkout_headers, params=checkout_params)
+                    if resp.status_code != 200:
+                        self.logger.error_log("CHECKOUT_PAGE", f"Status: {resp.status_code}", f"Attempt {attempt + 1}")
+                        if attempt < max_retries - 1:
+                            await self.random_delay(2, 4)
+                            continue
+                        return False, f"Failed to load checkout: {resp.status_code}"
 
-                if resp.status_code != 200:
-                    self.logger.error_log("CHECKOUT_PAGE", f"Status: {resp.status_code}", f"Attempt {attempt + 1}")
+                    page_content = resp.text
+
+                    self.logger.data_extracted("Response Headers", str(dict(resp.headers)), "HTTP Response")
+
+                    self.session_token = self.extract_session_token_from_html_aggressive(page_content)
+
+                    if not self.session_token:
+                        self.session_token = self.generate_session_token_from_checkout()
+                        if self.session_token:
+                            self.logger.data_extracted("Session Token Generated", self.session_token[:50] + "...", "Generated from checkout")
+
+                    self.graphql_session_token = self.construct_graphql_session_token()
+
+                    if self.session_token and self.graphql_session_token:
+                        self.logger.data_extracted("Final Session Token", self.session_token[:50] + "...", "Success")
+                        self.logger.data_extracted("GraphQL Session Token", self.graphql_session_token, "Constructed")
+                        return True, page_content
+
                     if attempt < max_retries - 1:
+                        self.logger.error_log("TOKEN_RETRY", f"Missing session token, retrying...", f"Attempt {attempt + 1}")
                         await self.random_delay(2, 4)
                         continue
-                    return False, f"Failed to load checkout: {resp.status_code}"
-
-                page_content = resp.text
-
-                self.logger.data_extracted("Response Headers", str(dict(resp.headers)), "HTTP Response")
-
-                self.session_token = self.extract_session_token_from_html_aggressive(page_content)
-
-                if not self.session_token:
-                    self.session_token = self.generate_session_token_from_checkout()
-                    if self.session_token:
-                        self.logger.data_extracted("Session Token Generated", self.session_token[:50] + "...", "Generated from checkout")
-
-                self.graphql_session_token = self.construct_graphql_session_token()
-
-                if self.session_token and self.graphql_session_token:
-                    self.logger.data_extracted("Final Session Token", self.session_token[:50] + "...", "Success")
-                    self.logger.data_extracted("GraphQL Session Token", self.graphql_session_token, "Constructed")
-                    return True, page_content
-
-                if attempt < max_retries - 1:
-                    self.logger.error_log("TOKEN_RETRY", f"Missing session token, retrying...", f"Attempt {attempt + 1}")
-                    await self.random_delay(2, 4)
-                    continue
+                        
+                except Exception as transport_error:
+                    self.logger.error_log("TRANSPORT", f"Transport error: {str(transport_error)}")
+                    raise
 
             except (httpx.ProxyError, httpx.ConnectError) as e:
                 self.logger.error_log("PROXY", f"Proxy error: {str(e)}", f"Attempt {attempt + 1}")
@@ -828,15 +827,12 @@ class ShopifyHTTPCheckout:
                     self.logger.error_log("NO_PROXY", "No working proxies available in system")
                     return False, "NO_PROXY_AVAILABLE"
                 
-                # Test the proxy quickly - SIMPLIFIED TEST (no ipinfo.io)
+                # Test the proxy quickly - SIMPLIFIED TEST
                 start_test = time.time()
                 try:
-                    # Simple test: try to access Google with proxy
-                    proxies = {
-                        'http://': self.proxy_url,
-                        'https://': self.proxy_url
-                    }
-                    async with httpx.AsyncClient(proxies=proxies, timeout=5.0) as client:
+                    # Test proxy with transport
+                    transport = httpx.AsyncHTTPTransport(proxy=self.proxy_url)
+                    async with httpx.AsyncClient(transport=transport, timeout=5.0) as client:
                         test_resp = await client.get("http://www.google.com", headers={'User-Agent': 'Mozilla/5.0'})
                     
                     self.proxy_response_time = time.time() - start_test
@@ -868,24 +864,20 @@ class ShopifyHTTPCheckout:
 
             shopify_y, shopify_s = self.generate_tracking_ids()
 
-            # Create cookies dict
-            cookies = {
-                'localization': 'US',
-                '_shopify_y': shopify_y,
-                '_shopify_s': shopify_s,
-                'cart_currency': 'USD'
-            }
-
-            # Create httpx client with proxy - FIXED: Don't pass proxies in __init__, use transport
-            proxies = {
-                'http://': self.proxy_url,
-                'https://': self.proxy_url
-            }
+            # Create cookies jar
+            cookies = httpx.Cookies()
+            cookies.set('localization', 'US', domain='meta-app-prod-store-1.myshopify.com')
+            cookies.set('_shopify_y', shopify_y, domain='meta-app-prod-store-1.myshopify.com')
+            cookies.set('_shopify_s', shopify_s, domain='meta-app-prod-store-1.myshopify.com')
+            cookies.set('cart_currency', 'USD', domain='meta-app-prod-store-1.myshopify.com')
 
             # First request with proxy - ASYNC
             start_time = time.time()
             try:
-                async with httpx.AsyncClient(proxies=proxies, timeout=30.0, cookies=cookies) as self.session:
+                # Create transport with proxy
+                transport = httpx.AsyncHTTPTransport(proxy=self.proxy_url)
+                
+                async with httpx.AsyncClient(transport=transport, cookies=cookies, timeout=30.0) as self.session:
                     resp = await self.session.get(self.base_url, headers=self.headers)
                     request_time = time.time() - start_time
                     
@@ -1334,12 +1326,8 @@ class ShopifyHTTPCheckout:
 
                     try:
                         # PCI request needs its own session with proxy - ASYNC
-                        pci_proxies = {
-                            'http://': self.proxy_url,
-                            'https://': self.proxy_url
-                        } if self.proxy_url else None
-                        
-                        async with httpx.AsyncClient(proxies=pci_proxies, timeout=30.0) as pci_session:
+                        pci_transport = httpx.AsyncHTTPTransport(proxy=self.proxy_url) if self.proxy_url else None
+                        async with httpx.AsyncClient(transport=pci_transport, timeout=30.0) as pci_session:
                             resp = await pci_session.post(
                                 'https://checkout.pci.shopifyinc.com/sessions',
                                 headers=pci_headers,
