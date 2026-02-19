@@ -257,7 +257,7 @@ class StripeCharge1Checker:
         }
 
     async def get_bin_info(self, cc):
-        """Get BIN information"""
+        """Get BIN information with safe None handling"""
         if not cc or len(cc) < 6:
             return {
                 'scheme': 'N/A',
@@ -292,11 +292,12 @@ class StripeCharge1Checker:
                     country_name = self.country_map.get(country_code, 'N/A')
                     flag_emoji = self.get_country_emoji(country_code)
 
+                    # Safely handle None values
                     result = {
-                        'scheme': data.get('brand', 'N/A').upper(),
-                        'type': data.get('type', 'N/A').upper(),
-                        'brand': data.get('brand', 'N/A'),
-                        'bank': data.get('bank', 'N/A'),
+                        'scheme': str(data.get('brand', 'N/A')).upper() if data.get('brand') else 'N/A',
+                        'type': str(data.get('type', 'N/A')).upper() if data.get('type') else 'N/A',
+                        'brand': str(data.get('brand', 'N/A')) if data.get('brand') else 'N/A',
+                        'bank': str(data.get('bank', 'N/A')) if data.get('bank') else 'N/A',
                         'country': country_name,
                         'country_code': country_code,
                         'emoji': flag_emoji
@@ -374,9 +375,20 @@ class StripeCharge1Checker:
     async def format_response(self, cc, mes, ano, cvv, status, message, username, elapsed_time, user_data, bin_info=None):
         if bin_info is None:
             bin_info = await self.get_bin_info(cc)
+        
+        # Ensure bin_info has all required fields with safe string conversion
+        safe_bin_info = {
+            'scheme': str(bin_info.get('scheme', 'N/A')),
+            'type': str(bin_info.get('type', 'N/A')),
+            'brand': str(bin_info.get('brand', 'N/A')),
+            'bank': str(bin_info.get('bank', 'N/A')) if bin_info.get('bank') else 'N/A',
+            'country': str(bin_info.get('country', 'N/A')),
+            'country_code': str(bin_info.get('country_code', 'N/A')),
+            'emoji': str(bin_info.get('emoji', '🏳️'))
+        }
 
         user_id = user_data.get("user_id", "Unknown")
-        first_name = html.escape(user_data.get("first_name", "User"))
+        first_name = html.escape(str(user_data.get("first_name", "User")))
         badge = user_data.get("plan", {}).get("badge", "🧿")
 
         # Check if this is a 3D Secure case
@@ -392,11 +404,13 @@ class StripeCharge1Checker:
             status_emoji = "❌"
             status_text = "DECLINED"
             # Use the message directly as extracted
-            message_display = message if message else "Payment declined"
+            message_display = str(message) if message else "Payment declined"
 
         clean_name = re.sub(r'[↯⌁«~∞🍁]', '', first_name).strip()
         user_display = f"「{badge}」{clean_name}"
-        bank_info = bin_info['bank'].upper() if bin_info['bank'] != 'N/A' else 'N/A'
+        
+        # Safe bank info with upper() handling
+        bank_info = safe_bin_info['bank'].upper() if safe_bin_info['bank'] != 'N/A' else 'N/A'
 
         response = f"""<b>「$cmd → /xo」| <b>WAYNE</b> </b>
 ━━━━━━━━━━━━━━━
@@ -406,9 +420,9 @@ class StripeCharge1Checker:
 <b>[•] Response-</b> <code>{message_display}</code>
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
 <b>[+] Bin:</b> <code>{cc[:6]}</code>  
-<b>[+] Info:</b> <code>{bin_info['scheme']} - {bin_info['type']} - {bin_info['brand']}</code>
+<b>[+] Info:</b> <code>{safe_bin_info['scheme']} - {safe_bin_info['type']} - {safe_bin_info['brand']}</code>
 <b>[+] Bank:</b> <code>{bank_info}</code> 🏦
-<b>[+] Country:</b> <code>{bin_info['country']}</code> [{bin_info['emoji']}]
+<b>[+] Country:</b> <code>{safe_bin_info['country']}</code> [{safe_bin_info['emoji']}]
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
 <b>[ﾒ] Checked By:</b> {user_display}
 <b>[ϟ] Dev ➺</b> <b><i>DADYY</i></b>
