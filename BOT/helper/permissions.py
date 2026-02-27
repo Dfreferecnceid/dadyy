@@ -180,9 +180,10 @@ def registered_required(func):
     """Decorator to check if user is registered"""
     async def wrapper(client, message):
         if not is_user_registered(message.from_user.id):
-            await message.reply("""<pre>⛔ Not Registered</pre>
+            await message.reply("""<pre>🔒 Registration Required</pre>
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: You need to register first with /register
+⟐ <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
 ━━━━━━━━━━━━━""")
             return
         return await func(client, message)
@@ -247,7 +248,7 @@ def is_allowed_for_free_users(command_text):
 
     return clean_command in allowed_commands
 
-# NEW: Check if command is a charge command
+# NEW: Check if command is a charge command - UPDATED with new Shopify commands
 def is_charge_command(command_text):
     """Check if command is a charge command (requires credits)"""
     if not command_text:
@@ -257,6 +258,7 @@ def is_charge_command(command_text):
     charge_commands = [
         "xx", "xo", "xs", "xc", "xp",  # Stripe charge
         "bt", "sh", "slf",  # Braintree & Shopify charge
+        "so", "sp", "si", "sf", "sy",  # NEW: Additional Shopify commands
         "mau", "mchk", "mxc", "mxp", "mxx"  # Mass charge
     ]
 
@@ -280,19 +282,19 @@ def is_auth_command(command_text):
 
     return clean_command in auth_commands
 
-# NEW: Check if command is a gate command (any gate/charge/auth command)
+# NEW: Check if command is a gate command (any gate/charge/auth command) - UPDATED with new Shopify commands
 def is_gate_command(command_text):
     """Check if command is any type of gate command"""
     if not command_text:
         return False
 
     # All gate-related commands
-    # UPDATED: Added "sq" for Square auth
+    # UPDATED: Added "sq" for Square auth and new Shopify commands
     gate_commands = [
         # Auth commands
         "au", "chk", "bu", "ad", "sq",
         # Charge commands
-        "xx", "xo", "xs", "xc", "xp", "bt", "sh", "slf",
+        "xx", "xo", "xs", "xc", "xp", "bt", "sh", "slf", "so", "sp", "si", "sf", "sy",
         # Mass commands
         "mau", "mchk", "mxc", "mxp", "mxx"
     ]
@@ -413,7 +415,7 @@ def check_credits_for_charge(user_id, command_text):
         # Fallback: allow command if credit check fails
         return True, f"Error checking credits: {str(e)}"
 
-# UPDATED: Combined decorator with credit check for charge commands - FIXED FOR FREE USERS
+# UPDATED: Combined decorator with credit check for charge commands - FIXED FOR FREE USERS AND REGISTRATION CHECK
 def auth_and_free_restricted(func):
     """Combined decorator that checks both group authorization and free user restrictions - FIXED"""
     async def wrapper(client, message):
@@ -439,6 +441,25 @@ def auth_and_free_restricted(func):
             return await func(client, message)
 
         command_text = parts[0]
+        user_id = message.from_user.id
+
+        # ========== REGISTRATION CHECK FOR ALL COMMANDS EXCEPT /register AND /start ==========
+        # Check if user is registered (except for register and start commands)
+        clean_command = command_text.lstrip('/').lstrip('.').lstrip('$').lower().split()[0]
+        
+        # Commands that don't require registration
+        no_registration_commands = ["start", "register"]
+        
+        if clean_command not in no_registration_commands:
+            # Check if user is registered
+            users = load_users()
+            if str(user_id) not in users:
+                await message.reply("""<pre>🔒 Registration Required</pre>
+━━━━━━━━━━━━━
+⟐ <b>Message</b>: You need to register first with /register
+⟐ <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
+━━━━━━━━━━━━━""")
+                return
 
         # ========== GROUP CHECKS ==========
         if message.chat.type in [ChatType.GROUP, ChatType.SUPERGROUP]:
@@ -467,7 +488,6 @@ def auth_and_free_restricted(func):
                 return
 
             # Group is authorized - check command type
-            user_id = message.from_user.id
 
             # Check proxy commands FIRST (available to all in authorized groups)
             if is_proxy_command(command_text):
@@ -506,10 +526,8 @@ def auth_and_free_restricted(func):
             user_id_str = str(message.from_user.id)
 
             # If user is not registered, they can only use /register and /start
-            if user_id_str not in users:
-                if text.startswith('/register') or text.startswith('.register') or \
-                   text.startswith('/start') or text.startswith('.start'):
-                    return await func(client, message)
+            # This check is already done above, but we'll keep it for safety
+            if user_id_str not in users and clean_command not in no_registration_commands:
                 await message.reply("""<pre>🔒 Registration Required</pre>
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: You need to register first with /register
@@ -517,7 +535,8 @@ def auth_and_free_restricted(func):
 ━━━━━━━━━━━━━""")
                 return
 
-            user_data = users[user_id_str]
+            # User is registered, continue with permission checks
+            user_data = users.get(user_id_str, {})
             user_role = user_data.get("role", "Free")
             user_plan = user_data.get("plan", {}).get("plan", "Free")
             private_status = user_data.get("plan", {}).get("private", "off")
