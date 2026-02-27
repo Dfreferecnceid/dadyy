@@ -1,7 +1,4 @@
 # BOT/gates/charge/scharge012.py
-# Stripe Charge €0.12 - Compatible with WAYNE Bot Structure
-# FIXED: Proxy system integration, message trimming, VPS compatibility
-# VPS FIX: HTTP/1.1 force, SSL context, retry logic, connection handling
 
 import json
 import asyncio
@@ -397,11 +394,11 @@ class StripeCharge012Checker:
         return default_response
 
     def trim_error_message(self, message):
-        """Trim error message to remove unnecessary prefixes and suffixes"""
+        """Trim error message to remove unnecessary prefixes, suffixes, and trailing punctuation"""
         if not message:
             return message
         
-        # Remove HTML tags
+        # Remove HTML tags first
         message = re.sub(r'<[^>]+>', '', message).strip()
         
         # Remove "Payment Failed" prefix variations
@@ -415,12 +412,18 @@ class StripeCharge012Checker:
         message = re.sub(r'\.?\s*Please\s+try\s+again\.?$', '', message, flags=re.IGNORECASE)
         message = re.sub(r'\.?\s*Try\s+again\.?$', '', message, flags=re.IGNORECASE)
         
-        # Remove trailing periods and spaces
-        message = message.rstrip('. ').strip()
+        # Remove trailing periods, spaces, and parentheses
+        # FIX: Remove trailing ) or ). patterns
+        message = re.sub(r'\)\.?$', '', message)  # Remove trailing ) or ). 
+        message = re.sub(r'\.$', '', message)     # Remove trailing single period
+        message = message.rstrip('. )').strip()  # Remove trailing periods, spaces, and )
         
         # Remove parentheses if they wrap the entire message
         if message.startswith('(') and message.endswith(')'):
             message = message[1:-1].strip()
+        
+        # Clean up any double spaces
+        message = re.sub(r'\s+', ' ', message).strip()
         
         return message
 
