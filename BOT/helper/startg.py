@@ -152,14 +152,14 @@ SHOPIFY_CHARGE_CONFIG = {
             "note": "2 Credits"
         },
         {
-            "name": "Self Shopify - 0.60$",
+            "name": "Self Shopify - 0$",
             "command": "$slf cc|mes|ano|cvv",
             "command_key": "slf",
             "status": "",  # Will be filled dynamically
             "note": "2 Credits"
         },
         {
-            "name": "Shopify Charge (/so) - 1.99$",  # NEW COMMAND
+            "name": "Shopify Charge (/so) - 0.60$",  # NEW COMMAND
             "command": "$so cc|mes|ano|cvv",
             "command_key": "so",
             "status": "",  # Will be filled dynamically
