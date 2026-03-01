@@ -162,7 +162,8 @@ class ShopifyLogger:
         error_icons = {
             "CAPTCHA": "🛡️", "DECLINED": "💳", "FRAUD": "🚫",
             "TIMEOUT": "⏰", "CONNECTION": "🔌", "UNKNOWN": "❓",
-            "PROXY": "🔧", "NO_PROXY": "🚫", "PCI": "💳"
+            "PROXY": "🔧", "NO_PROXY": "🚫", "PCI": "💳",
+            "CHECKOUT_TOKEN": "🎫"
         }
         error_icon = error_icons.get(error_type, "⚠️")
         log_msg = f"{error_icon} ERROR [{error_type}]: {message}"
@@ -534,7 +535,7 @@ class RouteChargeCheckout:
         self.email = f"{self.first_name.lower()}{self.last_name.lower()}{random.randint(10,999)}@gmail.com"
         self.phone = f"215{random.randint(100, 999)}{random.randint(1000, 9999)}"
 
-    async def random_delay(self, min_sec=0.1, max_sec=0.3):  # REDUCED DELAYS
+    async def random_delay(self, min_sec=0.1, max_sec=0.3):
         """Minimal delay between requests for speed"""
         await asyncio.sleep(random.uniform(min_sec, max_sec))
 
@@ -542,15 +543,30 @@ class RouteChargeCheckout:
         return self.logger.step(num, name, action, details, status)
 
     def extract_checkout_token(self, url):
-        """Extract checkout token from URL"""
+        """Extract checkout token from URL with multiple patterns"""
         patterns = [
             r'/checkouts/cn/([^/?]+)',
-            r'token=([^&]+)'
+            r'token=([^&]+)',
+            r'checkout_token=([^&]+)',
+            r'checkout%5Btoken%5D=([^&]+)',
+            r'checkouts/([^/?]+)',
+            r'checkout_token%3D([^&]+)'
         ]
         for pattern in patterns:
             match = re.search(pattern, url)
             if match:
                 return match.group(1)
+        
+        # Try to find in decoded URL
+        try:
+            decoded = urllib.parse.unquote(url)
+            for pattern in patterns:
+                match = re.search(pattern, decoded)
+                if match:
+                    return match.group(1)
+        except:
+            pass
+        
         return None
 
     def generate_random_string(self, length=16):
@@ -606,11 +622,17 @@ class RouteChargeCheckout:
             return False, f"Product page error: {str(e)[:50]}"
 
     async def get_checkout_token(self):
-        """Step 2: Get checkout token directly (FAST)"""
+        """Step 2: Get checkout token with multiple fallback methods"""
         self.step(2, "GET CHECKOUT TOKEN", "Obtaining checkout token")
         
-        # Direct checkout URL
-        checkout_url = f"{self.base_url}/checkout?add=1&id={self.variant_id}"
+        # Try multiple variant IDs in case the product variant changes
+        variant_ids_to_try = [
+            self.variant_id,  # Current: "51087094219071"
+            "51087094219071",  # Primary
+            "51087094219072",  # Alternate 1
+            "51087094219073",  # Alternate 2
+            "39330960277567",  # Common Shopify test variant
+        ]
         
         checkout_headers = {
             **self.headers,
@@ -618,52 +640,82 @@ class RouteChargeCheckout:
             'sec-fetch-site': 'same-origin'
         }
         
-        try:
-            # Use HEAD first to follow redirects quickly
-            resp = await self.client.head(
-                checkout_url,
-                headers=checkout_headers,
-                follow_redirects=True,
-                timeout=15
-            )
-            
-            # Get final URL from redirects
-            current_url = str(resp.url)
-            self.checkout_token = self.extract_checkout_token(current_url)
-            
-            if not self.checkout_token:
-                # If HEAD didn't work, do GET
-                resp = await self.client.get(
-                    checkout_url,
-                    headers=checkout_headers,
-                    follow_redirects=True,
-                    timeout=15
-                )
-                current_url = str(resp.url)
-                self.checkout_token = self.extract_checkout_token(current_url)
-            
-            if not self.checkout_token:
-                return False, "Could not extract checkout token"
-            
-            self.logger.data_extracted("Checkout Token", self.checkout_token[:15] + "...", "URL")
-            
-            # Construct GraphQL session token
-            self.graphql_session_token = self.construct_graphql_session_token()
-            self.logger.data_extracted("GraphQL Session Token", self.graphql_session_token, "Constructed")
-            
-            return True, current_url
-            
-        except httpx.ProxyError as e:
-            self.logger.error_log("PROXY", f"Proxy error on checkout token: {str(e)}")
-            mark_proxy_failed(self.proxy_url)
-            self.proxy_status = "Dead 🚫"
-            return False, "PROXY_DEAD"
-        except httpx.TimeoutException as e:
-            self.logger.error_log("TIMEOUT", f"Timeout on checkout token: {str(e)}")
-            return False, "TIMEOUT"
-        except Exception as e:
-            self.logger.error_log("CHECKOUT_TOKEN", str(e))
-            return False, f"Checkout token error: {str(e)[:50]}"
+        # Try different methods to get checkout token
+        methods = [
+            "direct_checkout",
+            "cart_add",
+            "ajax_cart"
+        ]
+        
+        for variant_id in variant_ids_to_try[:3]:  # Try first 3 variants
+            for method in methods:
+                try:
+                    if method == "direct_checkout":
+                        checkout_url = f"{self.base_url}/checkout?add=1&id={variant_id}"
+                    elif method == "cart_add":
+                        checkout_url = f"{self.base_url}/cart/add.js?items[0][id]={variant_id}&items[0][quantity]=1"
+                    else:  # ajax_cart
+                        checkout_url = f"{self.base_url}/cart/{variant_id}:1"
+                    
+                    self.logger.step(2, "GET CHECKOUT TOKEN", f"Trying {method} with variant {variant_id}", "", "INFO")
+                    
+                    # Try HEAD first to follow redirects quickly
+                    resp = await self.client.head(
+                        checkout_url,
+                        headers=checkout_headers,
+                        follow_redirects=True,
+                        timeout=15
+                    )
+                    
+                    # Get final URL from redirects
+                    current_url = str(resp.url)
+                    self.checkout_token = self.extract_checkout_token(current_url)
+                    
+                    if not self.checkout_token:
+                        # If HEAD didn't work, do GET
+                        resp = await self.client.get(
+                            checkout_url,
+                            headers=checkout_headers,
+                            follow_redirects=True,
+                            timeout=20
+                        )
+                        current_url = str(resp.url)
+                        self.checkout_token = self.extract_checkout_token(current_url)
+                        
+                        # Also check response body for token
+                        if not self.checkout_token and resp.text:
+                            body_token = self.extract_checkout_token(resp.text)
+                            if body_token:
+                                self.checkout_token = body_token
+                    
+                    if self.checkout_token:
+                        self.logger.data_extracted("Checkout Token", self.checkout_token[:15] + "...", f"{method} with variant {variant_id}")
+                        self.logger.data_extracted("Method Used", f"{method} (variant: {variant_id})", "Success")
+                        
+                        # Construct GraphQL session token
+                        self.graphql_session_token = self.construct_graphql_session_token()
+                        self.logger.data_extracted("GraphQL Session Token", self.graphql_session_token, "Constructed")
+                        
+                        return True, current_url
+                    else:
+                        self.logger.step(2, "GET CHECKOUT TOKEN", f"Failed with {method} variant {variant_id}", "Trying next...", "WARNING")
+                        await asyncio.sleep(0.3)
+                        
+                except httpx.ProxyError as e:
+                    self.logger.error_log("PROXY", f"Proxy error on checkout token: {str(e)}")
+                    mark_proxy_failed(self.proxy_url)
+                    self.proxy_status = "Dead 🚫"
+                    return False, "PROXY_DEAD"
+                except httpx.TimeoutException as e:
+                    self.logger.error_log("TIMEOUT", f"Timeout on checkout token with {method}", step="GET CHECKOUT TOKEN")
+                    continue
+                except Exception as e:
+                    self.logger.error_log("CHECKOUT_TOKEN", f"Error with {method}: {str(e)[:50]}")
+                    continue
+        
+        # If we get here, all attempts failed
+        self.logger.error_log("CHECKOUT_TOKEN", "All variant and method attempts failed")
+        return False, "CHECKOUT_TOKEN_ERROR"
 
     async def accelerated_checkout(self):
         """Step 3: Send accelerated checkout request (FAST)"""
