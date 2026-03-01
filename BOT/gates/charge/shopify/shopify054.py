@@ -2200,7 +2200,7 @@ class ShopifyTaffyChecker:
 
 
 # ========== COMMAND HANDLER ==========
-@Client.on_message(filters.command(["so", ".so", "$so"]))
+@Client.on_message(filters.command(["/sh", ".sh", "$sh"]))
 @auth_and_free_restricted
 async def handle_shopify_taffy(client: Client, message: Message):
     try:
@@ -2248,13 +2248,13 @@ async def handle_shopify_taffy(client: Client, message: Message):
 
         args = message.text.split()
         if len(args) < 2:
-            await message.reply("""<pre>#WAYNE ━[SHOPIFY TAFFY 0.54$]━━</pre>
+            await message.reply("""<pre>#WAYNE ━[SHOPIFY CHARGE 0.54$]━━</pre>
 ━━━━━━━━━━━━━
-🠪 <b>Command</b>: <code>/so</code> or <code>.so</code> or <code>$so</code>
+🠪 <b>Command</b>: <code>/sh</code>
 🠪 <b>Usage</b>: <code>/so cc|mm|yy|cvv</code>
 🠪 <b>Example</b>: <code>/so 4111111111111111|12|2030|123</code>
 ━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Saltwater Taffy x5 = 0.50$ + tax ~0.54$</code>""")
+<b>~ Note:</b> <code>Shopify Charge</code>""")
             return
 
         card_details = args[1].strip()
@@ -2265,7 +2265,7 @@ async def handle_shopify_taffy(client: Client, message: Message):
 ━━━━━━━━━━━━━
 🠪 <b>Message</b>: Invalid card format.
 🠪 <b>Correct Format</b>: <code>cc|mm|yy|cvv</code>
-🠪 <b>Example</b>: <code>4111111111111111|12|2025|123</code>
+🠪 <b>Example</b>: <code>4111111111111111|12|2030|123</code>
 ━━━━━━━━━━━━━""")
             return
 
@@ -2276,10 +2276,10 @@ async def handle_shopify_taffy(client: Client, message: Message):
 
         processing_msg = await message.reply(
             f"""
-<b>[#Shopify Taffy 0.54$] | WAYNE</b> ✦
+<b>[#Shopify Charge 0.54$] | WAYNE</b> ✦
 ━━━━━━━━━━━━━━━
 <b>[•] Card</b>- <code>{cc}|{mes}|{ano}|{cvv}</code>
-<b>[•] Gateway</b> - <b>Shopify Taffy 0.54$</b>
+<b>[•] Gateway</b> - <b>Shopify Charge 0.54$</b>
 <b>[•] Status</b>- <code>Processing...</code>
 <b>[•] Response</b>- <code>Initiating...</code>
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
@@ -2302,7 +2302,7 @@ async def handle_shopify_taffy(client: Client, message: Message):
                     user_data,
                     credits_needed=2,
                     command_name="so",
-                    gateway_name="Shopify Taffy 0.54$"
+                    gateway_name="Shopify Charge 0.54$"
                 )
 
                 if isinstance(result, tuple) and len(result) == 3:
@@ -2323,7 +2323,7 @@ async def handle_shopify_taffy(client: Client, message: Message):
                     await processing_msg.edit_text(
                         f"""<pre>❌ Processing Error</pre>
 ━━━━━━━━━━━━━
-🠪 <b>Message</b>: Error processing Shopify taffy charge.
+🠪 <b>Message</b>: Error processing Shopify charge.
 🠪 <b>Error</b>: <code>{str(inner_e)[:100]}</code>
 🠪 <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
 ━━━━━━━━━━━━━"""
@@ -2336,7 +2336,7 @@ async def handle_shopify_taffy(client: Client, message: Message):
                 await processing_msg.edit_text(
                     f"""<pre>❌ Processing Error</pre>
 ━━━━━━━━━━━━━
-🠪 <b>Message</b>: Error processing Shopify taffy charge.
+🠪 <b>Message</b>: Error processing Shopify charge.
 🠪 <b>Error</b>: <code>{str(e)[:100]}</code>
 🠪 <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
 ━━━━━━━━━━━━━"""
