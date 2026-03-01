@@ -162,7 +162,7 @@ class ShopifyLogger:
         error_icons = {
             "CAPTCHA": "🛡️", "DECLINED": "💳", "FRAUD": "🚫",
             "TIMEOUT": "⏰", "CONNECTION": "🔌", "UNKNOWN": "❓",
-            "PROXY": "🔧", "NO_PROXY": "🚫"
+            "PROXY": "🔧", "NO_PROXY": "🚫", "PCI": "💳"
         }
         error_icon = error_icons.get(error_type, "⚠️")
         log_msg = f"{error_icon} ERROR [{error_type}]: {message}"
@@ -292,129 +292,134 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
 
     raw_response = str(raw_response) if raw_response else "-"
     
-    # Extract clean error message - only the error identifier before colon
-    if "DECLINED - " in raw_response:
-        # Get everything after "DECLINED - "
-        response_display = raw_response.split("DECLINED - ")[-1]
-        # Take only the error identifier (part before colon)
-        if ":" in response_display:
-            response_display = response_display.split(":")[0].strip()
-        # Take only first line if multiple lines
-        response_display = response_display.split('\n')[0]
-        # Trim to reasonable length
-        if len(response_display) > 30:
-            response_display = response_display[:27] + "..."
-    elif "ORDER_PLACED" in raw_response.upper() or "PROCESSEDRECEIPT" in raw_response:
-        response_display = "ORDER_PLACED"
-    elif "APPROVED - " in raw_response:
-        response_display = "APPROVED"
-    elif "GENERIC_ERROR" in raw_response:
-        if ":" in raw_response:
-            response_display = raw_response.split(":")[0].strip()
-        else:
-            response_display = "GENERIC_ERROR"
-    elif "PROXY_DEAD" in raw_response:
-        response_display = "PROXY_DEAD"
-    elif "NO_PROXY_AVAILABLE" in raw_response:
-        response_display = "NO_PROXY_AVAILABLE"
-    elif "CAPTCHA" in raw_response.upper():
-        response_display = "CAPTCHA"
-    elif "3D" in raw_response.upper() or "3DS" in raw_response.upper():
-        response_display = "3D_SECURE"
-    elif "INSUFFICIENT" in raw_response.upper():
-        response_display = "INSUFFICIENT_FUNDS"
-    elif "INVALID" in raw_response.upper():
-        response_display = "INVALID_CARD"
-    elif "EXPIRED" in raw_response.upper():
-        response_display = "EXPIRED_CARD"
-    elif "FRAUD" in raw_response.upper():
-        response_display = "FRAUD"
-    elif "TAX_NEW_TAX_MUST_BE_ACCEPTED" in raw_response:
-        response_display = "TAX_CHANGE"
-    elif "PAYMENTS_UNACCEPTABLE_PAYMENT_AMOUNT" in raw_response:
-        response_display = "PAYMENT_AMOUNT_ERROR"
+    # Check for TIMEOUT or PCI errors first - show Error❗️ and Try again ♻️
+    if "TIMEOUT" in raw_response.upper() or "PCI ERROR" in raw_response.upper() or "PCI" in raw_response.upper():
+        status_flag = "Error❗️"
+        response_display = "Try again ♻️"
     else:
-        # Take first part before colon or first 30 characters
-        if ":" in raw_response:
-            response_display = raw_response.split(":")[0].strip()
+        # Extract clean error message - only the error identifier before colon
+        if "DECLINED - " in raw_response:
+            # Get everything after "DECLINED - "
+            response_display = raw_response.split("DECLINED - ")[-1]
+            # Take only the error identifier (part before colon)
+            if ":" in response_display:
+                response_display = response_display.split(":")[0].strip()
+            # Take only first line if multiple lines
+            response_display = response_display.split('\n')[0]
+            # Trim to reasonable length
             if len(response_display) > 30:
                 response_display = response_display[:27] + "..."
+        elif "ORDER_PLACED" in raw_response.upper() or "PROCESSEDRECEIPT" in raw_response:
+            response_display = "ORDER_PLACED"
+        elif "APPROVED - " in raw_response:
+            response_display = "APPROVED"
+        elif "GENERIC_ERROR" in raw_response:
+            if ":" in raw_response:
+                response_display = raw_response.split(":")[0].strip()
+            else:
+                response_display = "GENERIC_ERROR"
+        elif "PROXY_DEAD" in raw_response:
+            response_display = "PROXY_DEAD"
+        elif "NO_PROXY_AVAILABLE" in raw_response:
+            response_display = "NO_PROXY_AVAILABLE"
+        elif "CAPTCHA" in raw_response.upper():
+            response_display = "CAPTCHA"
+        elif "3D" in raw_response.upper() or "3DS" in raw_response.upper():
+            response_display = "3D_SECURE"
+        elif "INSUFFICIENT" in raw_response.upper():
+            response_display = "INSUFFICIENT_FUNDS"
+        elif "INVALID" in raw_response.upper():
+            response_display = "INVALID_CARD"
+        elif "EXPIRED" in raw_response.upper():
+            response_display = "EXPIRED_CARD"
+        elif "FRAUD" in raw_response.upper():
+            response_display = "FRAUD"
+        elif "TAX_NEW_TAX_MUST_BE_ACCEPTED" in raw_response:
+            response_display = "TAX_CHANGE"
+        elif "PAYMENTS_UNACCEPTABLE_PAYMENT_AMOUNT" in raw_response:
+            response_display = "PAYMENT_AMOUNT_ERROR"
         else:
-            response_display = raw_response[:30] + "..." if len(raw_response) > 30 else raw_response
+            # Take first part before colon or first 30 characters
+            if ":" in raw_response:
+                response_display = raw_response.split(":")[0].strip()
+                if len(response_display) > 30:
+                    response_display = response_display[:27] + "..."
+            else:
+                response_display = raw_response[:30] + "..." if len(raw_response) > 30 else raw_response
 
-    raw_response_upper = raw_response.upper()
+        raw_response_upper = raw_response.upper()
 
-    # Check for NO RECEIPT ID first (before success checks)
-    if "NO RECEIPT ID" in raw_response_upper:
-        status_flag = "Declined ❌"
-    # Check for SUCCESS indicators
-    elif any(keyword in raw_response_upper for keyword in [
-        "ORDER_PLACED", "SUBMITSUCCESS", "SUCCESSFUL", "APPROVED", "RECEIPT",
-        "COMPLETED", "PAYMENT_SUCCESS", "CHARGE_SUCCESS", "THANK_YOU",
-        "ORDER_CONFIRMATION", "YOUR_ORDER_IS_CONFIRMED", "ORDER_CONFIRMED",
-        "SHOPIFY_PAYMENTS", "SHOP_PAY", "CHARGED", "LIVE", "ORDER_CONFIRMED",
-        "ORDER #", "PROCESSEDRECEIPT", "THANK YOU", "PAYMENT_SUCCESSFUL",
-        "PROCESSINGRECEIPT", "AUTHORIZED", "YOUR ORDER IS CONFIRMED"
-    ]):
-        status_flag = "Charged ✅"
-    # Check for CAPTCHA
-    elif any(keyword in raw_response_upper for keyword in [
-        "CAPTCHA", "SOLVE THE CAPTCHA", "CAPTCHA_METADATA_MISSING", 
-        "CAPTCHA DETECTED", "CAPTCHA_REQUIRED", "CAPTCHA_VALIDATION_FAILED", 
-        "CAPTCHA_ERROR", "BOT_DETECTED", "HUMAN_VERIFICATION", "SECURITY_CHECK",
-        "HCAPTCHA", "CLOUDFLARE", "ENTER PAYMENT INFORMATION AND SOLVE",
-        "RECAPTCHA", "I'M NOT A ROBOT", "PLEASE VERIFY"
-    ]):
-        status_flag = "Captcha ⚠️"
-    # Check for PAYMENT ERROR
-    elif any(keyword in raw_response_upper for keyword in [
-        "THERE WAS AN ISSUE PROCESSING YOUR PAYMENT", "PAYMENT ISSUE",
-        "ISSUE PROCESSING", "PAYMENT ERROR", "PAYMENT PROBLEM",
-        "TRY AGAIN OR USE A DIFFERENT PAYMENT METHOD", "CARD WAS DECLINED",
-        "YOUR PAYMENT COULDN'T BE PROCESSED", "PAYMENT FAILED"
-    ]):
-        status_flag = "Declined ❌"
-    # Check for INSUFFICIENT FUNDS
-    elif any(keyword in raw_response_upper for keyword in [
-        "INSUFFICIENT FUNDS", "INSUFFICIENT_FUNDS", "FUNDS", "NOT ENOUGH MONEY"
-    ]):
-        status_flag = "Declined ❌"
-    # Check for INVALID CARD
-    elif any(keyword in raw_response_upper for keyword in [
-        "INVALID CARD", "CARD IS INVALID", "CARD_INVALID", "CARD NUMBER IS INVALID"
-    ]):
-        status_flag = "Declined ❌"
-    # Check for EXPIRED CARD
-    elif any(keyword in raw_response_upper for keyword in [
-        "EXPIRED", "CARD HAS EXPIRED", "CARD_EXPIRED", "EXPIRATION DATE"
-    ]):
-        status_flag = "Declined ❌"
-    # Check for 3D Secure
-    elif any(keyword in raw_response_upper for keyword in [
-        "3D", "AUTHENTICATION", "OTP", "VERIFICATION", "CVV-MATCH-OTP", 
-        "3DS", "PENDING", "SECURE REQUIRED", "SECURE_CODE", "AUTH_REQUIRED",
-        "3DS REQUIRED", "AUTHENTICATION_FAILED", "COMPLETEPAYMENTCHALLENGE",
-        "ACTIONREQUIREDRECEIPT", "ADDITIONAL_VERIFICATION_NEEDED",
-        "VERIFICATION_REQUIRED", "CARD_VERIFICATION", "AUTHENTICATE"
-    ]):
-        status_flag = "Approved ❎"
-    # Check for CVV errors
-    elif any(keyword in raw_response_upper for keyword in [
-        "INVALID CVC", "INCORRECT CVC", "CVC_INVALID", "CVV", "SECURITY CODE"
-    ]):
-        status_flag = "Declined ❌"
-    # Check for fraud
-    elif any(keyword in raw_response_upper for keyword in [
-        "FRAUD", "FRAUD_SUSPECTED", "SUSPECTED_FRAUD", "FRAUDULENT",
-        "RISKY", "HIGH_RISK", "SECURITY_VIOLATION", "SUSPICIOUS"
-    ]):
-        status_flag = "Fraud ⚠️"
-    # Check for proxy errors
-    elif "NO_PROXY_AVAILABLE" in raw_response_upper or "PROXY_DEAD" in raw_response_upper:
-        status_flag = "Proxy Error 🚫"
-    # Default to declined
-    else:
-        status_flag = "Declined ❌"
+        # Check for NO RECEIPT ID first (before success checks)
+        if "NO RECEIPT ID" in raw_response_upper:
+            status_flag = "Declined ❌"
+        # Check for SUCCESS indicators
+        elif any(keyword in raw_response_upper for keyword in [
+            "ORDER_PLACED", "SUBMITSUCCESS", "SUCCESSFUL", "APPROVED", "RECEIPT",
+            "COMPLETED", "PAYMENT_SUCCESS", "CHARGE_SUCCESS", "THANK_YOU",
+            "ORDER_CONFIRMATION", "YOUR_ORDER_IS_CONFIRMED", "ORDER_CONFIRMED",
+            "SHOPIFY_PAYMENTS", "SHOP_PAY", "CHARGED", "LIVE", "ORDER_CONFIRMED",
+            "ORDER #", "PROCESSEDRECEIPT", "THANK YOU", "PAYMENT_SUCCESSFUL",
+            "PROCESSINGRECEIPT", "AUTHORIZED", "YOUR ORDER IS CONFIRMED"
+        ]):
+            status_flag = "Charged ✅"
+        # Check for CAPTCHA
+        elif any(keyword in raw_response_upper for keyword in [
+            "CAPTCHA", "SOLVE THE CAPTCHA", "CAPTCHA_METADATA_MISSING", 
+            "CAPTCHA DETECTED", "CAPTCHA_REQUIRED", "CAPTCHA_VALIDATION_FAILED", 
+            "CAPTCHA_ERROR", "BOT_DETECTED", "HUMAN_VERIFICATION", "SECURITY_CHECK",
+            "HCAPTCHA", "CLOUDFLARE", "ENTER PAYMENT INFORMATION AND SOLVE",
+            "RECAPTCHA", "I'M NOT A ROBOT", "PLEASE VERIFY"
+        ]):
+            status_flag = "Captcha ⚠️"
+        # Check for PAYMENT ERROR
+        elif any(keyword in raw_response_upper for keyword in [
+            "THERE WAS AN ISSUE PROCESSING YOUR PAYMENT", "PAYMENT ISSUE",
+            "ISSUE PROCESSING", "PAYMENT ERROR", "PAYMENT PROBLEM",
+            "TRY AGAIN OR USE A DIFFERENT PAYMENT METHOD", "CARD WAS DECLINED",
+            "YOUR PAYMENT COULDN'T BE PROCESSED", "PAYMENT FAILED"
+        ]):
+            status_flag = "Declined ❌"
+        # Check for INSUFFICIENT FUNDS
+        elif any(keyword in raw_response_upper for keyword in [
+            "INSUFFICIENT FUNDS", "INSUFFICIENT_FUNDS", "FUNDS", "NOT ENOUGH MONEY"
+        ]):
+            status_flag = "Declined ❌"
+        # Check for INVALID CARD
+        elif any(keyword in raw_response_upper for keyword in [
+            "INVALID CARD", "CARD IS INVALID", "CARD_INVALID", "CARD NUMBER IS INVALID"
+        ]):
+            status_flag = "Declined ❌"
+        # Check for EXPIRED CARD
+        elif any(keyword in raw_response_upper for keyword in [
+            "EXPIRED", "CARD HAS EXPIRED", "CARD_EXPIRED", "EXPIRATION DATE"
+        ]):
+            status_flag = "Declined ❌"
+        # Check for 3D Secure
+        elif any(keyword in raw_response_upper for keyword in [
+            "3D", "AUTHENTICATION", "OTP", "VERIFICATION", "CVV-MATCH-OTP", 
+            "3DS", "PENDING", "SECURE REQUIRED", "SECURE_CODE", "AUTH_REQUIRED",
+            "3DS REQUIRED", "AUTHENTICATION_FAILED", "COMPLETEPAYMENTCHALLENGE",
+            "ACTIONREQUIREDRECEIPT", "ADDITIONAL_VERIFICATION_NEEDED",
+            "VERIFICATION_REQUIRED", "CARD_VERIFICATION", "AUTHENTICATE"
+        ]):
+            status_flag = "Approved ❎"
+        # Check for CVV errors
+        elif any(keyword in raw_response_upper for keyword in [
+            "INVALID CVC", "INCORRECT CVC", "CVC_INVALID", "CVV", "SECURITY CODE"
+        ]):
+            status_flag = "Declined ❌"
+        # Check for fraud
+        elif any(keyword in raw_response_upper for keyword in [
+            "FRAUD", "FRAUD_SUSPECTED", "SUSPECTED_FRAUD", "FRAUDULENT",
+            "RISKY", "HIGH_RISK", "SECURITY_VIOLATION", "SUSPICIOUS"
+        ]):
+            status_flag = "Fraud ⚠️"
+        # Check for proxy errors
+        elif "NO_PROXY_AVAILABLE" in raw_response_upper or "PROXY_DEAD" in raw_response_upper:
+            status_flag = "Proxy Error 🚫"
+        # Default to declined
+        else:
+            status_flag = "Declined ❌"
 
     # BIN lookup
     bin_data = get_bin_details(cc[:6]) or {}
@@ -593,6 +598,9 @@ class RouteChargeCheckout:
             mark_proxy_failed(self.proxy_url)
             self.proxy_status = "Dead 🚫"
             return False, "PROXY_DEAD"
+        except httpx.TimeoutException as e:
+            self.logger.error_log("TIMEOUT", f"Timeout on product page: {str(e)}")
+            return False, "TIMEOUT"
         except Exception as e:
             self.logger.error_log("PRODUCT_PAGE", str(e))
             return False, f"Product page error: {str(e)[:50]}"
@@ -650,6 +658,9 @@ class RouteChargeCheckout:
             mark_proxy_failed(self.proxy_url)
             self.proxy_status = "Dead 🚫"
             return False, "PROXY_DEAD"
+        except httpx.TimeoutException as e:
+            self.logger.error_log("TIMEOUT", f"Timeout on checkout token: {str(e)}")
+            return False, "TIMEOUT"
         except Exception as e:
             self.logger.error_log("CHECKOUT_TOKEN", str(e))
             return False, f"Checkout token error: {str(e)[:50]}"
@@ -701,6 +712,9 @@ class RouteChargeCheckout:
             mark_proxy_failed(self.proxy_url)
             self.proxy_status = "Dead 🚫"
             return False, "PROXY_DEAD"
+        except httpx.TimeoutException as e:
+            self.logger.error_log("TIMEOUT", f"Timeout on accelerated checkout: {str(e)}")
+            return False, "TIMEOUT"
         except Exception as e:
             self.logger.error_log("ACCEL_CHECKOUT", str(e))
             return False, f"Accelerated checkout error: {str(e)[:50]}"
@@ -934,6 +948,9 @@ class RouteChargeCheckout:
             mark_proxy_failed(self.proxy_url)
             self.proxy_status = "Dead 🚫"
             return False, "PROXY_DEAD"
+        except httpx.TimeoutException as e:
+            self.logger.error_log("TIMEOUT", f"Timeout on proposal: {str(e)}")
+            return False, "TIMEOUT"
         except Exception as e:
             self.logger.error_log("PROPOSAL_ERROR", str(e))
             return False, f"Proposal error: {str(e)[:50]}"
@@ -1023,9 +1040,12 @@ class RouteChargeCheckout:
             mark_proxy_failed(self.proxy_url)
             self.proxy_status = "Dead 🚫"
             return False, "PROXY_DEAD"
+        except httpx.TimeoutException as e:
+            self.logger.error_log("TIMEOUT", f"Timeout on PCI: {str(e)}")
+            return False, "TIMEOUT"
         except Exception as e:
             self.logger.error_log("PCI_ERROR", str(e))
-            return False, f"PCI error: {str(e)[:50]}"
+            return False, f"PCI_ERROR"
 
     async def submit_for_completion(self, stable_id, queue_token, payment_session_id, coordinates):
         """Step 7: Submit for completion (FAST)"""
@@ -1312,6 +1332,9 @@ class RouteChargeCheckout:
             mark_proxy_failed(self.proxy_url)
             self.proxy_status = "Dead 🚫"
             return False, "PROXY_DEAD"
+        except httpx.TimeoutException as e:
+            self.logger.error_log("TIMEOUT", f"Timeout on submit: {str(e)}")
+            return False, "TIMEOUT"
         except Exception as e:
             self.logger.error_log("SUBMIT_ERROR", str(e))
             return False, f"Submit error: {str(e)[:50]}"
@@ -1386,6 +1409,9 @@ class RouteChargeCheckout:
             mark_proxy_failed(self.proxy_url)
             self.proxy_status = "Dead 🚫"
             return False, "PROXY_DEAD"
+        except httpx.TimeoutException as e:
+            self.logger.error_log("TIMEOUT", f"Timeout on poll: {str(e)}")
+            return False, "TIMEOUT"
         except Exception as e:
             return False, f"Poll error: {str(e)[:50]}"
 
@@ -1421,6 +1447,9 @@ class RouteChargeCheckout:
             else:
                 return False, f"DECLINED - TIMEOUT"
                 
+        except httpx.TimeoutException as e:
+            self.logger.error_log("TIMEOUT", f"Timeout on final poll: {str(e)}")
+            return False, "TIMEOUT"
         except Exception as e:
             return False, f"DECLINED - TIMEOUT"
 
