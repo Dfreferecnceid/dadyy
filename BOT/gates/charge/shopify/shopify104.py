@@ -163,7 +163,7 @@ class ShopifyLogger:
             "CAPTCHA": "🛡️", "DECLINED": "💳", "FRAUD": "🚫",
             "TIMEOUT": "⏰", "CONNECTION": "🔌", "UNKNOWN": "❓",
             "PROXY": "🔧", "NO_PROXY": "🚫", "PCI": "💳",
-            "CHECKOUT_TOKEN": "🎫"
+            "CHECKOUT_TOKEN": "🎫", "PROCESSING": "⏳"
         }
         error_icon = error_icons.get(error_type, "⚠️")
         log_msg = f"{error_icon} ERROR [{error_type}]: {message}"
@@ -339,6 +339,8 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
             response_display = "TAX_CHANGE"
         elif "PAYMENTS_UNACCEPTABLE_PAYMENT_AMOUNT" in raw_response:
             response_display = "PAYMENT_AMOUNT_ERROR"
+        elif "PROCESSING_TIMEOUT" in raw_response:
+            response_display = "PROCESSING_TIMEOUT"
         else:
             # Take first part before colon or first 30 characters
             if ":" in raw_response:
@@ -1391,13 +1393,14 @@ class RouteChargeCheckout:
             self.logger.error_log("SUBMIT_ERROR", str(e))
             return False, f"Submit error: {str(e)[:50]}"
 
-    async def poll_receipt(self, headers, max_polls=3):
-        """Step 9: Poll for receipt status with improved retry logic"""
+    async def poll_receipt(self, headers, max_polls=5):
+        """Step 9: Poll for receipt status with improved retry logic - INCREASED TO 5 ATTEMPTS"""
         self.step(9, "POLL RECEIPT", "Polling for status")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
         poll_attempts = 0
-        max_attempts = 3
+        max_attempts = 5  # INCREASED FROM 3 TO 5
+        base_delay = 0.5  # Base delay in seconds
         
         while poll_attempts < max_attempts:
             poll_attempts += 1
@@ -1417,7 +1420,7 @@ class RouteChargeCheckout:
                     graphql_url,
                     headers={**headers, 'accept': 'application/json'},
                     params=poll_params,
-                    timeout=20  # Increased timeout for polling
+                    timeout=25  # INCREASED TIMEOUT TO 25 SECONDS
                 )
                 
                 if resp.status_code != 200:
@@ -1430,12 +1433,12 @@ class RouteChargeCheckout:
                         },
                         "id": "baa45c97a49dae99440b5f8a954dfb31b01b7af373f5335204c29849f3397502"
                     }
-                    resp = await self.client.post(graphql_url, headers=headers, json=poll_payload, timeout=20)
+                    resp = await self.client.post(graphql_url, headers=headers, json=poll_payload, timeout=25)
                 
                 if resp.status_code != 200:
                     if poll_attempts < max_attempts:
                         self.logger.step(9, "POLL RECEIPT RETRY", f"Attempt {poll_attempts} failed, retrying...", f"Status: {resp.status_code}", "WAIT")
-                        await asyncio.sleep(1)  # Wait before retry
+                        await asyncio.sleep(base_delay * poll_attempts)  # Exponential backoff
                         continue
                     return False, f"Poll failed after {max_attempts} attempts"
                 
@@ -1451,35 +1454,39 @@ class RouteChargeCheckout:
                         return False, f"DECLINED - {error_code}"
                         
                     elif receipt_type == 'ProcessedReceipt':
+                        self.logger.success_log("Payment processed successfully", f"After {poll_attempts} attempts")
                         return True, "ORDER_PLACED"
                         
                     elif receipt_type == 'ProcessingReceipt':
                         # Only poll up to max_attempts times
                         if poll_attempts < max_attempts:
                             poll_delay = receipt_data.get('pollDelay', 500) / 1000
-                            self.step(9, "POLL RECEIPT", f"Still processing, attempt {poll_attempts}/{max_attempts}", f"Waiting {poll_delay}s", "WAIT")
-                            await asyncio.sleep(poll_delay)
+                            # Use increasing delay for later attempts
+                            wait_time = max(poll_delay, base_delay * poll_attempts)
+                            self.step(9, "POLL RECEIPT", f"Still processing, attempt {poll_attempts}/{max_attempts}", f"Waiting {wait_time:.1f}s", "WAIT")
+                            await asyncio.sleep(wait_time)
                             continue
                         else:
+                            self.logger.error_log("PROCESSING", f"Payment still processing after {max_attempts} attempts")
                             return False, "DECLINED - PROCESSING_TIMEOUT"
                     
                     else:
                         if poll_attempts < max_attempts:
-                            await asyncio.sleep(1)
+                            await asyncio.sleep(base_delay)
                             continue
                         return False, f"Unknown receipt status: {receipt_type}"
                         
                 except Exception as e:
                     if poll_attempts < max_attempts:
                         self.logger.step(9, "POLL RECEIPT RETRY", f"Parse error, retrying...", str(e)[:50], "WAIT")
-                        await asyncio.sleep(1)
+                        await asyncio.sleep(base_delay)
                         continue
                     return False, f"Failed to parse poll response: {str(e)[:50]}"
                     
             except httpx.TimeoutException as e:
                 if poll_attempts < max_attempts:
                     self.logger.step(9, "POLL RECEIPT RETRY", f"Timeout on attempt {poll_attempts}, retrying...", "", "WAIT")
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(base_delay)
                     continue
                 self.logger.error_log("TIMEOUT", f"Timeout on poll after {max_attempts} attempts")
                 return False, "TIMEOUT"
@@ -1487,7 +1494,7 @@ class RouteChargeCheckout:
             except Exception as e:
                 if poll_attempts < max_attempts:
                     self.logger.step(9, "POLL RECEIPT RETRY", f"Error on attempt {poll_attempts}, retrying...", str(e)[:50], "WAIT")
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(base_delay)
                     continue
                 return False, f"Poll error: {str(e)[:50]}"
         
@@ -1507,7 +1514,7 @@ class RouteChargeCheckout:
         }
         
         try:
-            resp = await self.client.post(graphql_url, headers=headers, json=poll_payload, timeout=20)
+            resp = await self.client.post(graphql_url, headers=headers, json=poll_payload, timeout=25)
             
             if resp.status_code != 200:
                 return False, f"Final poll failed: {resp.status_code}"
