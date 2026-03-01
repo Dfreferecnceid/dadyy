@@ -1273,7 +1273,7 @@ async def handle_admin_callbacks(client, callback_query):
     else:
         await callback_query.answer("Coming Soon!", show_alert=True)
 
-# Add /info command
+# Add /info command - UPDATED with new Shopify commands
 @Client.on_message(filters.command(["info", ".info"]))
 @group_auth_required
 async def info_command(client: Client, message: Message):
@@ -1366,7 +1366,7 @@ async def info_command(client: Client, message: Message):
 ⟐ <code>$au, $chk, $bu, $ad, $sq</code>  <!-- UPDATED: Added $sq -->
 
 <b>Charge Commands (2 Credits Each):</b>
-⟐ <code>$xx, $xo, $xs, $xc, $xp, $bt, $sh, $slf</code>
+⟐ <code>$xx, $xo, $xs, $xc, $xp, $bt, $sh, $slf, $so, $sp, $si, $sf, $sy</code>  <!-- UPDATED: Added new Shopify commands -->
 ⟐ <code>$mau, $mchk, $mxc, $mxp, $mxx</code>
 
 ━━━━━━━━━━━━━
