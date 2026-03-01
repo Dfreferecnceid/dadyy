@@ -2200,7 +2200,7 @@ class ShopifyTaffyChecker:
 
 
 # ========== COMMAND HANDLER ==========
-@Client.on_message(filters.command(["/sh", ".sh", "$sh"]))
+@Client.on_message(filters.command(["sh", ".sh", "$sh"]))
 @auth_and_free_restricted
 async def handle_shopify_taffy(client: Client, message: Message):
     try:
@@ -2350,3 +2350,4 @@ async def handle_shopify_taffy(client: Client, message: Message):
 🠪 <b>Error</b>: <code>{error_msg}</code>
 🠪 <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
 ━━━━━━━━━━━━━""")
+
