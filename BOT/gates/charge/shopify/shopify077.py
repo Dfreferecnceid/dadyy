@@ -449,7 +449,7 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
     profile_display = f"『{badge}』{clean_name}"
 
     result = f"""
-<b>[#Shopify Charge 0.77$] | MIDDLE EASTERN</b> ✦
+<b>[#Shopify Charge 0.77$] | #WAYNE</b> ✦
 ━━━━━━━━━━━━━━━
 <b>[•] Card</b>- <code>{fullcc}</code>
 <b>[•] Gateway</b> - <b>Shopify Charge 0.77$</b>
@@ -2030,7 +2030,7 @@ class ShopifyMiddleEasternChecker:
 
 
 # ========== COMMAND HANDLER ==========
-@Client.on_message(filters.command(["si", ".si", "$si"]))
+@Client.on_message(filters.command(["sf", ".sf", "$sf"]))
 @auth_and_free_restricted
 async def handle_shopify_middle_eastern(client: Client, message: Message):
     try:
@@ -2080,11 +2080,11 @@ async def handle_shopify_middle_eastern(client: Client, message: Message):
         if len(args) < 2:
             await message.reply("""<pre>#WAYNE ━[SHOPIFY CHARGE 0.77$]━━</pre>
 ━━━━━━━━━━━━━
-🠪 <b>Command</b>: <code>/si</code>
-🠪 <b>Usage</b>: <code>/si cc|mm|yy|cvv</code>
-🠪 <b>Example</b>: <code>/si 4111111111111111|12|2030|123</code>
+🠪 <b>Command</b>: <code>/sf</code>
+🠪 <b>Usage</b>: <code>/sf cc|mm|yy|cvv</code>
+🠪 <b>Example</b>: <code>/sf 4111111111111111|12|2030|123</code>
 ━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Shopify Charge 0.77$ - El Mordjene Vanille</code>""")
+<b>~ Note:</b> <code>Shopify Charge 0.77$</code>""")
             return
 
         card_details = args[1].strip()
@@ -2106,7 +2106,7 @@ async def handle_shopify_middle_eastern(client: Client, message: Message):
 
         processing_msg = await message.reply(
             f"""
-<b>[#Shopify Charge 0.77$] | MIDDLE EASTERN</b> ✦
+<b>[#Shopify Charge 0.77$] | #WAYNE</b> ✦
 ━━━━━━━━━━━━━━━
 <b>[•] Card</b>- <code>{cc}|{mes}|{ano}|{cvv}</code>
 <b>[•] Gateway</b> - <b>Shopify Charge 0.77$</b>
@@ -2179,4 +2179,5 @@ async def handle_shopify_middle_eastern(client: Client, message: Message):
 🠪 <b>Message</b>: An error occurred while processing your request.
 🠪 <b>Error</b>: <code>{error_msg}</code>
 🠪 <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
+
 ━━━━━━━━━━━━━""")
