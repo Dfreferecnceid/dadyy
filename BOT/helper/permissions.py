@@ -226,8 +226,8 @@ def is_admin_command(command_text):
         # REMOVED FROM ADMIN: "addpx", "rmvpx", "vpx" - these are available to all users
     ]
 
-    # Remove prefixes
-    clean_command = command_text.lstrip('/').lstrip('.').lstrip('$').lower().split()[0]
+    # Remove prefixes and handle @botusername
+    clean_command = command_text.lstrip('/').lstrip('.').lstrip('$').lower().split('@')[0].split()[0]
 
     return clean_command in admin_commands
 
@@ -243,8 +243,8 @@ def is_allowed_for_free_users(command_text):
         # Removed: "gen", "fake", "gate", "bin", "sk", "au", "chk", "bu", "ad", "sq"
     ]
 
-    # Remove prefixes
-    clean_command = command_text.lstrip('/').lstrip('.').lstrip('$').lower().split()[0]
+    # Remove prefixes and handle @botusername
+    clean_command = command_text.lstrip('/').lstrip('.').lstrip('$').lower().split('@')[0].split()[0]
 
     return clean_command in allowed_commands
 
@@ -262,8 +262,8 @@ def is_charge_command(command_text):
         "mau", "mchk", "mxc", "mxp", "mxx"  # Mass charge
     ]
 
-    # Remove prefixes
-    clean_command = command_text.lstrip('/').lstrip('.').lstrip('$').lower().split()[0]
+    # Remove prefixes and handle @botusername
+    clean_command = command_text.lstrip('/').lstrip('.').lstrip('$').lower().split('@')[0].split()[0]
 
     return clean_command in charge_commands
 
@@ -277,8 +277,8 @@ def is_auth_command(command_text):
     # UPDATED: Added "sq" for Square auth
     auth_commands = ["au", "chk", "bu", "ad", "sq"]
 
-    # Remove prefixes
-    clean_command = command_text.lstrip('/').lstrip('.').lstrip('$').lower().split()[0]
+    # Remove prefixes and handle @botusername
+    clean_command = command_text.lstrip('/').lstrip('.').lstrip('$').lower().split('@')[0].split()[0]
 
     return clean_command in auth_commands
 
@@ -299,8 +299,8 @@ def is_gate_command(command_text):
         "mau", "mchk", "mxc", "mxp", "mxx"
     ]
 
-    # Remove prefixes
-    clean_command = command_text.lstrip('/').lstrip('.').lstrip('$').lower().split()[0]
+    # Remove prefixes and handle @botusername
+    clean_command = command_text.lstrip('/').lstrip('.').lstrip('$').lower().split('@')[0].split()[0]
 
     return clean_command in gate_commands
 
@@ -315,8 +315,8 @@ def is_proxy_command(command_text):
         "addpx", "rmvpx", "vpx"
     ]
 
-    # Remove prefixes
-    clean_command = command_text.lstrip('/').lstrip('.').lstrip('$').lower().split()[0]
+    # Remove prefixes and handle @botusername
+    clean_command = command_text.lstrip('/').lstrip('.').lstrip('$').lower().split('@')[0].split()[0]
 
     return clean_command in proxy_commands
 
@@ -329,8 +329,8 @@ def is_group_management_command(command_text):
     # Group management commands (Owner/Admin only)
     group_commands = ["add", "rmv"]
     
-    # Remove prefixes
-    clean_command = command_text.lstrip('/').lstrip('.').lstrip('$').lower().split()[0]
+    # Remove prefixes and handle @botusername
+    clean_command = command_text.lstrip('/').lstrip('.').lstrip('$').lower().split('@')[0].split()[0]
     
     # Check exact match for group commands (not partial)
     return clean_command in group_commands
@@ -351,6 +351,10 @@ def is_user_admin(user_id):
 def check_credits_for_charge(user_id, command_text):
     """Check if user has enough credits for charge commands - FIXED FOR ALL USERS"""
     try:
+        # First check if user is registered
+        if not is_user_registered(user_id):
+            return False, "NOT_REGISTERED"
+
         # Try multiple import paths for credit module
         try:
             from BOT.gc.credit import has_sufficient_credits, get_user_credits
@@ -435,7 +439,7 @@ def auth_and_free_restricted(func):
         if not is_bot_cmd:
             return await func(client, message)
 
-        # Extract command
+        # Extract command properly handling @botusername
         parts = text.split()
         if not parts:
             return await func(client, message)
@@ -445,10 +449,17 @@ def auth_and_free_restricted(func):
 
         # ========== REGISTRATION CHECK FOR ALL COMMANDS EXCEPT /register AND /start ==========
         # Check if user is registered (except for register and start commands)
-        clean_command = command_text.lstrip('/').lstrip('.').lstrip('$').lower().split()[0]
+        # Handle @botusername in command properly
+        clean_command = command_text.lstrip('/').lstrip('.').lstrip('$').lower().split('@')[0].split()[0]
         
         # Commands that don't require registration
         no_registration_commands = ["start", "register"]
+        
+        # FIXED: Also check if the full command with @botusername contains register or start
+        full_command_lower = command_text.lower()
+        if any(cmd in full_command_lower for cmd in no_registration_commands):
+            # This is a registration or start command, allow it even if not registered
+            return await func(client, message)
         
         if clean_command not in no_registration_commands:
             # Check if user is registered
@@ -511,6 +522,14 @@ def auth_and_free_restricted(func):
                 # Check credits
                 has_credits, credit_msg = check_credits_for_charge(user_id, command_text)
                 if not has_credits:
+                    # Check if it's a registration required message
+                    if credit_msg == "NOT_REGISTERED":
+                        await message.reply("""<pre>🔒 Registration Required</pre>
+━━━━━━━━━━━━━
+⟐ <b>Message</b>: You need to register first with /register
+⟐ <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
+━━━━━━━━━━━━━""")
+                        return
                     await message.reply(credit_msg)
                     return
                 # Credits check passed, continue to command
@@ -660,7 +679,7 @@ async def is_premium_user(message: Message) -> bool:
 
         if not is_premium:
             # Check if it's an auth command (free for all)
-            clean_command = text.lstrip('/').lstrip('.').lstrip('$').lower().split()[0]
+            clean_command = text.lstrip('/').lstrip('.').lstrip('$').lower().split('@')[0].split()[0]
 
             if is_auth_command(clean_command):
                 return True  # Auth commands are free for all
@@ -775,7 +794,7 @@ async def check_private_access(message: Message) -> bool:
 
         if not is_premium:
             # Check if command is allowed for free users in private
-            clean_command = text.lstrip('/').lstrip('.').lstrip('$').lower().split()[0]
+            clean_command = text.lstrip('/').lstrip('.').lstrip('$').lower().split('@')[0].split()[0]
 
             # Check admin commands
             if is_admin_command(clean_command):
