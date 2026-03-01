@@ -90,12 +90,12 @@ class ShopifyLogger:
         masked_cc = cc[:6] + "******" + cc[-4:] if len(cc) > 10 else cc
 
         log_msg = f"""
-🛒 [SHOPIFY ROUTE CHARGE 104]
+🛒 [SHOPIFY SHOPIFY CHARGE 104]
    ├── Check ID: {self.check_id}
    ├── User ID: {self.user_id or 'N/A'}
    ├── Card: {masked_cc}
    ├── Start Time: {datetime.now().strftime('%H:%M:%S')}
-   └── Target: zero936.com (Route Protection)
+   └── Target: zero936.com (Shopify Protection)
         """
         self.add_log(log_msg)
         print(log_msg)
@@ -191,7 +191,7 @@ class ShopifyLogger:
             response_display = response_message
 
         log_msg = f"""
-{result_icon} [SHOPIFY ROUTE CHARGE COMPLETED]
+{result_icon} [SHOPIFY SHOPIFY CHARGE COMPLETED]
    ├── Check ID: {self.check_id}
    ├── Result: {result_text}
    ├── Final Status: {final_status}
@@ -286,9 +286,9 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
     try:
         with open("DATA/sites.json", "r") as f:
             sites = json.load(f)
-        gateway = sites.get(user_id, {}).get("gate", "Route Charge 0.98$ 💷")
+        gateway = sites.get(user_id, {}).get("gate", "Shopify Charge 1.00$ 💷")
     except:
-        gateway = "Route Charge 0.98$ 💷"
+        gateway = "Shopify Charge 1.00$ 💷"
 
     raw_response = str(raw_response) if raw_response else "-"
     
@@ -1619,13 +1619,13 @@ async def handle_shopify_route_charge(client: Client, message: Message):
 
         args = message.text.split()
         if len(args) < 2:
-            await message.reply("""<pre>#WAYNE ━[ROUTE CHARGE]━━</pre>
+            await message.reply("""<pre>#WAYNE ━[SHOPIFY CHARGE]━━</pre>
 ━━━━━━━━━━━━━
 🠪 <b>Command</b>: <code>/sp</code> or <code>.sp</code> or <code>$sp</code>
 🠪 <b>Usage</b>: <code>/sp cc|mm|yy|cvv</code>
-🠪 <b>Example</b>: <code>/sp 4111111111111111|12|2025|123</code>
+🠪 <b>Example</b>: <code>/sp 4111111111111111|12|2030|123</code>
 ━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Charges $0.98 + tax via Route protection</code>""")
+<b>~ Note:</b> <code>Charge 1.00$ protection</code>""")
             return
 
         card_details = args[1].strip()
@@ -1673,7 +1673,7 @@ async def handle_shopify_route_charge(client: Client, message: Message):
                     user_data,
                     credits_needed=2,
                     command_name="sp",
-                    gateway_name="Route Charge"
+                    gateway_name="Shopify Charge"
                 )
 
                 if isinstance(result, tuple) and len(result) == 3:
@@ -1694,7 +1694,7 @@ async def handle_shopify_route_charge(client: Client, message: Message):
                     await processing_msg.edit_text(
                         f"""<pre>❌ Processing Error</pre>
 ━━━━━━━━━━━━━
-🠪 <b>Message</b>: Error processing Route charge.
+🠪 <b>Message</b>: Error processing Shopify charge.
 🠪 <b>Error</b>: <code>{str(inner_e)[:100]}</code>
 🠪 <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
 ━━━━━━━━━━━━━"""
@@ -1707,7 +1707,7 @@ async def handle_shopify_route_charge(client: Client, message: Message):
                 await processing_msg.edit_text(
                     f"""<pre>❌ Processing Error</pre>
 ━━━━━━━━━━━━━
-🠪 <b>Message</b>: Error processing Route charge.
+🠪 <b>Message</b>: Error processing Shopify charge.
 🠪 <b>Error</b>: <code>{str(e)[:100]}</code>
 🠪 <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
 ━━━━━━━━━━━━━"""
@@ -1721,4 +1721,3 @@ async def handle_shopify_route_charge(client: Client, message: Message):
 🠪 <b>Error</b>: <code>{error_msg}</code>
 🠪 <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
 ━━━━━━━━━━━━━""")
-
