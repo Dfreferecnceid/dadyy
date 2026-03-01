@@ -441,7 +441,7 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
     profile_display = f"『{badge}』{clean_name}"
 
     result = f"""
-<b>[#Route Charge] | WAYNE</b> ✦
+<b>[#Shopify Charge] | WAYNE</b> ✦
 ━━━━━━━━━━━━━━━
 <b>[•] Card</b>- <code>{fullcc}</code>
 <b>[•] Gateway</b> - <b>Shopify Charge 1.00$</b>
@@ -1647,10 +1647,10 @@ async def handle_shopify_route_charge(client: Client, message: Message):
 
         processing_msg = await message.reply(
             f"""
-<b>[#Route Charge] | WAYNE</b> ✦
+<b>[#Shopify Charge] | WAYNE</b> ✦
 ━━━━━━━━━━━━━━━
 <b>[•] Card</b>- <code>{cc}|{mes}|{ano}|{cvv}</code>
-<b>[•] Gateway</b> - <b>Route Charge 0.98$</b>
+<b>[•] Gateway</b> - <b>Shopify Charge 1.00$</b>
 <b>[•] Status</b>- <code>Processing...</code>
 <b>[•] Response</b>- <code>Initiating...</code>
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
@@ -1721,3 +1721,4 @@ async def handle_shopify_route_charge(client: Client, message: Message):
 🠪 <b>Error</b>: <code>{error_msg}</code>
 🠪 <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
 ━━━━━━━━━━━━━""")
+
