@@ -1,5 +1,4 @@
 # BOT/helper/startg.py
-# Gates Menu Configuration File - UPDATED with dynamic command status and Square auth
 
 import html
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -88,7 +87,7 @@ STRIPE_CHARGE_CONFIG = {
     "description": "━ ━ ━ ━ ━━━ ━ ━ ━ ━",
     "commands": [
         {
-            "name": "Stripe Charge (/xx)) - 0.12$",
+            "name": "Stripe Charge (/xx) - 0.12$",
             "command": "$xx cc|mes|ano|cvv",
             "command_key": "xx",
             "status": "",  # Will be filled dynamically
@@ -135,29 +134,64 @@ BRAINTREE_CHARGE_CONFIG = {
             "command": "$bt cc|mes|ano|cvv",
             "command_key": "bt",
             "status": "",  # Will be filled dynamically
-            "note": ""
+            "note": "2 Credits"
         }
     ]
 }
 
-# Charge -> Shopify commands
+# Charge -> Shopify commands - UPDATED with new commands
 SHOPIFY_CHARGE_CONFIG = {
     "title": "<pre>#WAYNE 〔Shopify Charge Gates〕</pre>",
     "description": "━ ━ ━ ━ ━━━ ━ ━ ━ ━",
     "commands": [
         {
-            "name": "Shopify Charge (SH)",
+            "name": "Shopify Charge (/sh) - 0.50$",
             "command": "$sh cc|mes|ano|cvv",
             "command_key": "sh",
             "status": "",  # Will be filled dynamically
-            "note": "NA"
+            "note": "2 Credits"
         },
         {
-            "name": "Self Shopify",
+            "name": "Self Shopify - 0.50$",
             "command": "$slf cc|mes|ano|cvv",
             "command_key": "slf",
             "status": "",  # Will be filled dynamically
-            "note": "NA"
+            "note": "2 Credits"
+        },
+        {
+            "name": "Shopify Charge (/so) - 1.99$",  # NEW COMMAND
+            "command": "$so cc|mes|ano|cvv",
+            "command_key": "so",
+            "status": "",  # Will be filled dynamically
+            "note": "2 Credits"
+        },
+        {
+            "name": "Shopify Charge (/sp) - 1.00$",  # PLACEHOLDER
+            "command": "$sp cc|mes|ano|cvv",
+            "command_key": "sp",
+            "status": "",  # Will be filled dynamically
+            "note": "Coming Soon ⏳"
+        },
+        {
+            "name": "Shopify Charge (/si) - Coming Soon",  # PLACEHOLDER
+            "command": "$si cc|mes|ano|cvv",
+            "command_key": "si",
+            "status": "",  # Will be filled dynamically
+            "note": "Coming Soon ⏳"
+        },
+        {
+            "name": "Shopify Charge (/sf) - Coming Soon",  # PLACEHOLDER
+            "command": "$sf cc|mes|ano|cvv",
+            "command_key": "sf",
+            "status": "",  # Will be filled dynamically
+            "note": "Coming Soon ⏳"
+        },
+        {
+            "name": "Shopify Charge (/sy) - Coming Soon",  # PLACEHOLDER
+            "command": "$sy cc|mes|ano|cvv",
+            "command_key": "sy",
+            "status": "",  # Will be filled dynamically
+            "note": "Coming Soon ⏳"
         }
     ]
 }
@@ -421,7 +455,7 @@ def get_braintree_charge_menu():
     return text, buttons
 
 def get_shopify_charge_menu():
-    """Get Shopify Charge commands menu with dynamic status"""
+    """Get Shopify Charge commands menu with dynamic status - UPDATED with new commands"""
     text = generate_commands_display("shopify_charge")
 
     buttons = InlineKeyboardMarkup([
