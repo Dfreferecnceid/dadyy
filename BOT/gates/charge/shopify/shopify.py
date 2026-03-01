@@ -1763,7 +1763,7 @@ class ShopifyChargeCheckerHTTP:
 
 
 # ========== COMMAND HANDLER ==========
-@Client.on_message(filters.command(["sh", ".sh", "$sh"]))
+@Client.on_message(filters.command(["/so", ".so", "$so"]))
 @auth_and_free_restricted
 async def handle_shopify_charge(client: Client, message: Message):
     try:
@@ -1815,7 +1815,7 @@ async def handle_shopify_charge(client: Client, message: Message):
 ━━━━━━━━━━━━━
 🠪 <b>Command</b>: <code>/sh</code> or <code>.sh</code> or <code>$sh</code>
 🠪 <b>Usage</b>: <code>/sh cc|mm|yy|cvv</code>
-🠪 <b>Example</b>: <code>/sh 4111111111111111|12|2025|123</code>
+🠪 <b>Example</b>: <code>/sh 4111111111111111|12|2030|123</code>
 ━━━━━━━━━━━━━
 <b>~ Note:</b> <code>Charges via Shopify gateway</code>""")
             return
@@ -1828,7 +1828,7 @@ async def handle_shopify_charge(client: Client, message: Message):
 ━━━━━━━━━━━━━
 🠪 <b>Message</b>: Invalid card format.
 🠪 <b>Correct Format</b>: <code>cc|mm|yy|cvv</code>
-🠪 <b>Example</b>: <code>4111111111111111|12|2025|123</code>
+🠪 <b>Example</b>: <code>4111111111111111|12|2030|123</code>
 ━━━━━━━━━━━━━""")
             return
 
@@ -1852,7 +1852,7 @@ async def handle_shopify_charge(client: Client, message: Message):
 <b>[Shopify Charge 0.55$] | #WAYNE</b> ✦
 ━━━━━━━━━━━━━━━
 <b>[•] Card</b>- <code>{cc}|{mes}|{ano}|{cvv}</code>
-<b>[•] Gateway</b> - <b>Shopify Charge 0.55$</b>
+<b>[•] Gateway</b> - <b>Shopify Charge 0.60$</b>
 <b>[•] Status</b>- <code>Getting proxy...</code>
 <b>[•] Response</b>- <code>Acquiring proxy from pool...</code>
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
