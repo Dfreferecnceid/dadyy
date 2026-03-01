@@ -1763,7 +1763,7 @@ class ShopifyChargeCheckerHTTP:
 
 
 # ========== COMMAND HANDLER ==========
-@Client.on_message(filters.command(["/so", ".so", "$so"]))
+@Client.on_message(filters.command(["so", ".so", "$so"]))
 @auth_and_free_restricted
 async def handle_shopify_charge(client: Client, message: Message):
     try:
@@ -1813,9 +1813,9 @@ async def handle_shopify_charge(client: Client, message: Message):
         if len(args) < 2:
             await message.reply("""<pre>#WAYNE ━[SHOPIFY CHARGE]━━</pre>
 ━━━━━━━━━━━━━
-🠪 <b>Command</b>: <code>/sh</code> or <code>.sh</code> or <code>$sh</code>
-🠪 <b>Usage</b>: <code>/sh cc|mm|yy|cvv</code>
-🠪 <b>Example</b>: <code>/sh 4111111111111111|12|2030|123</code>
+🠪 <b>Command</b>: <code>/so</code> 
+🠪 <b>Usage</b>: <code>/so cc|mm|yy|cvv</code>
+🠪 <b>Example</b>: <code>/so 4111111111111111|12|2030|123</code>
 ━━━━━━━━━━━━━
 <b>~ Note:</b> <code>Charges via Shopify gateway</code>""")
             return
