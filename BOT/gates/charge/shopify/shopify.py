@@ -440,7 +440,7 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
 <b>[#Shopify Charge] | WAYNE</b> ✦
 ━━━━━━━━━━━━━━━
 <b>[•] Card</b>- <code>{fullcc}</code>
-<b>[•] Gateway</b> - <b>Shopify Charge 0.55$</b>
+<b>[•] Gateway</b> - <b>Shopify Charge 0.60$</b>
 <b>[•] Status</b>- <code>{status_flag}</code>
 <b>[•] Response</b>- <code>{response_display}</code>
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
@@ -1849,7 +1849,7 @@ async def handle_shopify_charge(client: Client, message: Message):
 
         processing_msg = await message.reply(
             f"""
-<b>[Shopify Charge 0.55$] | #WAYNE</b> ✦
+<b>[Shopify Charge 0.60$] | #WAYNE</b> ✦
 ━━━━━━━━━━━━━━━
 <b>[•] Card</b>- <code>{cc}|{mes}|{ano}|{cvv}</code>
 <b>[•] Gateway</b> - <b>Shopify Charge 0.60$</b>
