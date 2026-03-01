@@ -452,7 +452,7 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
 <b>[#Shopify Charge 0.54$] | WAYNE</b> ✦
 ━━━━━━━━━━━━━━━
 <b>[•] Card</b>- <code>{fullcc}</code>
-<b>[•] Gateway</b> - <b>Shopify Taffy 0.54$</b>
+<b>[•] Gateway</b> - <b>Shopify Charge 0.54$</b>
 <b>[•] Status</b>- <code>{status_flag}</code>
 <b>[•] Response</b>- <code>{response_display}</code>
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
@@ -2350,4 +2350,5 @@ async def handle_shopify_taffy(client: Client, message: Message):
 🠪 <b>Error</b>: <code>{error_msg}</code>
 🠪 <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
 ━━━━━━━━━━━━━""")
+
 
