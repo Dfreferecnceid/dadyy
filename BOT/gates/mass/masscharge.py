@@ -153,49 +153,81 @@ async def parse_card_list_from_reply(client, message):
     
     return card_list, file_path
 
+def is_valid_card_format(text):
+    """Check if text looks like a valid card format (CC|MM|YY|CVV)"""
+    pattern = r'^\d{15,16}\|\d{1,2}\|\d{2,4}\|\d{3,4}$'
+    return bool(re.match(pattern, text.strip()))
+
 async def parse_card_list_from_command(message):
     """Parse card list when cards are in the same message as command"""
     card_list = []
     
     # Get the full message text
     full_text = message.text or ""
+    print(f"Full message text: {full_text}")
     
-    # Remove the command part - extract everything after the command
-    lines = full_text.split('\n')
+    # Remove the command part
+    # Find where the command ends
+    command_end = 0
+    for prefix in ['/mxc', '.mxc', '$mxc']:
+        if full_text.startswith(prefix):
+            command_end = len(prefix)
+            break
     
-    # Process each line
-    for i, line in enumerate(lines):
-        line = line.strip()
-        if not line:
+    if command_end == 0:
+        # No command found, treat whole text as cards
+        text_to_parse = full_text
+    else:
+        # Extract everything after the command
+        text_to_parse = full_text[command_end:].strip()
+    
+    print(f"Text to parse after command: {text_to_parse}")
+    
+    if not text_to_parse:
+        return card_list
+    
+    # Method 1: Split by spaces and check each part
+    parts = text_to_parse.split()
+    print(f"Split parts: {parts}")
+    
+    for part in parts:
+        part = part.strip()
+        if not part:
             continue
-            
-        # Check if this line contains the command
-        if i == 0:
-            # First line might have command + cards
-            # Check if it starts with command
-            if any(line.startswith(prefix) for prefix in ['/mxc', '.mxc', '$mxc']):
-                # Remove the command part
-                parts = line.split(maxsplit=1)
-                if len(parts) > 1:
-                    # There are cards after command on same line
-                    remaining_text = parts[1].strip()
-                    if remaining_text:
-                        # Check if this is a single card or multiple cards separated by spaces
-                        # Split by spaces first, then extract cards from each part
-                        text_parts = remaining_text.split()
-                        for text_part in text_parts:
-                            all_cards, unique_cards = extract_cards(text_part)
-                            card_list.extend(unique_cards)
-                # Skip to next line, no need to process this line further
-                continue
-            else:
-                # Line doesn't start with command, treat as regular card line
-                all_cards, unique_cards = extract_cards(line)
-                card_list.extend(unique_cards)
+        
+        # Check if this part is a valid card format
+        if is_valid_card_format(part):
+            card_list.append(part)
+            print(f"Added card from space-split: {part}")
         else:
-            # Subsequent lines - extract cards directly
-            all_cards, unique_cards = extract_cards(line)
-            card_list.extend(unique_cards)
+            # If not a valid card format, try to extract cards using filter.py
+            all_cards, unique_cards = extract_cards(part)
+            if unique_cards:
+                card_list.extend(unique_cards)
+                print(f"Added {len(unique_cards)} cards from filter.py: {unique_cards}")
+    
+    # Method 2: Also check for newlines
+    if '\n' in text_to_parse:
+        lines = text_to_parse.split('\n')
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            
+            # Skip if this line was already processed in parts
+            if line in parts:
+                continue
+            
+            # Check if line is a valid card format
+            if is_valid_card_format(line):
+                card_list.append(line)
+                print(f"Added card from newline: {line}")
+            else:
+                # Try to extract cards using filter.py
+                all_cards, unique_cards = extract_cards(line)
+                if unique_cards:
+                    card_list.extend(unique_cards)
+                    print(f"Added {len(unique_cards)} cards from filter.py (newline): {unique_cards}")
     
     # Remove duplicates while preserving order
     seen = set()
@@ -205,7 +237,7 @@ async def parse_card_list_from_command(message):
             seen.add(card)
             unique_cards.append(card)
     
-    print(f"📝 Parsed {len(unique_cards)} unique cards from command: {unique_cards}")
+    print(f"📝 Final parsed {len(unique_cards)} unique cards: {unique_cards}")
     return unique_cards
 
 class MassStripeChargeChecker:
@@ -790,6 +822,8 @@ async def handle_mass_stripe_charge(client: Client, message: Message):
         for i, card_details in enumerate(card_list):
             checked = i + 1
             
+            print(f"Processing card {checked}/{card_count}: {card_details}")
+            
             # Check card using the shared session (with rate limit handling)
             try:
                 result = await mass_checker.check_card_with_session(
@@ -818,6 +852,7 @@ async def handle_mass_stripe_charge(client: Client, message: Message):
                     errors += 1
                     
             except Exception as e:
+                print(f"Error processing card {card_details}: {e}")
                 # Handle individual card error
                 # Parse card details for error response
                 cc_parts = card_details.split('|')
@@ -843,8 +878,8 @@ async def handle_mass_stripe_charge(client: Client, message: Message):
                             card_count, checked, successful, failed, errors, username, plan_name
                         )
                     )
-                except:
-                    pass
+                except Exception as e:
+                    print(f"Failed to update progress: {e}")
             
             # REDUCED DELAY: From 2-4 seconds to 1-2 seconds for faster processing
             if i < len(card_list) - 1:
