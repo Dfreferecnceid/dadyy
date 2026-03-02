@@ -990,8 +990,8 @@ class StripeAuthChecker:
                 await client.aclose()
             return await self.format_response(cc, mes, ano, cvv, "ERROR", f"System error: {str(e)[:80]}", username, time.time()-start_time, user_data, bin_info)
 
-# Command handler
-@Client.on_message(filters.command(["au", ".au", "$au"]))
+# Command handler - FIXED: Only match exact /au command, not /mau
+@Client.on_message(filters.command(["au", ".au", "$au"]) & ~filters.command(["mau", ".mau", "$mau"]))
 @auth_and_free_restricted
 async def handle_stripe_auth(client: Client, message: Message):
     try:
