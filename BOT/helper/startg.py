@@ -101,7 +101,7 @@ STRIPE_CHARGE_CONFIG = {
             "note": "2 Credits"
         },
         {
-            "name": "Stripe Charge (/xs) - 5$",
+            "name": "Stripe Charge (/xs) - 3.50$",
             "command": "$xs cc|mm|yy|cvv",
             "command_key": "xs",
             "status": "",  # Will be filled dynamically
