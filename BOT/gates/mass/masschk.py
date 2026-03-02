@@ -154,37 +154,39 @@ async def parse_card_list_from_reply(client, message):
     return card_list, file_path
 
 async def parse_card_list_from_command(message):
-    """Parse card list when cards are in the same message as command"""
+    """Parse card list when cards are in the same message as command - FIXED for multi-line input"""
     card_list = []
     
     # Get the full message text
     full_text = message.text or ""
     
     # Remove the command part
-    # Split by lines
-    lines = full_text.split('\n')
+    # First, remove the command from the beginning
+    text_without_command = re.sub(r'^/[a-zA-Z0-9_.@]+\s*', '', full_text, flags=re.IGNORECASE)
+    text_without_command = re.sub(r'^\.[a-zA-Z0-9_.@]+\s*', '', text_without_command, flags=re.IGNORECASE)
+    text_without_command = re.sub(r'^\$[a-zA-Z0-9_.@]+\s*', '', text_without_command, flags=re.IGNORECASE)
     
-    # Skip the first line if it contains the command
-    for i, line in enumerate(lines):
+    # Split by newlines to process each line separately
+    lines = text_without_command.split('\n')
+    
+    for line in lines:
         line = line.strip()
         if not line:
             continue
-            
-        # Check if this line contains the command
-        if i == 0 and any(line.startswith(prefix) for prefix in ['/mchk', '.mchk', '$mchk']):
-            # This is the command line, extract content after command
-            parts = line.split()
-            if len(parts) > 1:
-                # There might be cards on the same line
-                remaining_text = ' '.join(parts[1:]).strip()
-                if remaining_text:
-                    # Extract cards from this text
-                    all_cards, unique_cards = extract_cards(remaining_text)
-                    card_list.extend(unique_cards)
-            continue
         
-        # Regular line - extract cards from this line
-        if line:
+        # Check if this line contains a pipe format card
+        if '|' in line:
+            # For pipe format, we can split by spaces if multiple cards on same line
+            potential_cards = line.split()
+            for potential_card in potential_cards:
+                if '|' in potential_card and len(potential_card.split('|')) >= 4:
+                    card_list.append(potential_card)
+                else:
+                    # Try to extract card from this segment
+                    all_cards, unique_cards = extract_cards(potential_card)
+                    card_list.extend(unique_cards)
+        else:
+            # Try to extract card from this line using filter.py
             all_cards, unique_cards = extract_cards(line)
             card_list.extend(unique_cards)
     
@@ -196,6 +198,7 @@ async def parse_card_list_from_command(message):
             seen.add(card)
             unique_cards.append(card)
     
+    print(f"📝 Parsed {len(unique_cards)} unique cards from command")
     return unique_cards
 
 class MassStripeAuth2Checker:
