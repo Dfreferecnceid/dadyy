@@ -1,6 +1,7 @@
 # BOT/gates/auth/mass/massau.py
 # Mass Stripe Auth checker with OPTIMIZED session reuse (ONE session for ALL cards)
 # AND 3 credits deduction for the entire mass check
+# WITH file download support and card filtering
 
 import asyncio
 import json
@@ -14,12 +15,142 @@ from pyrogram.types import Message
 import logging
 import httpx
 import string
+import os
+from pathlib import Path
 
 # CORRECT IMPORTS based on your credit.py
 from BOT.gates.auth.stripe.stauth import StripeAuthChecker, logger, load_users, is_user_banned, check_cooldown, get_user_plan
 from BOT.helper.permissions import auth_and_free_restricted
 from BOT.helper.Admins import is_command_disabled, get_command_offline_message
 from BOT.gc.credit import deduct_credit, get_user_credits, has_sufficient_credits, charge_processor
+from BOT.helper.filter import extract_cards
+
+# Download directory
+DOWNLOAD_DIR = "BOT/downloads"
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
+def get_unique_filename(original_filename):
+    """Generate a unique filename to avoid conflicts"""
+    base, ext = os.path.splitext(original_filename)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    random_suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
+    return f"{base}_{timestamp}_{random_suffix}{ext}"
+
+async def download_file(client, message, file_msg):
+    """Download file from Telegram with unique filename"""
+    try:
+        # Get original filename
+        original_filename = file_msg.document.file_name if file_msg.document else "unknown.txt"
+        
+        # Generate unique filename
+        unique_filename = get_unique_filename(original_filename)
+        file_path = os.path.join(DOWNLOAD_DIR, unique_filename)
+        
+        # Download the file
+        print(f"📥 Downloading file: {original_filename} -> {unique_filename}")
+        downloaded_path = await file_msg.download(file_name=file_path)
+        
+        return downloaded_path
+    except Exception as e:
+        print(f"❌ Error downloading file: {e}")
+        return None
+
+async def extract_cards_from_file(file_path):
+    """Extract cards from downloaded file using filter.py"""
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+            file_content = f.read()
+        
+        # Use filter.py's extract_cards function
+        all_cards, unique_cards = extract_cards(file_content)
+        
+        print(f"📊 Extracted {len(all_cards)} total cards, {len(unique_cards)} unique cards from file")
+        return unique_cards
+    except Exception as e:
+        print(f"❌ Error extracting cards from file: {e}")
+        return []
+    finally:
+        # Optionally delete the file after processing to save space
+        # Uncomment if you want to auto-delete
+        # try:
+        #     os.remove(file_path)
+        #     print(f"🗑️ Deleted file: {file_path}")
+        # except:
+        #     pass
+        pass
+
+async def parse_card_list_from_reply(client, message):
+    """Parse card list when user replies to a message"""
+    card_list = []
+    file_path = None
+    
+    if not message.reply_to_message:
+        return card_list, file_path
+    
+    replied = message.reply_to_message
+    
+    # Case 1: Reply to a document (file)
+    if replied.document:
+        # Download the file
+        file_path = await download_file(client, message, replied)
+        if not file_path:
+            return card_list, None
+        
+        # Extract cards from file
+        card_list = await extract_cards_from_file(file_path)
+        
+    # Case 2: Reply to a text message
+    elif replied.text:
+        # Extract cards directly from text
+        all_cards, unique_cards = extract_cards(replied.text)
+        card_list = unique_cards
+    
+    return card_list, file_path
+
+async def parse_card_list_from_command(message):
+    """Parse card list when cards are in the same message as command"""
+    card_list = []
+    
+    # Get the full message text
+    full_text = message.text or ""
+    
+    # Remove the command part
+    # Split by lines
+    lines = full_text.split('\n')
+    
+    # Skip the first line if it contains the command
+    for i, line in enumerate(lines):
+        line = line.strip()
+        if not line:
+            continue
+            
+        # Check if this line contains the command
+        if i == 0 and any(line.startswith(prefix) for prefix in ['/mau', '.mau', '$mau']):
+            # This is the command line, extract content after command
+            parts = line.split()
+            if len(parts) > 1:
+                # There might be cards on the same line
+                remaining_text = ' '.join(parts[1:]).strip()
+                if remaining_text:
+                    # Extract cards from this text
+                    all_cards, unique_cards = extract_cards(remaining_text)
+                    card_list.extend(unique_cards)
+            continue
+        
+        # Regular line - extract cards from this line
+        if line:
+            all_cards, unique_cards = extract_cards(line)
+            card_list.extend(unique_cards)
+    
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_cards = []
+    for card in card_list:
+        if card not in seen:
+            seen.add(card)
+            unique_cards.append(card)
+    
+    return unique_cards
 
 class MassStripeAuthChecker:
     def __init__(self):
@@ -305,8 +436,31 @@ class MassStripeAuthChecker:
         except:
             return "", "", "", ""
     
-    async def format_mass_response(self, results, successful, failed, total_cards, username, elapsed_time, user_data):
-        """Format the mass check results with ALL cards shown (no truncation)"""
+    def get_processing_message_dynamic(self, total_cards, checked, hits, declines, errors, username, user_plan):
+        """Get dynamic processing message that updates in real-time"""
+        left = total_cards - checked
+        
+        return f"""<b>「$cmd → /mau」| <b>WAYNE</b> </b>
+━━━━━━━━━━━━━━━
+🔄 <b>Mass Stripe Auth</b>
+
+📊 <b>Checked:</b> <code>{checked}/{total_cards}</code>
+✅ <b>Hits:</b> <code>{hits}</code>
+❌ <b>Declines:</b> <code>{declines}</code>
+⚠️ <b>Errors:</b> <code>{errors}</code>
+⏳ <b>Left:</b> <code>{left}</code>
+
+━━━━━━━━━━━━━━━
+👤 <b>User:</b> @{username}
+💎 <b>Plan:</b> {user_plan}"""
+    
+    async def format_mass_response_individual(self, result, card_number, total_cards, username, elapsed_time, user_data):
+        """Format individual card response when total cards > 5"""
+        # The result already contains the full card response format
+        return result
+    
+    async def send_individual_responses(self, client, message, results, successful, failed, total_cards, username, elapsed_time, user_data, processing_msg):
+        """Send individual responses for each card when total cards > 5"""
         user_id = user_data.get("user_id", "Unknown")
         first_name = html.escape(user_data.get("first_name", "User"))
         badge = user_data.get("plan", {}).get("badge", "🎭")
@@ -314,6 +468,51 @@ class MassStripeAuthChecker:
         clean_name = re.sub(r'[↯⌁«~∞🍁]', '', first_name).strip()
         user_display = f"「{badge}」{clean_name}"
         
+        # Delete the processing message
+        try:
+            await processing_msg.delete()
+        except:
+            pass
+        
+        # Send each card result as an individual message
+        for i, result in enumerate(results):
+            try:
+                await message.reply(result, disable_web_page_preview=True)
+                # Small delay between messages to avoid flooding
+                await asyncio.sleep(0.5)
+            except Exception as e:
+                print(f"Failed to send individual result for card {i+1}: {e}")
+        
+        # Send final summary
+        summary = f"""<b>「$cmd → /mau」| <b>WAYNE</b> </b>
+━━━━━━━━━━━━━━━
+<b>[•] Gateway -</b> Stripe Auth Mass
+<b>[•] Status -</b> <code>Complete ✅</code>
+━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
+<b>[+] Results:</b> ✅ {successful} | ❌ {failed}
+<b>[+] Total Cards:</b> <code>{total_cards}</code>
+<b>[+] Credits Used:</b> <code>3</code> (for entire mass check)
+━━━━━━━━━━━━━━━
+<b>[ﾒ] Checked By:</b> {user_display}
+<b>[ϟ] Dev ➺</b> <b><i>DADYY</i></b>
+━━━━━━━━━━━━━━━
+<b>[ﾒ] Time:</b> <code>{elapsed_time:.2f} 𝐬</code> |<b>P/x:</b> <code>Mass ⚡️</code></b>"""
+        
+        try:
+            await message.reply(summary, disable_web_page_preview=True)
+        except Exception as e:
+            print(f"Failed to send summary: {e}")
+    
+    async def format_mass_response_collective(self, results, successful, failed, total_cards, username, elapsed_time, user_data):
+        """Format collective response when total cards <= 5 (NO duplicate footer)"""
+        user_id = user_data.get("user_id", "Unknown")
+        first_name = html.escape(user_data.get("first_name", "User"))
+        badge = user_data.get("plan", {}).get("badge", "🎭")
+        
+        clean_name = re.sub(r'[↯⌁«~∞🍁]', '', first_name).strip()
+        user_display = f"「{badge}」{clean_name}"
+        
+        # Start with header
         response = f"""<b>「$cmd → /mau」| <b>WAYNE</b> </b>
 ━━━━━━━━━━━━━━━
 <b>[•] Gateway -</b> Stripe Auth Mass
@@ -325,10 +524,11 @@ class MassStripeAuthChecker:
 ━━━━━━━━━━━━━━━
 """
         
-        # Add each card result (show ALL cards, no truncation)
+        # Add each card result with card number header
         for i, result in enumerate(results):
             response += f"<b>Card {i+1}:</b>\n{result}\n\n"
         
+        # Add FINAL summary (ONLY ONCE at the very end)
         response += f"""━━━━━━━━━━━━━━━
 <b>[ﾒ] Checked By:</b> {user_display}
 <b>[ϟ] Dev ➺</b> <b><i>DADYY</i></b>
@@ -336,100 +536,12 @@ class MassStripeAuthChecker:
 <b>[ﾒ] Time:</b> <code>{elapsed_time:.2f} 𝐬</code> |<b>P/x:</b> <code>Mass ⚡️</code></b>"""
         
         return response
-    
-    def get_processing_message(self, card_count, username, user_plan):
-        """Get processing message for mass check"""
-        return f"""<b>「$cmd → /mau」| <b>WAYNE</b> </b>
-━━━━━━━━━━━━━━━
-<b>[•] Gateway -</b> Stripe Auth Mass
-<b>[•] Status-</b> Processing... ⏳
-<b>[•] Cards-</b> <code>{card_count}</code> cards in queue
-<b>[•] Credits-</b> <code>3</code> will be deducted for this mass check
-━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
-<b>[+] Plan:</b> {user_plan}
-<b>[+] User:</b> @{username}
-━━━━━━━━━━━━━━━
-<b>Processing mass check... Please wait.</b>"""
-
-def parse_card_list(message: Message):
-    """Parse card list from message or reply - COMPLETELY REWRITTEN for reliability"""
-    card_list = []
-    
-    # Get the full message text
-    full_text = message.text or ""
-    
-    # Debug print
-    print(f"Full message text: {repr(full_text)}")
-    
-    # Split by lines
-    lines = full_text.split('\n')
-    print(f"Lines after split: {lines}")
-    
-    # Skip the first line if it contains the command
-    for i, line in enumerate(lines):
-        line = line.strip()
-        if not line:
-            continue
-            
-        # Check if this line contains the command
-        if i == 0 and any(line.startswith(prefix) for prefix in ['/mau', '.mau', '$mau']):
-            # This is the command line, extract content after command
-            # Split the command line by spaces and take everything after first part
-            parts = line.split()
-            if len(parts) > 1:
-                # There might be a card on the same line
-                potential_card = ' '.join(parts[1:]).strip()
-                if potential_card and '|' in potential_card:
-                    # Check if it's a valid card format
-                    card_parts = potential_card.split('|')
-                    if len(card_parts) == 4:
-                        card_list.append(potential_card)
-            continue
-        
-        # Regular line - check if it contains a card
-        if '|' in line:
-            # Check if it's a valid card format (has 4 parts)
-            parts = line.split('|')
-            if len(parts) == 4:
-                cc, mes, ano, cvv = [p.strip() for p in parts]
-                # Basic validation
-                cc_clean = cc.replace(" ", "")
-                if cc_clean.isdigit() and len(cc_clean) >= 15:
-                    card_list.append(line)
-                    print(f"Found card: {line}")
-    
-    # If we found cards, return them
-    if card_list:
-        return card_list
-    
-    # Try alternative: maybe the entire message after command is one card
-    # This handles the case where user does: /mau 5414963811565512|09|28|822
-    if len(lines) == 1:
-        # Single line message
-        parts = full_text.split()
-        if len(parts) >= 2:
-            # Command + something
-            potential_card = ' '.join(parts[1:]).strip()
-            if potential_card and '|' in potential_card:
-                card_parts = potential_card.split('|')
-                if len(card_parts) == 4:
-                    card_list.append(potential_card)
-                    print(f"Found single line card: {potential_card}")
-    
-    # Remove duplicates while preserving order
-    seen = set()
-    unique_cards = []
-    for card in card_list:
-        if card not in seen:
-            seen.add(card)
-            unique_cards.append(card)
-    
-    print(f"Final card list: {unique_cards}")
-    return unique_cards
 
 @Client.on_message(filters.command(["mau", ".mau", "$mau"]))
 @auth_and_free_restricted
 async def handle_mass_stripe_auth(client: Client, message: Message):
+    file_path = None  # Track downloaded file path for cleanup
+    
     try:
         user_id = message.from_user.id
         username = message.from_user.username or str(user_id)
@@ -466,29 +578,39 @@ async def handle_mass_stripe_auth(client: Client, message: Message):
         user_plan = user_data.get("plan", {})
         plan_name = user_plan.get("plan", "Free")
         
-        # Parse card list
-        card_list = parse_card_list(message)
+        # Parse card list based on input type
+        card_list = []
         
-        print(f"Parsed card list: {card_list}")
+        # Case 1: User replied to a message (text or file)
+        if message.reply_to_message:
+            card_list, file_path = await parse_card_list_from_reply(client, message)
+            source_type = "file" if file_path else "replied text"
+            print(f"📁 Extracted {len(card_list)} cards from {source_type}")
+        
+        # Case 2: Cards in the same message
+        if not card_list:
+            card_list = await parse_card_list_from_command(message)
+            print(f"📝 Extracted {len(card_list)} cards from command message")
+        
+        print(f"Final card list: {card_list}")
         
         if len(card_list) == 0:
             await message.reply("""<pre>❌ No Valid Cards Found</pre>
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: Please provide card details in one of these formats:
 
-<b>Format 1 (Multi-line after command):</b>
+<b>Format 1 (Reply to file/text):</b>
+• Reply to a text file or message containing cards with /mau
+
+<b>Format 2 (Multi-line after command):</b>
 <code>/mau
 5414963811565512|09|28|822
-4221352001240530|12|26|050
-5143773965015067|07|29|816</code>
-
-<b>Format 2 (Reply to message):</b>
-• Reply to a message containing cards with /mau
+4221352001240530|12|26|050</code>
 
 <b>Format 3 (Single line):</b>
 <code>/mau 5414963811565512|09|28|822</code>
 
-⟐ <b>Note:</b> <code>Each card must be in format: cc|mm|yy|cvv</code>
+⟐ <b>Note:</b> <code>Cards will be auto-filtered from any format</code>
 ━━━━━━━━━━━━━""")
             return
         
@@ -534,14 +656,15 @@ async def handle_mass_stripe_auth(client: Client, message: Message):
         # Create mass checker instance
         mass_checker = MassStripeAuthChecker()
         
-        # Send processing message
+        # Send initial processing message
         processing_msg = await message.reply(
-            mass_checker.get_processing_message(card_count, username, plan_name)
+            mass_checker.get_processing_message_dynamic(card_count, 0, 0, 0, 0, username, plan_name)
         )
         
         results = []
         successful = 0
         failed = 0
+        errors = 0
         
         # OPTIMIZATION: Create ONE shared session for ALL cards
         print("🔄 Creating shared session for mass check...")
@@ -559,24 +682,7 @@ async def handle_mass_stripe_auth(client: Client, message: Message):
         
         # Process each card using the SAME shared session
         for i, card_details in enumerate(card_list):
-            # Update progress every 2 cards or on last card
-            if (i + 1) % 2 == 0 or i == len(card_list) - 1:
-                try:
-                    await processing_msg.edit_text(
-                        f"""<b>「$cmd → /mau」| <b>WAYNE</b> </b>
-━━━━━━━━━━━━━━━
-<b>[•] Gateway -</b> Stripe Auth Mass
-<b>[•] Status-</b> Processing... ⏳
-<b>[•] Progress-</b> <code>{i+1}/{card_count}</code> cards
-<b>[•] Credits Used-</b> <code>3</code> (deducted)
-━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
-<b>[+] Plan:</b> {plan_name}
-<b>[+] User:</b> @{username}
-━━━━━━━━━━━━━━━
-<b>Processing card {i+1} of {card_count}...</b>"""
-                    )
-                except:
-                    pass
+            checked = i + 1
             
             # Check card using the shared session (with rate limit handling)
             try:
@@ -593,8 +699,10 @@ async def handle_mass_stripe_auth(client: Client, message: Message):
                 
                 if "APPROVED" in result:
                     successful += 1
-                else:
+                elif "DECLINED" in result:
                     failed += 1
+                else:
+                    errors += 1
                     
             except Exception as e:
                 # Handle individual card error
@@ -605,9 +713,20 @@ async def handle_mass_stripe_auth(client: Client, message: Message):
 <b>[•] Response-</b> <code>Check failed: {str(e)[:50]}</code>
 ━━━━━━━━━━━━━━━"""
                 results.append(error_result)
-                failed += 1
+                errors += 1
             
-            # Delay between cards to avoid rate limiting (reduced from 3-5 to 2-4 seconds)
+            # Update progress message with dynamic stats
+            if (i + 1) % 2 == 0 or i == len(card_list) - 1:
+                try:
+                    await processing_msg.edit_text(
+                        mass_checker.get_processing_message_dynamic(
+                            card_count, checked, successful, failed, errors, username, plan_name
+                        )
+                    )
+                except:
+                    pass
+            
+            # Delay between cards to avoid rate limiting
             if i < len(card_list) - 1:
                 await asyncio.sleep(random.uniform(2, 4))
         
@@ -621,24 +740,39 @@ async def handle_mass_stripe_auth(client: Client, message: Message):
         
         elapsed_time = time.time() - start_time
         
-        # Format final response (with ALL cards shown)
-        final_response = await mass_checker.format_mass_response(
-            results, successful, failed, card_count, username, elapsed_time, user_data
-        )
-        
-        # Update cooldown
-        check_cooldown(user_id, "mau")  # This updates the cooldown timestamp
-        
-        # Send final result
-        try:
-            await processing_msg.edit_text(final_response, disable_web_page_preview=True)
-        except Exception as e:
-            print(f"Failed to edit message: {e}")
-            # If editing fails, send as new message
+        # DECISION: If more than 5 cards, send individual responses
+        if card_count > 5:
+            await mass_checker.send_individual_responses(
+                client, message, results, successful, failed + errors, 
+                card_count, username, elapsed_time, user_data, processing_msg
+            )
+        else:
+            # Format collective response (5 or fewer cards)
+            final_response = await mass_checker.format_mass_response_collective(
+                results, successful, failed + errors, card_count, username, elapsed_time, user_data
+            )
+            
+            # Update cooldown
+            check_cooldown(user_id, "mau")
+            
+            # Send final result
             try:
-                await message.reply(final_response, disable_web_page_preview=True)
+                await processing_msg.edit_text(final_response, disable_web_page_preview=True)
             except Exception as e:
-                print(f"Failed to send mass auth results: {e}")
+                print(f"Failed to edit message: {e}")
+                # If editing fails, send as new message
+                try:
+                    await message.reply(final_response, disable_web_page_preview=True)
+                except Exception as e:
+                    print(f"Failed to send mass auth results: {e}")
+        
+        # Clean up downloaded file if any
+        if file_path and os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+                print(f"🗑️ Deleted temporary file: {file_path}")
+            except Exception as e:
+                print(f"⚠️ Failed to delete file {file_path}: {e}")
                 
     except Exception as e:
         error_msg = str(e)[:150]
@@ -648,3 +782,10 @@ async def handle_mass_stripe_auth(client: Client, message: Message):
 ⟐ <b>Error</b>: <code>{error_msg}</code>
 ⟐ <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
 ━━━━━━━━━━━━━""")
+        
+        # Clean up downloaded file if any in case of error
+        if 'file_path' in locals() and file_path and os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except:
+                pass
