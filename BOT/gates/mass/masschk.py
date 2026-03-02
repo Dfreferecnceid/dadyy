@@ -154,7 +154,7 @@ async def parse_card_list_from_reply(client, message):
     return card_list, file_path
 
 async def parse_card_list_from_command(message):
-    """Parse card list when cards are in the same message as command"""
+    """Parse card list when cards are in the same message as command - FIXED like massau.py"""
     card_list = []
     
     # Get the full message text
@@ -164,7 +164,7 @@ async def parse_card_list_from_command(message):
     # Split by lines
     lines = full_text.split('\n')
     
-    # Process each line individually
+    # Process each line
     for i, line in enumerate(lines):
         line = line.strip()
         if not line:
@@ -178,16 +178,15 @@ async def parse_card_list_from_command(message):
                 # There might be cards on the same line
                 remaining_text = ' '.join(parts[1:]).strip()
                 if remaining_text:
-                    # Split by spaces or newlines to get individual card strings
-                    for card_str in remaining_text.split():
-                        card_str = card_str.strip()
-                        if card_str and '|' in card_str:
-                            card_list.append(card_str)
+                    # Extract cards from this text using extract_cards
+                    all_cards, unique_cards = extract_cards(remaining_text)
+                    card_list.extend(unique_cards)
             continue
         
-        # Regular line - each line should be one card
-        if line and '|' in line:
-            card_list.append(line)
+        # Regular line - extract cards from this line using extract_cards
+        if line:
+            all_cards, unique_cards = extract_cards(line)
+            card_list.extend(unique_cards)
     
     # Remove duplicates while preserving order
     seen = set()
@@ -197,11 +196,11 @@ async def parse_card_list_from_command(message):
             seen.add(card)
             unique_cards.append(card)
     
-    print(f"📝 Parsed {len(unique_cards)} cards from command: {unique_cards}")
+    print(f"📝 Extracted {len(unique_cards)} cards from command: {unique_cards}")
     return unique_cards
 
 def parse_card_details(card_details):
-    """Parse card details from string (same as massau.py)"""
+    """Parse card details from string - UPDATED to handle the format from extract_cards"""
     try:
         # Clean the card string
         card_details = card_details.strip()
@@ -212,45 +211,22 @@ def parse_card_details(card_details):
             print(f"❌ Invalid card format: {card_details} (expected at least 4 parts separated by |)")
             return "", "", "", ""
         
-        cc = cc_parts[0].strip().replace(" ", "")
+        cc = cc_parts[0].strip()
         mes = cc_parts[1].strip()
         ano = cc_parts[2].strip()
         cvv = cc_parts[3].strip()
         
-        # Validate CC (should be 15-16 digits)
-        cc = re.sub(r'\D', '', cc)
-        if not (15 <= len(cc) <= 16):
-            print(f"❌ Invalid CC length: {len(cc)} for card {cc[:6]}XXXXXX{cc[-4:]}")
-            return "", "", "", ""
+        # Remove any spaces from CC
+        cc = cc.replace(" ", "")
         
         # Format month with leading zero if needed
-        mes = re.sub(r'\D', '', mes)
         if len(mes) == 1:
             mes = f"0{mes}"
-        elif len(mes) > 2:
-            mes = mes[:2]
         
-        # Format year
-        ano = re.sub(r'\D', '', ano)
+        # Format year if needed
         if len(ano) == 2:
             ano = '20' + ano
-        elif len(ano) > 4:
-            ano = ano[:4]
-        
-        # Format CVV
-        cvv = re.sub(r'\D', '', cvv)
-        if len(cvv) > 4:
-            cvv = cvv[:4]
-        
-        # Final validation
-        if not (1 <= int(mes) <= 12):
-            print(f"❌ Invalid month: {mes}")
-            return "", "", "", ""
-        
-        if len(cvv) not in [3, 4]:
-            print(f"❌ Invalid CVV length: {len(cvv)}")
-            return "", "", "", ""
-        
+            
         print(f"✅ Parsed card: {cc[:6]}XXXXXX{cc[-4:]}|{mes}|{ano}|{cvv}")
         return cc, mes, ano, cvv
     except Exception as e:
