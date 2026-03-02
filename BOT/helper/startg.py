@@ -170,21 +170,21 @@ SHOPIFY_CHARGE_CONFIG = {
             "command": "$sp cc|mes|ano|cvv",
             "command_key": "sp",
             "status": "",  # Will be filled dynamically
-            "note": "Coming Soon ⏳"
+            "note": "2 credits"
         },
         {
             "name": "Shopify Charge (/si) - 2.00$",  # PLACEHOLDER
             "command": "$si cc|mes|ano|cvv",
             "command_key": "si",
             "status": "",  # Will be filled dynamically
-            "note": "Coming Soon ⏳"
+            "note": "2 credits"
         },
         {
             "name": "Shopify Charge (/sf) - 0.77$",  # PLACEHOLDER
             "command": "$sf cc|mes|ano|cvv",
             "command_key": "sf",
             "status": "",  # Will be filled dynamically
-            "note": "Coming Soon ⏳"
+            "note": "2 credits"
         },
         {
             "name": "Shopify Charge (/sy) - Coming Soon",  # PLACEHOLDER
