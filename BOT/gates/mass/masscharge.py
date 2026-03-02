@@ -160,31 +160,40 @@ async def parse_card_list_from_command(message):
     # Get the full message text
     full_text = message.text or ""
     
-    # Remove the command part
-    # Split by lines
+    # Remove the command part - extract everything after the command
     lines = full_text.split('\n')
     
-    # Skip the first line if it contains the command
+    # Process each line
     for i, line in enumerate(lines):
         line = line.strip()
         if not line:
             continue
             
         # Check if this line contains the command
-        if i == 0 and any(line.startswith(prefix) for prefix in ['/mxc', '.mxc', '$mxc']):
-            # This is the command line, extract content after command
-            parts = line.split()
-            if len(parts) > 1:
-                # There might be cards on the same line
-                remaining_text = ' '.join(parts[1:]).strip()
-                if remaining_text:
-                    # Extract cards from this text
-                    all_cards, unique_cards = extract_cards(remaining_text)
-                    card_list.extend(unique_cards)
-            continue
-        
-        # Regular line - extract cards from this line
-        if line:
+        if i == 0:
+            # First line might have command + cards
+            # Check if it starts with command
+            if any(line.startswith(prefix) for prefix in ['/mxc', '.mxc', '$mxc']):
+                # Remove the command part
+                parts = line.split(maxsplit=1)
+                if len(parts) > 1:
+                    # There are cards after command on same line
+                    remaining_text = parts[1].strip()
+                    if remaining_text:
+                        # Check if this is a single card or multiple cards separated by spaces
+                        # Split by spaces first, then extract cards from each part
+                        text_parts = remaining_text.split()
+                        for text_part in text_parts:
+                            all_cards, unique_cards = extract_cards(text_part)
+                            card_list.extend(unique_cards)
+                # Skip to next line, no need to process this line further
+                continue
+            else:
+                # Line doesn't start with command, treat as regular card line
+                all_cards, unique_cards = extract_cards(line)
+                card_list.extend(unique_cards)
+        else:
+            # Subsequent lines - extract cards directly
             all_cards, unique_cards = extract_cards(line)
             card_list.extend(unique_cards)
     
@@ -196,6 +205,7 @@ async def parse_card_list_from_command(message):
             seen.add(card)
             unique_cards.append(card)
     
+    print(f"📝 Parsed {len(unique_cards)} unique cards from command: {unique_cards}")
     return unique_cards
 
 class MassStripeChargeChecker:
@@ -273,6 +283,13 @@ class MassStripeChargeChecker:
         
         # Parse card details
         cc, mes, ano, cvv = self.parse_card_details(card_details)
+        
+        if not cc or not mes or not ano or not cvv:
+            bin_info = await self.checker.get_bin_info("")
+            return self.format_mass_card_response(
+                cc, mes, ano, cvv, "ERROR", "Invalid card format", 
+                username, time.time()-start_time, user_data, bin_info
+            )
         
         try:
             # Get BIN info
@@ -445,12 +462,16 @@ class MassStripeChargeChecker:
             ano = cc_parts[2].strip()
             cvv = cc_parts[3].strip()
             
+            # Validate basic card format
+            if not cc.isdigit() or len(cc) < 15:
+                return "", "", "", ""
+            
             # Format month with leading zero if needed
-            if len(mes) == 1:
+            if len(mes) == 1 and mes.isdigit():
                 mes = f"0{mes}"
             
             # Format year if needed (for 2-digit years)
-            if len(ano) == 2:
+            if len(ano) == 2 and ano.isdigit():
                 ano = '20' + ano
                 
             return cc, mes, ano, cvv
@@ -667,8 +688,8 @@ async def handle_mass_stripe_charge(client: Client, message: Message):
 5414963811565512|09|28|822
 4221352001240530|12|26|050</code>
 
-<b>Format 3 (Single line):</b>
-<code>/mxc 5414963811565512|09|28|822</code>
+<b>Format 3 (Single line with multiple cards):</b>
+<code>/mxc 5414963811565512|09|28|822 4221352001240530|12|26|050</code>
 
 ⟐ <b>Note:</b> <code>Cards will be auto-filtered from any format</code>
 ━━━━━━━━━━━━━""")
@@ -754,7 +775,7 @@ async def handle_mass_stripe_charge(client: Client, message: Message):
         tokens, error = await mass_checker.checker.get_form_tokens(client)
         
         if not tokens:
-            await processing_msg.edit_text("""<pre>❌ Session Creation Failed</pre>
+            await processing_msg.edit_text(f"""<pre>❌ Session Creation Failed</pre>
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: Failed to create session for mass charge.
 ⟐ <b>Error</b>: <code>{error}</code>
@@ -798,12 +819,16 @@ async def handle_mass_stripe_charge(client: Client, message: Message):
                     
             except Exception as e:
                 # Handle individual card error
-                bin_info = await mass_checker.checker.get_bin_info(card_details.split('|')[0] if '|' in card_details else "")
+                # Parse card details for error response
+                cc_parts = card_details.split('|')
+                cc = cc_parts[0].strip().replace(" ", "") if len(cc_parts) > 0 else ""
+                mes = cc_parts[1].strip() if len(cc_parts) > 1 else ""
+                ano = cc_parts[2].strip() if len(cc_parts) > 2 else ""
+                cvv = cc_parts[3].strip() if len(cc_parts) > 3 else ""
+                
+                bin_info = await mass_checker.checker.get_bin_info(cc if cc else "")
                 error_result = mass_checker.format_mass_card_response(
-                    card_details.split('|')[0] if '|' in card_details else "",
-                    card_details.split('|')[1] if len(card_details.split('|')) > 1 else "",
-                    card_details.split('|')[2] if len(card_details.split('|')) > 2 else "",
-                    card_details.split('|')[3] if len(card_details.split('|')) > 3 else "",
+                    cc, mes, ano, cvv,
                     "ERROR", f"Check failed: {str(e)[:50]}", 
                     username, 0, user_data, bin_info
                 )
