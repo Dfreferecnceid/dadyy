@@ -1,5 +1,5 @@
 # BOT/gates/auth/mass/masschk.py
-# Mass Stripe Auth 2 Checker - Uses stauth2.py API with massau.py UI
+# Mass Stripe Auth 2 Checker - Uses stauth2.py API with massau.py UI and massau.py parsing
 
 import asyncio
 import json
@@ -21,7 +21,6 @@ from BOT.gates.auth.stripe.stauth import StripeAuthChecker, logger, load_users, 
 from BOT.helper.permissions import auth_and_free_restricted
 from BOT.helper.Admins import is_command_disabled, get_command_offline_message
 from BOT.gc.credit import deduct_credit, get_user_credits, has_sufficient_credits, charge_processor
-from BOT.helper.filter import extract_cards
 
 # Import StripeAuth2Checker for the API
 from BOT.gates.auth.stripe.stauth2 import StripeAuth2Checker, SmartCardParser
@@ -56,20 +55,56 @@ async def download_file(client, message, file_msg):
         print(f"❌ Error downloading file: {e}")
         return None
 
-async def extract_cards_from_file(file_path):
-    """Extract cards from downloaded file using filter.py"""
-    try:
-        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-            file_content = f.read()
+def extract_cards_from_text(text):
+    """Extract cards from text using massau.py's simple parsing technique"""
+    all_cards = []
+    
+    # Split by lines
+    lines = text.split('\n')
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
         
-        # Use filter.py's extract_cards function
-        all_cards, unique_cards = extract_cards(file_content)
-        
-        print(f"📊 Extracted {len(all_cards)} total cards, {len(unique_cards)} unique cards from file")
-        return unique_cards
-    except Exception as e:
-        print(f"❌ Error extracting cards from file: {e}")
-        return []
+        # Look for pipe-separated format
+        if '|' in line:
+            # Split by pipe and take first 4 parts
+            parts = line.split('|')
+            if len(parts) >= 4:
+                cc = parts[0].strip()
+                mes = parts[1].strip()
+                ano = parts[2].strip()
+                cvv = parts[3].strip()
+                
+                # Clean each part
+                cc = re.sub(r'\D', '', cc)
+                mes = re.sub(r'\D', '', mes)
+                ano = re.sub(r'\D', '', ano)
+                cvv = re.sub(r'\D', '', cvv)
+                
+                # Validate basic format
+                if len(cc) >= 15 and len(cc) <= 16 and mes and ano and cvv:
+                    # Format month with leading zero
+                    if len(mes) == 1:
+                        mes = f"0{mes}"
+                    
+                    # Format year (keep as is, will be handled later)
+                    if len(ano) == 2:
+                        ano = ano
+                    
+                    card = f"{cc}|{mes}|{ano}|{cvv}"
+                    all_cards.append(card)
+    
+    # Remove duplicates
+    seen = set()
+    unique_cards = []
+    for card in all_cards:
+        if card not in seen:
+            seen.add(card)
+            unique_cards.append(card)
+    
+    return unique_cards
 
 async def parse_card_list_from_reply(client, message):
     """Parse card list when user replies to a message"""
@@ -89,85 +124,58 @@ async def parse_card_list_from_reply(client, message):
             return card_list, None
         
         # Extract cards from file
-        card_list = await extract_cards_from_file(file_path)
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                file_content = f.read()
+            card_list = extract_cards_from_text(file_content)
+            print(f"📊 Extracted {len(card_list)} cards from file")
+        except Exception as e:
+            print(f"❌ Error extracting cards from file: {e}")
         
     # Case 2: Reply to a text message
     elif replied.text:
-        # Extract cards directly from text using filter.py
-        all_cards, unique_cards = extract_cards(replied.text)
-        card_list = unique_cards
+        # Extract cards directly from text
+        card_list = extract_cards_from_text(replied.text)
+        print(f"📊 Extracted {len(card_list)} cards from replied text")
     
     return card_list, file_path
 
 async def parse_card_list_from_command(message):
-    """Parse card list when cards are in the same message as command - FIXED VERSION"""
+    """Parse card list when cards are in the same message as command - using massau.py technique"""
     card_list = []
     
     # Get the full message text
     full_text = message.text or ""
     
-    # Remove the command part
-    # Split by lines
+    # Remove the command part from first line only
     lines = full_text.split('\n')
     
-    all_extracted_cards = []
+    all_text = ""
     
-    # Skip the first line if it contains the command
+    # Process each line
     for i, line in enumerate(lines):
         line = line.strip()
         if not line:
             continue
-            
-        # Check if this line contains the command
-        if i == 0 and any(line.startswith(prefix) for prefix in ['/mchk', '.mchk', '$mchk']):
-            # This is the command line, extract content after command
-            parts = line.split()
-            if len(parts) > 1:
-                # There might be cards on the same line
-                remaining_text = ' '.join(parts[1:]).strip()
-                if remaining_text:
-                    # Extract cards from this text
-                    all_cards, unique_cards = extract_cards(remaining_text)
-                    all_extracted_cards.extend(unique_cards)
-            continue
         
-        # Regular line - extract cards from this line
+        # If this is the first line and contains command, remove the command
+        if i == 0:
+            # Remove command prefix
+            for prefix in ['/mchk', '.mchk', '$mchk']:
+                if line.startswith(prefix):
+                    # Extract everything after the command
+                    line = line[len(prefix):].strip()
+                    break
+        
+        # Add this line to the text to parse
         if line:
-            all_cards, unique_cards = extract_cards(line)
-            all_extracted_cards.extend(unique_cards)
+            all_text += line + "\n"
     
-    # CRITICAL FIX: Clean each card to ensure CVV is properly separated
-    cleaned_cards = []
-    for card in all_extracted_cards:
-        # Card should be in format "cc|mm|yy|cvv"
-        parts = card.split('|')
-        if len(parts) >= 4:
-            cc = parts[0].strip()
-            mm = parts[1].strip()
-            yy = parts[2].strip()
-            cvv = parts[3].strip()
-            
-            # Fix: If CVV contains digits from next card, take only first 3-4 digits
-            cvv_clean = re.sub(r'\D', '', cvv)
-            if len(cvv_clean) > 4:
-                # This CVV is too long - might include next card's number
-                cvv_clean = cvv_clean[:4]  # Take first 4 digits max
-            
-            # Ensure CVV is 3-4 digits
-            if len(cvv_clean) >= 3:
-                cvv_clean = cvv_clean[:4]  # Max 4 digits
-                cleaned_card = f"{cc}|{mm}|{yy}|{cvv_clean}"
-                cleaned_cards.append(cleaned_card)
+    # Extract cards from the combined text
+    card_list = extract_cards_from_text(all_text)
+    print(f"📝 Extracted {len(card_list)} cards from command message")
     
-    # Remove duplicates while preserving order
-    seen = set()
-    unique_cards = []
-    for card in cleaned_cards:
-        if card not in seen:
-            seen.add(card)
-            unique_cards.append(card)
-    
-    return unique_cards
+    return card_list
 
 class MassStripeAuth2Checker:
     def __init__(self):
@@ -230,9 +238,9 @@ class MassStripeAuth2Checker:
         return False
     
     def parse_card_details(self, card_details):
-        """Parse card details from string using filter.py format - FIXED VERSION like massau.py"""
+        """Parse card details from string using massau.py technique"""
         try:
-            # card_details should be in format "cc|mm|yy|cvv" from extract_cards
+            # card_details should be in format "cc|mm|yy|cvv" from extract_cards_from_text
             card_details = card_details.strip()
             
             # Split by | and take only the first 4 parts
@@ -245,42 +253,16 @@ class MassStripeAuth2Checker:
             ano = cc_parts[2].strip()
             cvv = cc_parts[3].strip()
             
-            # CRITICAL FIX: Extract only digits from CVV and limit to 4 digits max
-            cvv_digits = re.sub(r'\D', '', cvv)
-            if len(cvv_digits) >= 3:
-                cvv = cvv_digits[:4]  # Take first 4 digits max
-            else:
-                cvv = cvv_digits
-            
             # Format month with leading zero if needed
             if len(mes) == 1:
                 mes = f"0{mes}"
-            elif len(mes) > 2:
-                # Extract only first 2 digits if month is longer
-                mes_digits = re.sub(r'\D', '', mes)
-                if len(mes_digits) >= 2:
-                    mes = mes_digits[:2]
-                else:
-                    mes = mes_digits
             
-            # Format year: if 2 digits, convert to 4 digits
-            ano_digits = re.sub(r'\D', '', ano)
-            if len(ano_digits) == 2:
-                ano = '20' + ano_digits
-            elif len(ano_digits) == 4:
-                ano = ano_digits
-            else:
-                # Try to extract year from the digits we have
-                if len(ano_digits) > 0:
-                    # Take last 2 digits and make it 20+YY
-                    last_two = ano_digits[-2:]
-                    ano = '20' + last_two
-                else:
-                    ano = ""
-            
+            # Format year if needed
+            if len(ano) == 2:
+                ano = '20' + ano
+                
             return cc, mes, ano, cvv
-        except Exception as e:
-            print(f"Error parsing card details: {e}")
+        except:
             return "", "", "", ""
     
     async def check_card_with_session(self, card_details, username, user_data, client=None, nonce=None, retry_count=0):
