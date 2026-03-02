@@ -574,7 +574,7 @@ class MassStripeAuthChecker:
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
 <b>[+] Results:</b> ✅ {successful} | ❌ {failed}
 <b>[+] Total Cards:</b> <code>{total_cards}</code>
-<b>[+] Credits Used:</b> <code>3</code> (for entire mass check)
+<b>[+] Credits Used:</b> <code>3</code>
 ━━━━━━━━━━━━━━━
 <b>[ﾒ] Checked By:</b> {user_display}
 <b>[ϟ] Dev ➺</b> <b><i>DADYY</i></b>
@@ -606,7 +606,7 @@ class MassStripeAuthChecker:
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
 <b>[+] Results:</b> ✅ {successful} | ❌ {failed}
 <b>[+] Total Cards:</b> <code>{total_cards}</code>
-<b>[+] Credits Used:</b> <code>3</code> (for entire mass check)
+<b>[+] Credits Used:</b> <code>3</code> 
 ━━━━━━━━━━━━━━━
 
 """
@@ -773,7 +773,7 @@ async def handle_mass_stripe_auth(client: Client, message: Message):
             await message.reply(f"""<pre>❌ Insufficient Credits</pre>
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: You don't have enough credits for mass check.
-⟐ <b>Required:</b> <code>3 credits</code> (for entire mass check)
+⟐ <b>Required:</b> <code>3 credits</code> 
 ⟐ <b>Available:</b> <code>{current_credits}</code>
 ⟐ <b>Your Plan:</b> <code>{plan_name}</code>
 ━━━━━━━━━━━━━""")
@@ -941,3 +941,4 @@ async def handle_mass_stripe_auth(client: Client, message: Message):
                 os.remove(file_path)
             except:
                 pass
+
