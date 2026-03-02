@@ -16,7 +16,7 @@ import os
 from pathlib import Path
 
 # CORRECT IMPORTS based on your credit.py
-from BOT.gates.auth.stripe.stauth2 import StripeAuth2Checker, logger, load_users, is_user_banned, check_cooldown, get_user_plan, SmartCardParser
+from BOT.gates.auth.stripe.stauth2 import StripeAuth2Checker, logger, load_users, is_user_banned, check_cooldown, get_user_plan
 from BOT.helper.permissions import auth_and_free_restricted
 from BOT.helper.Admins import is_command_disabled, get_command_offline_message
 from BOT.gc.credit import deduct_credit, get_user_credits, has_sufficient_credits, charge_processor
@@ -198,6 +198,30 @@ async def parse_card_list_from_command(message):
     
     return unique_cards
 
+def parse_card_details(card_details):
+    """Parse card details from string (same as massau.py)"""
+    try:
+        cc_parts = card_details.split('|')
+        if len(cc_parts) < 4:
+            return "", "", "", ""
+        
+        cc = cc_parts[0].strip().replace(" ", "")
+        mes = cc_parts[1].strip()
+        ano = cc_parts[2].strip()
+        cvv = cc_parts[3].strip()
+        
+        # Format month with leading zero if needed
+        if len(mes) == 1:
+            mes = f"0{mes}"
+        
+        # Format year if needed
+        if len(ano) == 2:
+            ano = '20' + ano
+            
+        return cc, mes, ano, cvv
+    except:
+        return "", "", "", ""
+
 class MassStripeAuth2Checker:
     def __init__(self):
         self.checker = StripeAuth2Checker()
@@ -262,17 +286,14 @@ class MassStripeAuth2Checker:
         """OPTIMIZED: Check card using existing session (for mass checking) with rate limit handling"""
         start_time = time.time()
         
-        # Parse card details using SmartCardParser from stauth2.py
-        cc, mes, ano, cvv = SmartCardParser.extract_card_from_text(card_details)
+        # Parse card details using the same method as massau.py
+        cc, mes, ano, cvv = parse_card_details(card_details)
         
         if not cc or not mes or not ano or not cvv:
-            # Try to parse as pipe format as fallback
-            parts = card_details.split('|')
-            if len(parts) >= 4:
-                cc = parts[0].strip().replace(" ", "")
-                mes = parts[1].strip()
-                ano = parts[2].strip()
-                cvv = parts[3].strip()
+            return self.format_mass_card_response(
+                cc, mes, ano, cvv, "ERROR", "Invalid card format", 
+                username, time.time()-start_time, user_data, {}
+            )
         
         try:
             # Get BIN info
@@ -493,7 +514,14 @@ class MassStripeAuth2Checker:
 
         clean_name = re.sub(r'[↯⌁«~∞🍁]', '', first_name).strip()
         user_display = f"「{badge}」{clean_name}"
-        bank_info = bin_info['bank'].upper() if bin_info['bank'] != 'N/A' else 'N/A'
+        bank_info = bin_info['bank'].upper() if bin_info and bin_info.get('bank', 'N/A') != 'N/A' else 'N/A'
+        
+        # Handle case when bin_info is empty
+        scheme = bin_info.get('scheme', 'N/A') if bin_info else 'N/A'
+        card_type = bin_info.get('type', 'N/A') if bin_info else 'N/A'
+        brand = bin_info.get('brand', 'N/A') if bin_info else 'N/A'
+        country = bin_info.get('country', 'N/A') if bin_info else 'N/A'
+        emoji = bin_info.get('emoji', '🏳️') if bin_info else '🏳️'
 
         response = f"""<b>「$cmd → /mchk」| <b>WAYNE</b> </b>
 ━━━━━━━━━━━━━━━
@@ -503,9 +531,9 @@ class MassStripeAuth2Checker:
 <b>[•] Response-</b> <code>{message}</code>
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
 <b>[+] Bin:</b> <code>{cc[:6]}</code>  
-<b>[+] Info:</b> <code>{bin_info['scheme']} - {bin_info['type']} - {bin_info['brand']}</code>
+<b>[+] Info:</b> <code>{scheme} - {card_type} - {brand}</code>
 <b>[+] Bank:</b> <code>{bank_info}</code> 🏦
-<b>[+] Country:</b> <code>{bin_info['country']}</code> [{bin_info['emoji']}]
+<b>[+] Country:</b> <code>{country}</code> [{emoji}]
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
 <b>[ﾒ] Checked By:</b> {user_display}
 <b>[ϟ] Dev ➺</b> <b><i>DADYY</i></b>
