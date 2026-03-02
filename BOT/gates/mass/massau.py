@@ -69,15 +69,6 @@ async def extract_cards_from_file(file_path):
     except Exception as e:
         print(f"❌ Error extracting cards from file: {e}")
         return []
-    finally:
-        # Optionally delete the file after processing to save space
-        # Uncomment if you want to auto-delete
-        # try:
-        #     os.remove(file_path)
-        #     print(f"🗑️ Deleted file: {file_path}")
-        # except:
-        #     pass
-        pass
 
 async def parse_card_list_from_reply(client, message):
     """Parse card list when user replies to a message"""
@@ -277,7 +268,7 @@ class MassStripeAuthChecker:
             
             if stripe_response.status_code != 200:
                 error_text = stripe_response.text[:150] if stripe_response.text else "No response"
-                return await self.checker.format_response(
+                return await self.format_mass_card_response(
                     cc, mes, ano, cvv, "DECLINED", 
                     f"Stripe Error: {error_text}", 
                     username, time.time()-start_time, user_data, bin_info
@@ -287,14 +278,14 @@ class MassStripeAuthChecker:
             
             if "error" in stripe_json:
                 error_msg = stripe_json["error"].get("message", "Stripe declined")
-                return await self.checker.format_response(
+                return await self.format_mass_card_response(
                     cc, mes, ano, cvv, "DECLINED", error_msg, 
                     username, time.time()-start_time, user_data, bin_info
                 )
             
             payment_method_id = stripe_json.get("id")
             if not payment_method_id:
-                return await self.checker.format_response(
+                return await self.format_mass_card_response(
                     cc, mes, ano, cvv, "DECLINED", "Payment method creation failed", 
                     username, time.time()-start_time, user_data, bin_info
                 )
@@ -320,7 +311,7 @@ class MassStripeAuthChecker:
             ajax_response = await client.post(ajax_url, headers=ajax_headers, data=ajax_data)
             
             if ajax_response.status_code != 200:
-                return await self.checker.format_response(
+                return await self.format_mass_card_response(
                     cc, mes, ano, cvv, "DECLINED", f"AJAX Error: {ajax_response.status_code}", 
                     username, time.time()-start_time, user_data, bin_info
                 )
@@ -333,12 +324,12 @@ class MassStripeAuthChecker:
                     result["data"].get("status") == "requires_action" and
                     "three_d_secure" in str(result["data"])):
                     
-                    return await self.checker.format_response(
+                    return await self.format_mass_card_response(
                         cc, mes, ano, cvv, "APPROVED", "**Stripe_3ds_Fingerprint**", 
                         username, time.time()-start_time, user_data, bin_info
                     )
                 
-                return await self.checker.format_response(
+                return await self.format_mass_card_response(
                     cc, mes, ano, cvv, "APPROVED", "Successful", 
                     username, time.time()-start_time, user_data, bin_info
                 )
@@ -376,12 +367,12 @@ class MassStripeAuthChecker:
                             pass
                         return result
                     else:
-                        return await self.checker.format_response(
+                        return await self.format_mass_card_response(
                             cc, mes, ano, cvv, "DECLINED", "Rate limit - failed to create new session", 
                             username, time.time()-start_time, user_data, bin_info
                         )
                 
-                return await self.checker.format_response(
+                return await self.format_mass_card_response(
                     cc, mes, ano, cvv, "DECLINED", error_message, 
                     username, time.time()-start_time, user_data, bin_info
                 )
@@ -407,10 +398,49 @@ class MassStripeAuthChecker:
             
             # Not a rate limit error or max retries exceeded
             bin_info = await self.checker.get_bin_info(cc)
-            return await self.checker.format_response(
+            return await self.format_mass_card_response(
                 cc, mes, ano, cvv, "ERROR", str(e)[:80], 
                 username, time.time()-start_time, user_data, bin_info
             )
+    
+    def format_mass_card_response(self, cc, mes, ano, cvv, status, message, username, elapsed_time, user_data, bin_info):
+        """Format individual card response for mass check with /mau in header"""
+        user_id = user_data.get("user_id", "Unknown")
+        first_name = html.escape(user_data.get("first_name", "User"))
+        badge = user_data.get("plan", {}).get("badge", "🎭")
+
+        if "APPROVED" in status:
+            status_emoji = "✅"
+            status_text = "APPROVED"
+        elif "DECLINED" in status:
+            status_emoji = "❌"
+            status_text = "DECLINED"
+        else:
+            status_emoji = "⚠️"
+            status_text = status.upper() if status else "ERROR"
+
+        clean_name = re.sub(r'[↯⌁«~∞🍁]', '', first_name).strip()
+        user_display = f"「{badge}」{clean_name}"
+        bank_info = bin_info['bank'].upper() if bin_info['bank'] != 'N/A' else 'N/A'
+
+        response = f"""<b>「$cmd → /mau」| <b>WAYNE</b> </b>
+━━━━━━━━━━━━━━━
+<b>[•] Card-</b> <code>{cc}|{mes}|{ano}|{cvv}</code>
+<b>[•] Gateway -</b> Stripe Auth
+<b>[•] Status-</b> <code>{status_text} {status_emoji}</code>
+<b>[•] Response-</b> <code>{message}</code>
+━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
+<b>[+] Bin:</b> <code>{cc[:6]}</code>  
+<b>[+] Info:</b> <code>{bin_info['scheme']} - {bin_info['type']} - {bin_info['brand']}</code>
+<b>[+] Bank:</b> <code>{bank_info}</code> 🏦
+<b>[+] Country:</b> <code>{bin_info['country']}</code> [{bin_info['emoji']}]
+━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
+<b>[ﾒ] Checked By:</b> {user_display}
+<b>[ϟ] Dev ➺</b> <b><i>DADYY</i></b>
+━━━━━━━━━━━━━━━
+<b>[ﾒ] T/t:</b> <code>{elapsed_time:.2f} 𝐬</code> |<b>P/x:</b> <code>Live ⚡️</code></b>"""
+
+        return response
     
     def parse_card_details(self, card_details):
         """Parse card details from string"""
@@ -454,13 +484,20 @@ class MassStripeAuthChecker:
 👤 <b>User:</b> @{username}
 💎 <b>Plan:</b> {user_plan}"""
     
-    async def format_mass_response_individual(self, result, card_number, total_cards, username, elapsed_time, user_data):
-        """Format individual card response when total cards > 5"""
-        # The result already contains the full card response format
-        return result
+    async def send_approved_card_immediately(self, client, message, result, card_number, total_cards):
+        """Send approved card immediately without waiting for all cards to finish"""
+        try:
+            # Send the approved card result immediately
+            await message.reply(result, disable_web_page_preview=True)
+            # Small delay to avoid flooding
+            await asyncio.sleep(0.5)
+            return True
+        except Exception as e:
+            print(f"Failed to send approved card immediately: {e}")
+            return False
     
-    async def send_individual_responses(self, client, message, results, successful, failed, total_cards, username, elapsed_time, user_data, processing_msg):
-        """Send individual responses for each card when total cards > 5"""
+    async def send_final_summary(self, client, message, successful, failed, total_cards, username, elapsed_time, user_data, processing_msg):
+        """Send final summary after all cards are processed"""
         user_id = user_data.get("user_id", "Unknown")
         first_name = html.escape(user_data.get("first_name", "User"))
         badge = user_data.get("plan", {}).get("badge", "🎭")
@@ -474,16 +511,7 @@ class MassStripeAuthChecker:
         except:
             pass
         
-        # Send each card result as an individual message
-        for i, result in enumerate(results):
-            try:
-                await message.reply(result, disable_web_page_preview=True)
-                # Small delay between messages to avoid flooding
-                await asyncio.sleep(0.5)
-            except Exception as e:
-                print(f"Failed to send individual result for card {i+1}: {e}")
-        
-        # Send final summary
+        # Send final summary (ONLY ONCE, no duplicate footer)
         summary = f"""<b>「$cmd → /mau」| <b>WAYNE</b> </b>
 ━━━━━━━━━━━━━━━
 <b>[•] Gateway -</b> Stripe Auth Mass
@@ -541,6 +569,7 @@ class MassStripeAuthChecker:
 @auth_and_free_restricted
 async def handle_mass_stripe_auth(client: Client, message: Message):
     file_path = None  # Track downloaded file path for cleanup
+    approved_sent = 0  # Track how many approved cards we've sent
     
     try:
         user_id = message.from_user.id
@@ -695,10 +724,17 @@ async def handle_mass_stripe_auth(client: Client, message: Message):
                     retry_count=0
                 )
                 
+                # Store result for potential collective response
                 results.append(result)
                 
                 if "APPROVED" in result:
                     successful += 1
+                    # For >5 cards, send approved cards immediately
+                    if card_count > 5:
+                        await mass_checker.send_approved_card_immediately(
+                            client, message, result, i+1, card_count
+                        )
+                        approved_sent += 1
                 elif "DECLINED" in result:
                     failed += 1
                 else:
@@ -726,9 +762,9 @@ async def handle_mass_stripe_auth(client: Client, message: Message):
                 except:
                     pass
             
-            # Delay between cards to avoid rate limiting
+            # REDUCED DELAY: From 2-4 seconds to 1-2 seconds for faster processing
             if i < len(card_list) - 1:
-                await asyncio.sleep(random.uniform(2, 4))
+                await asyncio.sleep(random.uniform(1, 2))
         
         # Close the shared session after all cards are processed
         if client:
@@ -740,14 +776,16 @@ async def handle_mass_stripe_auth(client: Client, message: Message):
         
         elapsed_time = time.time() - start_time
         
-        # DECISION: If more than 5 cards, send individual responses
+        # DECISION BASED ON CARD COUNT
         if card_count > 5:
-            await mass_checker.send_individual_responses(
-                client, message, results, successful, failed + errors, 
+            # For >5 cards: We've already sent approved cards immediately
+            # Now just send the final summary
+            await mass_checker.send_final_summary(
+                client, message, successful, failed + errors, 
                 card_count, username, elapsed_time, user_data, processing_msg
             )
         else:
-            # Format collective response (5 or fewer cards)
+            # For <=5 cards: Send collective response with all cards
             final_response = await mass_checker.format_mass_response_collective(
                 results, successful, failed + errors, card_count, username, elapsed_time, user_data
             )
