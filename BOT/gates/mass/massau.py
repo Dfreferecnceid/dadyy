@@ -12,12 +12,13 @@ from pyrogram import Client, filters
 from pyrogram.types import Message
 import logging
 import httpx
+import string
 
-# CORRECTED IMPORTS
+# CORRECT IMPORTS based on your credit.py
 from BOT.gates.auth.stripe.stauth import StripeAuthChecker, logger, load_users, is_user_banned, check_cooldown, get_user_plan
 from BOT.helper.permissions import auth_and_free_restricted
 from BOT.helper.Admins import is_command_disabled, get_command_offline_message
-from BOT.gc.credit import update_user_credits  # Fixed: credit.py (singular)
+from BOT.gc.credit import deduct_credit, get_user_credits, has_sufficient_credits, charge_processor
 
 class MassStripeAuthChecker:
     def __init__(self):
@@ -508,12 +509,28 @@ async def handle_mass_stripe_auth(client: Client, message: Message):
             return
         
         # Check if user has enough credits for mass check (2 credits)
-        if not update_user_credits(user_id, 2, "deduct"):
-            await message.reply("""<pre>❌ Insufficient Credits</pre>
+        # Using has_sufficient_credits from credit.py
+        has_credits, credit_msg = has_sufficient_credits(user_id, 2)
+        
+        if not has_credits:
+            current_credits = get_user_credits(user_id)
+            await message.reply(f"""<pre>❌ Insufficient Credits</pre>
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: You don't have enough credits for mass check.
 ⟐ <b>Required:</b> <code>2 credits</code>
-⟐ <b>Your Credits:</b> <code>0</code>
+⟐ <b>Available:</b> <code>{current_credits}</code>
+⟐ <b>Your Plan:</b> <code>{plan_name}</code>
+━━━━━━━━━━━━━""")
+            return
+        
+        # Deduct credits BEFORE processing mass check
+        # Using deduct_credit from credit.py
+        deduct_success, deduct_msg = deduct_credit(user_id, 2)
+        
+        if not deduct_success:
+            await message.reply(f"""<pre>❌ Credit Deduction Failed</pre>
+━━━━━━━━━━━━━
+⟐ <b>Message</b>: {deduct_msg}
 ━━━━━━━━━━━━━""")
             return
         
