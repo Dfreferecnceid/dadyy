@@ -21,14 +21,14 @@ STRIPE_AUTH_CONFIG = {
     "commands": [
         {
             "name": "Stripe Auth",
-            "command": "$au cc|mes|ano|cvv",
+            "command": "$au cc|mm|yy|cvv",
             "command_key": "au",
             "status": "",  # Will be filled dynamically
             "note": "FREE"
         },
         {
             "name": "Stripe Check", 
-            "command": "$chk cc|mes|ano|cvv",
+            "command": "$chk cc|mm|yy|cvv",
             "command_key": "chk",
             "status": "",  # Will be filled dynamically
             "note": "FREE"
@@ -43,7 +43,7 @@ BRAINTREE_AUTH_CONFIG = {
     "commands": [
         {
             "name": "Braintree Auth",
-            "command": "$bu cc|mes|ano|cvv",
+            "command": "$bu cc|mm|yy|cvv",
             "command_key": "bu",
             "status": "",  # Will be filled dynamically
             "note": "FREE"
@@ -58,7 +58,7 @@ ADYEN_AUTH_CONFIG = {
     "commands": [
         {
             "name": "Adyen Auth",
-            "command": "$ad cc|mes|ano|cvv",
+            "command": "$ad cc|mm|yy|cvv",
             "command_key": "ad",
             "status": "",  # Will be filled dynamically
             "note": "FREE"
@@ -73,7 +73,7 @@ SQUARE_AUTH_CONFIG = {
     "commands": [
         {
             "name": "Square Auth",
-            "command": "$sq cc|mes|ano|cvv",
+            "command": "$sq cc|mm|yy|cvv",
             "command_key": "sq",
             "status": "",  # Will be filled dynamically
             "note": "FREE"
@@ -88,35 +88,35 @@ STRIPE_CHARGE_CONFIG = {
     "commands": [
         {
             "name": "Stripe Charge (/xx) - 0.12$",
-            "command": "$xx cc|mes|ano|cvv",
+            "command": "$xx cc|mm|yy|cvv",
             "command_key": "xx",
             "status": "",  # Will be filled dynamically
             "note": "2 Credits"
         },
         {
             "name": "Stripe Charge (/xo) - 1$",
-            "command": "$xo cc|mes|ano|cvv",
+            "command": "$xo cc|mm|yy|cvv",
             "command_key": "xo",
             "status": "",  # Will be filled dynamically
             "note": "2 Credits"
         },
         {
             "name": "Stripe Charge (/xs) - 5$",
-            "command": "$xs cc|mes|ano|cvv",
+            "command": "$xs cc|mm|yy|cvv",
             "command_key": "xs",
             "status": "",  # Will be filled dynamically
             "note": "2 Credits"
         },
         {
             "name": "Stripe Charge (/xc) - 10$",
-            "command": "$xc cc|mes|ano|cvv",
+            "command": "$xc cc|mm|yy|cvv",
             "command_key": "xc",
             "status": "",  # Will be filled dynamically
             "note": "2 Credits"
         },
         {
             "name": "Stripe Charge (/xp) - 15$",
-            "command": "$xp cc|mes|ano|cvv",
+            "command": "$xp cc|mm|yy|cvv",
             "command_key": "xp",
             "status": "",  # Will be filled dynamically
             "note": "2 Credits"
@@ -131,7 +131,7 @@ BRAINTREE_CHARGE_CONFIG = {
     "commands": [
         {
             "name": "Braintree Charge",
-            "command": "$bt cc|mes|ano|cvv",
+            "command": "$bt cc|mm|yy|cvv",
             "command_key": "bt",
             "status": "",  # Will be filled dynamically
             "note": "2 Credits"
@@ -146,49 +146,49 @@ SHOPIFY_CHARGE_CONFIG = {
     "commands": [
         {
             "name": "Shopify Charge (/sh) - 0.54$",
-            "command": "$sh cc|mes|ano|cvv",
+            "command": "$sh cc|mm|yy|cvv",
             "command_key": "sh",
             "status": "",  # Will be filled dynamically
             "note": "2 Credits"
         },
         {
             "name": "Self Shopify - 0$",
-            "command": "$slf cc|mes|ano|cvv",
+            "command": "$slf cc|mm|yy|cvv",
             "command_key": "slf",
             "status": "",  # Will be filled dynamically
             "note": "2 Credits"
         },
         {
             "name": "Shopify Charge (/so) - 0.60$",  # NEW COMMAND
-            "command": "$so cc|mes|ano|cvv",
+            "command": "$so cc|mm|yy|cvv",
             "command_key": "so",
             "status": "",  # Will be filled dynamically
             "note": "2 Credits"
         },
         {
             "name": "Shopify Charge (/sp) - 1.00$",  # PLACEHOLDER
-            "command": "$sp cc|mes|ano|cvv",
+            "command": "$sp cc|mm|yy|cvv",
             "command_key": "sp",
             "status": "",  # Will be filled dynamically
             "note": "2 credits"
         },
         {
             "name": "Shopify Charge (/si) - 2.00$",  # PLACEHOLDER
-            "command": "$si cc|mes|ano|cvv",
+            "command": "$si cc|mm|yy|cvv",
             "command_key": "si",
             "status": "",  # Will be filled dynamically
             "note": "2 credits"
         },
         {
             "name": "Shopify Charge (/sf) - 0.77$",  # PLACEHOLDER
-            "command": "$sf cc|mes|ano|cvv",
+            "command": "$sf cc|mm|yy|cvv",
             "command_key": "sf",
             "status": "",  # Will be filled dynamically
             "note": "2 credits"
         },
         {
             "name": "Shopify Charge (/sy) - Coming Soon",  # PLACEHOLDER
-            "command": "$sy cc|mes|ano|cvv",
+            "command": "$sy cc|mm|yy|cvv",
             "command_key": "sy",
             "status": "",  # Will be filled dynamically
             "note": "Coming Soon ⏳"
@@ -203,35 +203,35 @@ MASS_COMMANDS_CONFIG = {
     "commands": [
         {
             "name": "Mass Stripe Auth (/mau)",
-            "command": "$mau cc|mes|ano|cvv",
+            "command": "$mau cc|mm|yy|cvv",
             "command_key": "mau",
             "status": "",  # Will be filled dynamically
             "note": "As Per User's Plan"
         },
         {
             "name": "Mass Stripe Check (/mchk)",
-            "command": "$mchk cc|mes|ano|cvv",
+            "command": "$mchk cc|mm|yy|cvv",
             "command_key": "mchk",
             "status": "",  # Will be filled dynamically
             "note": "As Per User's Plan"
         },
         {
             "name": "Mass Stripe Charge (/mxc)",
-            "command": "$mxc cc|mes|ano|cvv",
+            "command": "$mxc cc|mm|yy|cvv",
             "command_key": "mxc",
             "status": "",  # Will be filled dynamically
             "note": "As Per User's Plan"
         },
         {
             "name": "Mass Stripe Charge (/mxp)",
-            "command": "$mxp cc|mes|ano|cvv",
+            "command": "$mxp cc|mm|yy|cvv",
             "command_key": "mxp",
             "status": "",  # Will be filled dynamically
             "note": "As Per User's Plan"
         },
         {
             "name": "Mass Stripe Charge (/mxx)",
-            "command": "$mxx cc|mes|ano|cvv",
+            "command": "$mxx cc|mm|yy|cvv",
             "command_key": "mxx",
             "status": "",  # Will be filled dynamically
             "note": "As Per User's Plan"
