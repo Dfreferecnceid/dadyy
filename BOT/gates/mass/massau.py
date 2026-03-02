@@ -332,6 +332,10 @@ class MassStripeAuthChecker:
             ano = cc_parts[2].strip()
             cvv = cc_parts[3].strip()
             
+            # Format month with leading zero if needed
+            if len(mes) == 1:
+                mes = f"0{mes}"
+            
             # Format year if needed
             if len(ano) == 2:
                 ano = '20' + ano
@@ -341,7 +345,7 @@ class MassStripeAuthChecker:
             return "", "", "", ""
     
     async def format_mass_response(self, results, successful, failed, total_cards, username, elapsed_time, user_data):
-        """Format the mass check results with proper UI"""
+        """Format the mass check results with proper UI - FIXED to use /mau in header"""
         user_id = user_data.get("user_id", "Unknown")
         first_name = html.escape(user_data.get("first_name", "User"))
         badge = user_data.get("plan", {}).get("badge", "🎭")
@@ -359,9 +363,12 @@ class MassStripeAuthChecker:
 ━━━━━━━━━━━━━━━
 """
         
-        # Add each card result
-        for i, result in enumerate(results):
+        # Add each card result (limit to first 10 to avoid message too long)
+        for i, result in enumerate(results[:10]):
             response += f"<b>Card {i+1}:</b>\n{result}\n\n"
+        
+        if len(results) > 10:
+            response += f"<b>... and {len(results) - 10} more cards</b>\n\n"
         
         response += f"""━━━━━━━━━━━━━━━
 <b>[ﾒ] Checked By:</b> {user_display}
@@ -385,50 +392,61 @@ class MassStripeAuthChecker:
 <b>Processing mass check... Please wait.</b>"""
 
 async def parse_card_list(message: Message):
-    """Parse card list from message or reply"""
+    """Parse card list from message or reply - FIXED to properly handle multi-line input"""
     card_list = []
     
     # Case 1: User replied to a message containing cards
     if message.reply_to_message:
         replied_msg = message.reply_to_message
         if replied_msg and replied_msg.text:
-            message_lines = replied_msg.text.split('\n')
-            for line in message_lines:
+            lines = replied_msg.text.strip().split('\n')
+            for line in lines:
                 line = line.strip()
                 if line and '|' in line:
+                    # Check if it's a valid card format (has 4 parts)
                     parts = line.split('|')
                     if len(parts) == 4:
-                        cc, mes, ano, cvv = parts
-                        if cc.strip() and mes.strip() and ano.strip() and cvv.strip():
-                            # Validate basic format
-                            cc_clean = cc.strip().replace(" ", "")
-                            if cc_clean.isdigit() and len(cc_clean) >= 15:
-                                card_list.append(line)
-    
-    # Case 2: Cards in the same message
-    else:
-        message_text = message.text
-        # Remove the command part
-        if message_text.startswith('/mau'):
-            message_text = message_text.replace('/mau', '', 1).strip()
-        if message_text.startswith('@WayneCHK_bot'):
-            message_text = message_text.replace('@WayneCHK_bot', '', 1).strip()
-            
-        # Split by lines and process
-        message_lines = message_text.split('\n')
-        for line in message_lines:
-            line = line.strip()
-            if line and '|' in line:
-                parts = line.split('|')
-                if len(parts) == 4:
-                    cc, mes, ano, cvv = parts
-                    if cc.strip() and mes.strip() and ano.strip() and cvv.strip():
-                        # Validate basic format
-                        cc_clean = cc.strip().replace(" ", "")
-                        if cc_clean.isdigit() and len(cc_clean) >= 15:
+                        cc, mes, ano, cvv = [p.strip() for p in parts]
+                        # Basic validation
+                        if cc.replace(" ", "").isdigit() and len(cc.replace(" ", "")) >= 15:
                             card_list.append(line)
     
-    return card_list
+    # Case 2: Cards in the same message after the command
+    else:
+        # Get the full message text
+        full_text = message.text
+        
+        # Remove the command part - handle both with and without bot username
+        # Split by whitespace and take the first part as command
+        parts = full_text.split()
+        command_part = parts[0]
+        
+        # The rest is the content
+        remaining_text = full_text[len(command_part):].strip()
+        
+        if remaining_text:
+            # Split by lines and process
+            lines = remaining_text.split('\n')
+            for line in lines:
+                line = line.strip()
+                if line and '|' in line:
+                    # Check if it's a valid card format (has 4 parts)
+                    parts = line.split('|')
+                    if len(parts) == 4:
+                        cc, mes, ano, cvv = [p.strip() for p in parts]
+                        # Basic validation
+                        if cc.replace(" ", "").isdigit() and len(cc.replace(" ", "")) >= 15:
+                            card_list.append(line)
+    
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_cards = []
+    for card in card_list:
+        if card not in seen:
+            seen.add(card)
+            unique_cards.append(card)
+    
+    return unique_cards
 
 @Client.on_message(filters.command(["mau", ".mau", "$mau"]))
 @auth_and_free_restricted
@@ -477,21 +495,19 @@ async def handle_mass_stripe_auth(client: Client, message: Message):
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: Please provide card details in one of these formats:
 
-<b>Format 1 (Reply to message):</b>
+<b>Format 1 (Multi-line after command):</b>
+<code>/mau
+5414963811565512|09|28|822
+4221352001240530|12|26|050
+5143773965015067|07|29|816</code>
+
+<b>Format 2 (Reply to message):</b>
 • Reply to a message containing cards with /mau
 
-<b>Format 2 (Inline):</b>
-<code>/mau</code>
-<code>cc|mm|yy|cvv</code>
-<code>cc|mm|yy|cvv</code>
-
 <b>Format 3 (Single line):</b>
-<code>/mau cc|mm|yy|cvv</code>
+<code>/mau 5414963811565512|09|28|822</code>
 
-⟐ <b>Example:</b>
-<code>/mau</code>
-<code>4111111111111111|12|2025|123</code>
-<code>4111111111111112|01|2026|456</code>
+⟐ <b>Note:</b> <code>Each card must be in format: cc|mm|yy|cvv</code>
 ━━━━━━━━━━━━━""")
             return
         
@@ -509,7 +525,6 @@ async def handle_mass_stripe_auth(client: Client, message: Message):
             return
         
         # Check if user has enough credits for mass check (2 credits)
-        # Using has_sufficient_credits from credit.py
         has_credits, credit_msg = has_sufficient_credits(user_id, 2)
         
         if not has_credits:
@@ -524,7 +539,6 @@ async def handle_mass_stripe_auth(client: Client, message: Message):
             return
         
         # Deduct credits BEFORE processing mass check
-        # Using deduct_credit from credit.py
         deduct_success, deduct_msg = deduct_credit(user_id, 2)
         
         if not deduct_success:
@@ -618,7 +632,7 @@ async def handle_mass_stripe_auth(client: Client, message: Message):
         # Send final result
         try:
             await processing_msg.edit_text(final_response, disable_web_page_preview=True)
-        except Exception:
+        except Exception as e:
             # If editing fails, send as new message
             try:
                 await message.reply(final_response, disable_web_page_preview=True)
