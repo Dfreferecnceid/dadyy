@@ -154,17 +154,19 @@ async def parse_card_list_from_reply(client, message):
     return card_list, file_path
 
 async def parse_card_list_from_command(message):
-    """Parse card list when cards are in the same message as command - FIXED like massau.py"""
+    """Parse card list when cards are in the same message as command - FIXED"""
     card_list = []
     
     # Get the full message text
     full_text = message.text or ""
+    print(f"📝 Raw command text: {repr(full_text)}")
     
-    # Remove the command part
-    # Split by lines
+    # Remove the command part - get everything after the first line that contains the command
     lines = full_text.split('\n')
+    print(f"📝 Split into {len(lines)} lines")
     
-    # Process each line
+    content_lines = []
+    
     for i, line in enumerate(lines):
         line = line.strip()
         if not line:
@@ -173,20 +175,31 @@ async def parse_card_list_from_command(message):
         # Check if this line contains the command
         if i == 0 and any(line.startswith(prefix) for prefix in ['/mchk', '.mchk', '$mchk']):
             # This is the command line, extract content after command
-            parts = line.split()
+            parts = line.split(maxsplit=1)
             if len(parts) > 1:
-                # There might be cards on the same line
-                remaining_text = ' '.join(parts[1:]).strip()
+                # There are cards on the same line after command
+                remaining_text = parts[1].strip()
                 if remaining_text:
-                    # Extract cards from this text using extract_cards
-                    all_cards, unique_cards = extract_cards(remaining_text)
-                    card_list.extend(unique_cards)
+                    content_lines.append(remaining_text)
             continue
         
-        # Regular line - extract cards from this line using extract_cards
-        if line:
-            all_cards, unique_cards = extract_cards(line)
-            card_list.extend(unique_cards)
+        # Regular line - add to content
+        content_lines.append(line)
+    
+    # Now combine all content lines and extract cards
+    if content_lines:
+        full_content = '\n'.join(content_lines)
+        print(f"📝 Content to parse: {repr(full_content)}")
+        
+        # Use extract_cards to get properly formatted cards
+        all_cards, unique_cards = extract_cards(full_content)
+        print(f"📝 extract_cards returned: {unique_cards}")
+        
+        # Ensure each card is a complete string
+        for card in unique_cards:
+            if card and '|' in card:
+                card_list.append(card)
+                print(f"✅ Added card: {card}")
     
     # Remove duplicates while preserving order
     seen = set()
@@ -196,14 +209,15 @@ async def parse_card_list_from_command(message):
             seen.add(card)
             unique_cards.append(card)
     
-    print(f"📝 Extracted {len(unique_cards)} cards from command: {unique_cards}")
+    print(f"📝 Final card list ({len(unique_cards)} cards): {unique_cards}")
     return unique_cards
 
 def parse_card_details(card_details):
-    """Parse card details from string - UPDATED to handle the format from extract_cards"""
+    """Parse card details from string - SIMPLIFIED like massau.py"""
     try:
         # Clean the card string
         card_details = card_details.strip()
+        print(f"🔍 Parsing card: {card_details}")
         
         # Split by pipe
         cc_parts = card_details.split('|')
@@ -226,9 +240,27 @@ def parse_card_details(card_details):
         # Format year if needed
         if len(ano) == 2:
             ano = '20' + ano
+        
+        # Basic validation
+        if not cc.isdigit() or len(cc) < 15:
+            print(f"❌ Invalid CC: {cc}")
+            return "", "", "", ""
             
-        print(f"✅ Parsed card: {cc[:6]}XXXXXX{cc[-4:]}|{mes}|{ano}|{cvv}")
+        if not mes.isdigit() or int(mes) < 1 or int(mes) > 12:
+            print(f"❌ Invalid month: {mes}")
+            return "", "", "", ""
+            
+        if not ano.isdigit() or len(ano) != 4:
+            print(f"❌ Invalid year: {ano}")
+            return "", "", "", ""
+            
+        if not cvv.isdigit() or len(cvv) not in [3, 4]:
+            print(f"❌ Invalid CVV: {cvv} (length {len(cvv)})")
+            return "", "", "", ""
+            
+        print(f"✅ Successfully parsed: {cc[:6]}XXXXXX{cc[-4:]}|{mes}|{ano}|{cvv}")
         return cc, mes, ano, cvv
+        
     except Exception as e:
         print(f"❌ Error parsing card {card_details}: {str(e)}")
         return "", "", "", ""
@@ -302,7 +334,7 @@ class MassStripeAuth2Checker:
         
         if not cc or not mes or not ano or not cvv:
             return self.format_mass_card_response(
-                cc, mes, ano, cvv, "ERROR", "Invalid card format", 
+                "", "", "", "", "ERROR", f"Invalid card format: {card_details[:50]}", 
                 username, time.time()-start_time, user_data, {}
             )
         
@@ -745,9 +777,8 @@ async def handle_mass_stripe_auth2(client: Client, message: Message):
         # Case 2: Cards in the same message
         if not card_list:
             card_list = await parse_card_list_from_command(message)
-            print(f"📝 Extracted {len(card_list)} cards from command message")
         
-        print(f"Final card list: {card_list}")
+        print(f"📊 Final card list has {len(card_list)} cards")
         
         if len(card_list) == 0:
             await message.reply("""<pre>❌ No Valid Cards Found</pre>
@@ -853,6 +884,7 @@ async def handle_mass_stripe_auth2(client: Client, message: Message):
         # Process each card using the SAME shared session
         for i, card_details in enumerate(card_list):
             checked = i + 1
+            print(f"🔄 Processing card {checked}/{card_count}: {card_details}")
             
             # Check card using the shared session (with rate limit handling)
             try:
@@ -882,6 +914,7 @@ async def handle_mass_stripe_auth2(client: Client, message: Message):
                     errors += 1
                     
             except Exception as e:
+                print(f"❌ Error processing card {card_details}: {str(e)}")
                 # Handle individual card error
                 # Get user display for error message
                 first_name = html.escape(user_data.get("first_name", "User"))
