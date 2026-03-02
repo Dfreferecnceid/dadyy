@@ -561,10 +561,6 @@ class ShopifyMiddleEasternCheckout:
             "latitude": 41.9522135,
             "longitude": -87.8076595
         }
-        
-        # Retry settings
-        self.max_retries = 2
-        self.retry_delay = 1
 
     async def random_delay(self, min_sec=0.3, max_sec=0.7):
         """Minimal delay between requests"""
@@ -618,13 +614,6 @@ class ShopifyMiddleEasternCheckout:
             return None
         timestamp = self.generate_timestamp()
         return f"{self.checkout_token}-{timestamp}"
-        
-    async def refresh_session_token(self):
-        """Refresh session token if expired"""
-        self.step(0.5, "REFRESH SESSION", "Refreshing session token")
-        self.graphql_session_token = self.construct_graphql_session_token()
-        self.logger.data_extracted("New GraphQL Session Token", self.graphql_session_token, "Refreshed")
-        return self.graphql_session_token
 
     async def get_product_page(self):
         """Step 1: Get product page to get initial cookies"""
@@ -644,8 +633,7 @@ class ShopifyMiddleEasternCheckout:
             
         except httpx.ProxyError as e:
             self.logger.error_log("PROXY", f"Proxy error on product page: {str(e)}")
-            if self.proxy_url:
-                mark_proxy_failed(self.proxy_url)
+            mark_proxy_failed(self.proxy_url)
             self.proxy_status = "Dead 🚫"
             return False, "PROXY_DEAD"
         except httpx.TimeoutException as e:
@@ -690,8 +678,7 @@ class ShopifyMiddleEasternCheckout:
             
         except httpx.ProxyError as e:
             self.logger.error_log("PROXY", f"Proxy error on add to cart: {str(e)}")
-            if self.proxy_url:
-                mark_proxy_failed(self.proxy_url)
+            mark_proxy_failed(self.proxy_url)
             self.proxy_status = "Dead 🚫"
             return False, "PROXY_DEAD"
         except httpx.TimeoutException as e:
@@ -754,8 +741,7 @@ class ShopifyMiddleEasternCheckout:
                 
         except httpx.ProxyError as e:
             self.logger.error_log("PROXY", f"Proxy error on checkout: {str(e)}")
-            if self.proxy_url:
-                mark_proxy_failed(self.proxy_url)
+            mark_proxy_failed(self.proxy_url)
             self.proxy_status = "Dead 🚫"
             return False, "PROXY_DEAD"
         except httpx.TimeoutException as e:
@@ -797,8 +783,7 @@ class ShopifyMiddleEasternCheckout:
             
         except httpx.ProxyError as e:
             self.logger.error_log("PROXY", f"Proxy error on checkout page: {str(e)}")
-            if self.proxy_url:
-                mark_proxy_failed(self.proxy_url)
+            mark_proxy_failed(self.proxy_url)
             self.proxy_status = "Dead 🚫"
             return False, "PROXY_DEAD"
         except httpx.TimeoutException as e:
@@ -977,42 +962,16 @@ class ShopifyMiddleEasternCheckout:
                 # Check for errors in response
                 if 'errors' in proposal_resp and proposal_resp['errors']:
                     error_msgs = []
-                    decline_detected = False
-                    
                     for error in proposal_resp['errors']:
                         error_code = error.get('code', 'UNKNOWN')
                         error_msgs.append(error_code)
-                        
-                        # Check extensions for decline codes
-                        extensions = error.get('extensions', {})
-                        decline_code = extensions.get('declineCode')
-                        if decline_code:
-                            decline_detected = True
-                            self.logger.data_extracted("Decline Code", decline_code, "Error extensions")
                     
-                    # FIX 1: Properly detect card declines vs validation errors
-                    # These are REAL decline codes - should return False
-                    decline_codes = [
-                        'CARD_DECLINED', 'INSUFFICIENT_FUNDS', 'INVALID_CARD', 
-                        'EXPIRED_CARD', 'FRAUD', 'CVV_FAILURE', 'DO_NOT_HONOR',
-                        'PICKUP_CARD', 'RESTRICTED_CARD', 'REVOCATION_OF_AUTHORIZATION'
-                    ]
-                    
-                    # These are VALIDATION errors that need to be handled but don't mean decline
-                    validation_codes = [
-                        'TAX_NEW_TAX_MUST_BE_ACCEPTED', 'PAYMENTS_FIRST_NAME_REQUIRED',
-                        'PAYMENTS_LAST_NAME_REQUIRED', 'PAYMENTS_ADDRESS1_REQUIRED',
-                        'PAYMENTS_ZONE_REQUIRED_FOR_COUNTRY', 'PAYMENTS_POSTAL_CODE_REQUIRED',
-                        'PAYMENTS_CITY_REQUIRED'
-                    ]
-                    
-                    # Check if any error is a real decline
-                    if any(code in decline_codes for code in error_msgs) or decline_detected:
-                        return False, f"DECLINED - {', '.join(error_msgs)}"
-                    
-                    # For validation errors, continue but log them
-                    if any(code in validation_codes for code in error_msgs):
-                        self.logger.data_extracted("Proposal", f"Validation errors: {', '.join(error_msgs)}", "Expected")
+                    # Check for specific error codes that are expected (like tax change)
+                    if any(code in ['TAX_NEW_TAX_MUST_BE_ACCEPTED', 'PAYMENTS_FIRST_NAME_REQUIRED', 
+                                    'PAYMENTS_LAST_NAME_REQUIRED', 'PAYMENTS_ADDRESS1_REQUIRED', 
+                                    'PAYMENTS_ZONE_REQUIRED_FOR_COUNTRY', 'PAYMENTS_POSTAL_CODE_REQUIRED', 
+                                    'PAYMENTS_CITY_REQUIRED', 'PAYMENTS_UNACCEPTABLE_PAYMENT_AMOUNT'] for code in error_msgs):
+                        self.logger.data_extracted("Proposal", f"Expected validation errors: {', '.join(error_msgs)}", "Expected")
                         
                         # Extract queue token from response data if available
                         data = proposal_resp.get('data', {}).get('session', {}).get('negotiate', {}).get('result', {})
@@ -1023,7 +982,6 @@ class ShopifyMiddleEasternCheckout:
                         
                         return True, "VALIDATION_ERRORS"
                     
-                    # Unknown errors - treat as decline to be safe
                     return False, f"DECLINED - {', '.join(error_msgs)}"
                 
                 # Extract queue token from response
@@ -1041,8 +999,7 @@ class ShopifyMiddleEasternCheckout:
                 
         except httpx.ProxyError as e:
             self.logger.error_log("PROXY", f"Proxy error on proposal: {str(e)}")
-            if self.proxy_url:
-                mark_proxy_failed(self.proxy_url)
+            mark_proxy_failed(self.proxy_url)
             self.proxy_status = "Dead 🚫"
             return False, "PROXY_DEAD"
         except httpx.TimeoutException as e:
@@ -1055,9 +1012,6 @@ class ShopifyMiddleEasternCheckout:
     async def select_pickup_delivery(self):
         """Step 6: Select pickup delivery method (Middle Eastern Market)"""
         self.step(6, "SELECT PICKUP", "Choosing Middle Eastern Market pickup location")
-        
-        # FIX 2: Refresh session token before critical steps
-        await self.refresh_session_token()
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
         
@@ -1285,80 +1239,46 @@ class ShopifyMiddleEasternCheckout:
             "payment_session_scope": "shopmiddleeastern.com"
         }
         
-        # FIX 3: Retry logic for PCI session creation
-        for attempt in range(self.max_retries):
-            try:
-                # Use separate client for PCI
-                async with httpx.AsyncClient(proxy=self.proxy_url, timeout=15) as pci_client:
-                    resp = await pci_client.post(
-                        'https://checkout.pci.shopifyinc.com/sessions',
-                        headers=pci_headers,
-                        json=pci_payload,
-                        timeout=15
-                    )
+        try:
+            # Use separate client for PCI
+            async with httpx.AsyncClient(proxy=self.proxy_url, timeout=15) as pci_client:
+                resp = await pci_client.post(
+                    'https://checkout.pci.shopifyinc.com/sessions',
+                    headers=pci_headers,
+                    json=pci_payload,
+                    timeout=15
+                )
+                
+                if resp.status_code != 200:
+                    return False, f"PCI session creation failed: {resp.status_code}"
+                
+                try:
+                    pci_resp = resp.json()
+                    payment_session_id = pci_resp.get('id')
+                    if not payment_session_id:
+                        return False, "No payment session ID returned"
                     
-                    if resp.status_code != 200:
-                        if attempt < self.max_retries - 1:
-                            self.logger.step(7, "PCI RETRY", f"Attempt {attempt + 1} failed, retrying...", f"Status: {resp.status_code}", "WAIT")
-                            await asyncio.sleep(self.retry_delay * (attempt + 1))
-                            continue
-                        return False, f"PCI session creation failed: {resp.status_code}"
+                    self.logger.data_extracted("Payment Session ID", payment_session_id, "PCI")
+                    return True, payment_session_id
                     
-                    try:
-                        pci_resp = resp.json()
-                        payment_session_id = pci_resp.get('id')
-                        
-                        # FIX 4: Validate PCI session ID format
-                        if not payment_session_id or len(payment_session_id) < 10:
-                            if attempt < self.max_retries - 1:
-                                self.logger.step(7, "PCI RETRY", f"Invalid session ID, retrying...", "", "WAIT")
-                                await asyncio.sleep(self.retry_delay * (attempt + 1))
-                                continue
-                            return False, "Invalid payment session ID"
-                        
-                        self.logger.data_extracted("Payment Session ID", payment_session_id, "PCI")
-                        return True, payment_session_id
-                        
-                    except Exception as e:
-                        if attempt < self.max_retries - 1:
-                            self.logger.step(7, "PCI RETRY", f"Parse error, retrying...", str(e)[:50], "WAIT")
-                            await asyncio.sleep(self.retry_delay * (attempt + 1))
-                            continue
-                        return False, f"Failed to parse PCI response: {str(e)[:50]}"
-                        
-            except httpx.ProxyError as e:
-                if attempt < self.max_retries - 1:
-                    self.logger.step(7, "PCI RETRY", f"Proxy error, retrying...", str(e)[:50], "WAIT")
-                    await asyncio.sleep(self.retry_delay * (attempt + 1))
-                    continue
-                self.logger.error_log("PROXY", f"Proxy error on PCI: {str(e)}")
-                if self.proxy_url:
-                    mark_proxy_failed(self.proxy_url)
-                self.proxy_status = "Dead 🚫"
-                return False, "PROXY_DEAD"
-            except httpx.TimeoutException as e:
-                if attempt < self.max_retries - 1:
-                    self.logger.step(7, "PCI RETRY", f"Timeout, retrying...", "", "WAIT")
-                    await asyncio.sleep(self.retry_delay * (attempt + 1))
-                    continue
-                self.logger.error_log("TIMEOUT", f"Timeout on PCI: {str(e)}")
-                return False, "TIMEOUT"
-            except Exception as e:
-                if attempt < self.max_retries - 1:
-                    self.logger.step(7, "PCI RETRY", f"Error, retrying...", str(e)[:50], "WAIT")
-                    await asyncio.sleep(self.retry_delay * (attempt + 1))
-                    continue
-                self.logger.error_log("PCI_ERROR", str(e))
-                return False, "PCI_ERROR"
-        
-        return False, "PCI_ERROR"
+                except Exception as e:
+                    return False, f"Failed to parse PCI response: {str(e)[:50]}"
+                    
+        except httpx.ProxyError as e:
+            self.logger.error_log("PROXY", f"Proxy error on PCI: {str(e)}")
+            mark_proxy_failed(self.proxy_url)
+            self.proxy_status = "Dead 🚫"
+            return False, "PROXY_DEAD"
+        except httpx.TimeoutException as e:
+            self.logger.error_log("TIMEOUT", f"Timeout on PCI: {str(e)}")
+            return False, "TIMEOUT"
+        except Exception as e:
+            self.logger.error_log("PCI_ERROR", str(e))
+            return False, "PCI_ERROR"
 
     async def update_billing_address(self, payment_session_id):
         """Step 8: Update billing address with pickup location address"""
         self.step(8, "UPDATE BILLING", f"Setting billing address: {self.address['address1']}, {self.address['city']}, {self.address['provinceCode']} {self.address['zip']}")
-        
-        # FIX 5: Refresh session token before critical steps
-        await self.refresh_session_token()
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
         
@@ -1581,9 +1501,6 @@ class ShopifyMiddleEasternCheckout:
         """Step 9: Submit for completion - final payment"""
         self.step(9, "SUBMIT PAYMENT", "Finalizing payment of 0.77$")
         
-        # FIX 6: Refresh session token before critical payment step
-        await self.refresh_session_token()
-        
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
         
         graphql_headers = {
@@ -1780,119 +1697,71 @@ class ShopifyMiddleEasternCheckout:
             "id": self.submit_id
         }
         
-        # FIX 7: Retry logic for submission
-        for attempt in range(self.max_retries):
+        try:
+            resp = await self.client.post(
+                graphql_url + "?operationName=SubmitForCompletion",
+                headers=graphql_headers,
+                json=payload,
+                timeout=20
+            )
+            
+            if resp.status_code != 200:
+                return False, f"Submit failed: {resp.status_code}"
+            
             try:
-                resp = await self.client.post(
-                    graphql_url + "?operationName=SubmitForCompletion",
-                    headers=graphql_headers,
-                    json=payload,
-                    timeout=20
-                )
+                submit_resp = resp.json()
                 
-                if resp.status_code != 200:
-                    if attempt < self.max_retries - 1:
-                        self.logger.step(9, "SUBMIT RETRY", f"Attempt {attempt + 1} failed, retrying...", f"Status: {resp.status_code}", "WAIT")
-                        await asyncio.sleep(self.retry_delay * (attempt + 1))
-                        continue
-                    return False, f"Submit failed: {resp.status_code}"
+                # Check for errors in response
+                if 'errors' in submit_resp and submit_resp['errors']:
+                    error_msgs = []
+                    for error in submit_resp['errors']:
+                        error_code = error.get('code', 'UNKNOWN')
+                        error_msgs.append(error_code)
+                    return False, f"DECLINED - {', '.join(error_msgs)}"
                 
-                try:
-                    submit_resp = resp.json()
+                data = submit_resp.get('data', {}).get('submitForCompletion', {})
+                receipt = data.get('receipt', {})
+                self.receipt_id = receipt.get('id')
+                
+                if not self.receipt_id:
+                    return False, "DECLINED - No receipt ID"
+                
+                self.logger.data_extracted("Receipt ID", self.receipt_id.split('/')[-1], "Submit")
+                
+                # Check receipt type
+                receipt_type = receipt.get('__typename', '')
+                
+                if receipt_type == 'ProcessingReceipt':
+                    poll_delay = receipt.get('pollDelay', 500) / 1000
+                    self.step(10, "POLL RECEIPT", f"Waiting {poll_delay}s", f"Delay: {poll_delay}s", "WAIT")
+                    await asyncio.sleep(poll_delay)
+                    return await self.poll_receipt(graphql_headers)
                     
-                    # Check for errors in response
-                    if 'errors' in submit_resp and submit_resp['errors']:
-                        error_msgs = []
-                        for error in submit_resp['errors']:
-                            error_code = error.get('code', 'UNKNOWN')
-                            error_msgs.append(error_code)
-                        return False, f"DECLINED - {', '.join(error_msgs)}"
+                elif receipt_type == 'ProcessedReceipt':
+                    return True, "ORDER_PLACED"
                     
-                    data = submit_resp.get('data', {}).get('submitForCompletion', {})
-                    receipt = data.get('receipt', {})
+                elif receipt_type == 'FailedReceipt':
+                    error_info = receipt.get('processingError', {})
+                    error_code = error_info.get('code', 'GENERIC_ERROR')
+                    return False, f"DECLINED - {error_code}"
                     
-                    # FIX 8: Multiple fallback paths for receipt ID
-                    self.receipt_id = (
-                        receipt.get('id') or
-                        data.get('receiptId') or
-                        data.get('transactionId') or
-                        data.get('orderId') or
-                        data.get('confirmationNumber') or
-                        data.get('paymentId')
-                    )
+                else:
+                    return False, f"Unknown receipt type: {receipt_type}"
                     
-                    if not self.receipt_id:
-                        # Check if there's a receipt in extensions or elsewhere
-                        extensions = submit_resp.get('extensions', {})
-                        self.receipt_id = extensions.get('receiptId')
-                    
-                    if not self.receipt_id:
-                        # Log the full response structure for debugging
-                        self.logger.data_extracted("Full Response", json.dumps(submit_resp)[:200], "No receipt ID found")
-                        return False, "DECLINED - No receipt ID"
-                    
-                    self.logger.data_extracted("Receipt ID", self.receipt_id.split('/')[-1] if '/' in self.receipt_id else self.receipt_id, "Submit")
-                    
-                    # Check receipt type
-                    receipt_type = receipt.get('__typename', '')
-                    
-                    if receipt_type == 'ProcessingReceipt':
-                        poll_delay = receipt.get('pollDelay', 500) / 1000
-                        self.step(10, "POLL RECEIPT", f"Waiting {poll_delay}s", f"Delay: {poll_delay}s", "WAIT")
-                        await asyncio.sleep(poll_delay)
-                        return await self.poll_receipt(graphql_headers)
-                        
-                    elif receipt_type == 'ProcessedReceipt':
-                        return True, "ORDER_PLACED"
-                        
-                    elif receipt_type == 'FailedReceipt':
-                        error_info = receipt.get('processingError', {})
-                        error_code = error_info.get('code', 'GENERIC_ERROR')
-                        return False, f"DECLINED - {error_code}"
-                        
-                    else:
-                        # If receipt type is unknown but we have a receipt ID, check if order exists
-                        if self.receipt_id:
-                            # Quick check - maybe it's actually processed
-                            self.step(10, "CHECK ORDER", "Receipt type unknown, checking order status", "", "WAIT")
-                            await asyncio.sleep(0.5)
-                            # If we have a receipt ID and no explicit failure, assume success
-                            return True, "ORDER_PLACED"
-                        return False, f"Unknown receipt type: {receipt_type}"
-                        
-                except Exception as e:
-                    if attempt < self.max_retries - 1:
-                        self.logger.step(9, "SUBMIT RETRY", f"Parse error, retrying...", str(e)[:50], "WAIT")
-                        await asyncio.sleep(self.retry_delay * (attempt + 1))
-                        continue
-                    return False, f"Failed to parse submit response: {str(e)[:50]}"
-                    
-            except httpx.ProxyError as e:
-                if attempt < self.max_retries - 1:
-                    self.logger.step(9, "SUBMIT RETRY", f"Proxy error, retrying...", str(e)[:50], "WAIT")
-                    await asyncio.sleep(self.retry_delay * (attempt + 1))
-                    continue
-                self.logger.error_log("PROXY", f"Proxy error on submit: {str(e)}")
-                if self.proxy_url:
-                    mark_proxy_failed(self.proxy_url)
-                self.proxy_status = "Dead 🚫"
-                return False, "PROXY_DEAD"
-            except httpx.TimeoutException as e:
-                if attempt < self.max_retries - 1:
-                    self.logger.step(9, "SUBMIT RETRY", f"Timeout, retrying...", "", "WAIT")
-                    await asyncio.sleep(self.retry_delay * (attempt + 1))
-                    continue
-                self.logger.error_log("TIMEOUT", f"Timeout on submit: {str(e)}")
-                return False, "TIMEOUT"
             except Exception as e:
-                if attempt < self.max_retries - 1:
-                    self.logger.step(9, "SUBMIT RETRY", f"Error, retrying...", str(e)[:50], "WAIT")
-                    await asyncio.sleep(self.retry_delay * (attempt + 1))
-                    continue
-                self.logger.error_log("SUBMIT_ERROR", str(e))
-                return False, f"Submit error: {str(e)[:50]}"
-        
-        return False, "DECLINED - MAX_RETRIES"
+                return False, f"Failed to parse submit response: {str(e)[:50]}"
+                
+        except httpx.ProxyError as e:
+            self.logger.error_log("PROXY", f"Proxy error on submit: {str(e)}")
+            mark_proxy_failed(self.proxy_url)
+            self.proxy_status = "Dead 🚫"
+            return False, "PROXY_DEAD"
+        except httpx.TimeoutException as e:
+            self.logger.error_log("TIMEOUT", f"Timeout on submit: {str(e)}")
+            return False, "TIMEOUT"
+        except Exception as e:
+            self.logger.error_log("SUBMIT_ERROR", str(e))
+            return False, f"Submit error: {str(e)[:50]}"
 
     async def poll_receipt(self, headers, max_polls=5):
         """Step 10: Poll for receipt status"""
@@ -1902,9 +1771,6 @@ class ShopifyMiddleEasternCheckout:
         poll_attempts = 0
         max_attempts = max_polls
         base_delay = 0.5
-        
-        # FIX 9: Refresh session token before polling
-        await self.refresh_session_token()
         
         while poll_attempts < max_attempts:
             poll_attempts += 1
