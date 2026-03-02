@@ -26,6 +26,64 @@ from BOT.helper.filter import extract_cards
 DOWNLOAD_DIR = "BOT/downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
+# ========== PLAN-BASED CARD LIMITS ==========
+def get_card_limit_by_plan(plan_name: str, user_role: str = "Free") -> int:
+    """
+    Get maximum allowed cards per mass check based on user's plan
+    Returns: int (max cards allowed)
+    """
+    # Owner has no limit
+    if user_role == "Owner":
+        return float('inf')  # Unlimited
+    
+    # Plan-based limits
+    plan_limits = {
+        "Free": 25,
+        "Plus": 50,
+        "Pro": 75,
+        "Elite": 100,
+        "VIP": 150,
+        "ULTIMATE": 200
+    }
+    
+    # Check by plan name first
+    limit = plan_limits.get(plan_name, 25)  # Default to Free limit (25)
+    
+    # If plan_name not found but user_role indicates premium, use appropriate limit
+    if limit == 25 and user_role in ["Admin", "Owner"]:
+        return float('inf')  # Admin also unlimited
+    elif limit == 25 and plan_name == "Free" and user_role != "Free":
+        # This handles cases where user has premium role but plan name mismatch
+        if user_role in plan_limits:
+            return plan_limits[user_role]
+    
+    return limit
+
+def get_plan_limit_message(plan_name: str, current_count: int, max_allowed: int) -> str:
+    """Generate formatted message when user exceeds card limit"""
+    plan_limits_display = {
+        "Free": "25 cards",
+        "Plus": "50 cards",
+        "Pro": "75 cards",
+        "Elite": "100 cards",
+        "VIP": "150 cards",
+        "ULTIMATE": "200 cards",
+        "Owner": "Unlimited",
+        "Admin": "Unlimited"
+    }
+    
+    limit_display = plan_limits_display.get(plan_name, "25 cards")
+    
+    return f"""<pre>❌ Card Limit Exceeded</pre>
+━━━━━━━━━━━━━
+⟐ <b>Message</b>: You can only check {limit_display} at once.
+⟐ <b>Your Plan</b>: <code>{plan_name}</code>
+⟐ <b>Cards Provided</b>: <code>{current_count}</code>
+⟐ <b>Max Allowed</b>: <code>{max_allowed}</code>
+━━━━━━━━━━━━━
+<b>~ Note:</b> <code>Upgrade your plan to check more cards at once</code>
+<b>~ Note:</b> <code>Type /plans to see all plan benefits</code>"""
+
 def get_unique_filename(original_filename):
     """Generate a unique filename to avoid conflicts"""
     base, ext = os.path.splitext(original_filename)
@@ -529,7 +587,10 @@ class MassStripeAuthChecker:
             print(f"Failed to send summary: {e}")
     
     async def format_mass_response_collective(self, results, successful, failed, total_cards, username, elapsed_time, user_data):
-        """Format collective response when total cards <= 5 (NO duplicate footer)"""
+        """
+        Format collective response when total cards <= 5
+        IMPROVED UI: No duplicate headers/footers for each card
+        """
         user_id = user_data.get("user_id", "Unknown")
         first_name = html.escape(user_data.get("first_name", "User"))
         badge = user_data.get("plan", {}).get("badge", "🎭")
@@ -537,7 +598,7 @@ class MassStripeAuthChecker:
         clean_name = re.sub(r'[↯⌁«~∞🍁]', '', first_name).strip()
         user_display = f"「{badge}」{clean_name}"
         
-        # Start with header
+        # Start with header (ONLY ONCE)
         response = f"""<b>「$cmd → /mau」| <b>WAYNE</b> </b>
 ━━━━━━━━━━━━━━━
 <b>[•] Gateway -</b> Stripe Auth Mass
@@ -547,11 +608,46 @@ class MassStripeAuthChecker:
 <b>[+] Total Cards:</b> <code>{total_cards}</code>
 <b>[+] Credits Used:</b> <code>3</code> (for entire mass check)
 ━━━━━━━━━━━━━━━
+
 """
         
-        # Add each card result with card number header
-        for i, result in enumerate(results):
-            response += f"<b>Card {i+1}:</b>\n{result}\n\n"
+        # Process each result to extract ONLY the card details (remove the header/footer from each)
+        for result in results:
+            # Split the result into lines
+            lines = result.split('\n')
+            
+            # Extract relevant card information (skip the header and footer)
+            card_lines = []
+            skip_header = True
+            skip_footer = False
+            
+            for line in lines:
+                # Skip the header line with 「$cmd → /mau」
+                if line.startswith('<b>「$cmd → /mau」'):
+                    skip_header = False
+                    continue
+                
+                # Skip the separator line after header
+                if line == '━━━━━━━━━━━━━━━' and not skip_header:
+                    skip_header = False
+                    continue
+                
+                # Once we hit the "[ﾒ] Checked By:" line, we've reached the footer - stop adding
+                if '[ﾒ] Checked By:' in line:
+                    skip_footer = True
+                    break
+                
+                # If we're past the header and not in footer, add the line
+                if not skip_header and not skip_footer:
+                    card_lines.append(line)
+            
+            # Add the extracted card details to the response
+            for card_line in card_lines:
+                if card_line.strip():  # Only add non-empty lines
+                    response += card_line + '\n'
+            
+            # Add a blank line between cards for better readability
+            response += '\n'
         
         # Add FINAL summary (ONLY ONCE at the very end)
         response += f"""━━━━━━━━━━━━━━━
@@ -603,6 +699,7 @@ async def handle_mass_stripe_auth(client: Client, message: Message):
         user_data = users[user_id_str]
         user_plan = user_data.get("plan", {})
         plan_name = user_plan.get("plan", "Free")
+        user_role = user_data.get("role", "Free")
         
         # Parse card list based on input type
         card_list = []
@@ -641,6 +738,21 @@ async def handle_mass_stripe_auth(client: Client, message: Message):
             return
         
         card_count = len(card_list)
+        
+        # ========== PLAN-BASED CARD LIMIT CHECK ==========
+        max_allowed = get_card_limit_by_plan(plan_name, user_role)
+        
+        # Check if card count exceeds plan limit (owner/admin with unlimited pass through)
+        if max_allowed != float('inf') and card_count > max_allowed:
+            await message.reply(get_plan_limit_message(plan_name, card_count, max_allowed))
+            
+            # Clean up downloaded file if any
+            if file_path and os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except:
+                    pass
+            return
         
         # Check cooldown (owner is automatically skipped)
         can_use, wait_time = check_cooldown(user_id, "mau")
@@ -739,12 +851,17 @@ async def handle_mass_stripe_auth(client: Client, message: Message):
                     
             except Exception as e:
                 # Handle individual card error
-                error_result = f"""<b>Card {i+1}:</b>
+                error_result = f"""<b>「$cmd → /mau」| <b>WAYNE</b> </b>
 ━━━━━━━━━━━━━━━
 <b>[•] Card-</b> <code>{card_details}</code>
+<b>[•] Gateway -</b> Stripe Auth
 <b>[•] Status-</b> <code>ERROR ⚠️</code>
 <b>[•] Response-</b> <code>Check failed: {str(e)[:50]}</code>
-━━━━━━━━━━━━━━━"""
+━━━━━━━━━━━━━━━
+<b>[ﾒ] Checked By:</b> {user_display}
+<b>[ϟ] Dev ➺</b> <b><i>DADYY</i></b>
+━━━━━━━━━━━━━━━
+<b>[ﾒ] T/t:</b> <code>0.00 𝐬</code> |<b>P/x:</b> <code>Live ⚡️</code></b>"""
                 results.append(error_result)
                 errors += 1
             
@@ -782,7 +899,7 @@ async def handle_mass_stripe_auth(client: Client, message: Message):
                 card_count, username, elapsed_time, user_data, processing_msg
             )
         else:
-            # For <=5 cards: Send collective response with all cards
+            # For <=5 cards: Send collective response with all cards (IMPROVED UI)
             final_response = await mass_checker.format_mass_response_collective(
                 results, successful, failed + errors, card_count, username, elapsed_time, user_data
             )
