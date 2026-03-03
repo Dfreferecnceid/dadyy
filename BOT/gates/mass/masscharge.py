@@ -110,20 +110,167 @@ async def download_file(client, message, file_msg):
         print(f"❌ Error downloading file: {e}")
         return None
 
-async def extract_cards_from_file(file_path):
-    """Extract cards from downloaded file using filter.py"""
+# ========== COMPREHENSIVE CARD PARSING FUNCTIONS ==========
+
+def normalize_card_format(card_text):
+    """
+    Convert any card format to standard CC|MM|YY|CVV format
+    Supports:
+    - 5253020004358553|05|2026|048
+    - 5253020004358553 05 2026 048
+    - 5253020004358553 05/2026 048
+    - 5253020004358553|05|26|048
+    - 5253020004358553 05 26 048
+    - 5253020004358553 05/26 048
+    - And many more variations
+    """
     try:
-        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-            file_content = f.read()
+        # Remove any extra whitespace
+        card_text = card_text.strip()
         
-        # Use filter.py's extract_cards function
-        all_cards, unique_cards = extract_cards(file_content)
+        # First, try to split by common delimiters
+        # Replace common delimiters with a standard separator
+        text = card_text
         
-        print(f"📊 Extracted {len(all_cards)} total cards, {len(unique_cards)} unique cards from file")
-        return unique_cards
+        # Replace various delimiters with space
+        for delimiter in ['|', '/', '\\', '-', '_', ':']:
+            text = text.replace(delimiter, ' ')
+        
+        # Split by whitespace
+        parts = text.split()
+        
+        # Filter out empty parts
+        parts = [p for p in parts if p.strip()]
+        
+        if len(parts) < 4:
+            return None
+        
+        # Extract CC (first part) - should be 15-16 digits
+        cc = parts[0].strip()
+        # Remove any non-digit characters from CC
+        cc = re.sub(r'\D', '', cc)
+        
+        if len(cc) < 15 or len(cc) > 16:
+            return None
+        
+        # Extract month (second part)
+        month = parts[1].strip()
+        # Remove any non-digit characters
+        month = re.sub(r'\D', '', month)
+        if len(month) == 1:
+            month = f"0{month}"
+        elif len(month) > 2:
+            month = month[:2]
+        
+        # Extract year (third part)
+        year = parts[2].strip()
+        # Remove any non-digit characters
+        year = re.sub(r'\D', '', year)
+        if len(year) == 2:
+            year = f"20{year}"
+        elif len(year) > 4:
+            year = year[:4]
+        
+        # Extract CVV (fourth part)
+        cvv = parts[3].strip()
+        # Remove any non-digit characters
+        cvv = re.sub(r'\D', '', cvv)
+        if len(cvv) > 4:
+            cvv = cvv[:4]
+        
+        # Validate
+        if not month.isdigit() or not (1 <= int(month) <= 12):
+            return None
+        
+        if not year.isdigit() or len(year) not in [2, 4]:
+            return None
+        
+        if not cvv.isdigit() or len(cvv) not in [3, 4]:
+            return None
+        
+        # Format year if needed
+        if len(year) == 2:
+            year = '20' + year
+        
+        # Return in standard format
+        return f"{cc}|{month}|{year}|{cvv}"
+        
     except Exception as e:
-        print(f"❌ Error extracting cards from file: {e}")
-        return []
+        print(f"Error normalizing card: {card_text} - {e}")
+        return None
+
+def extract_all_cards_from_text(text):
+    """
+    Extract all cards from text, handling multiple formats and separators
+    """
+    cards = []
+    
+    if not text:
+        return cards
+    
+    # Split by lines first
+    lines = text.split('\n')
+    
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        
+        # If line contains multiple cards (space-separated), split by spaces
+        # But be careful: some cards might have spaces in them (like "5253020004358553 05 2026 048")
+        # So we need a smarter approach
+        
+        # Method 1: Try to find card-like patterns in the line
+        # Pattern: 16-digit number followed by month/year/cvv in various formats
+        card_pattern = r'(\d{15,16})[^\d]*(\d{1,2})[^\d]*(\d{2,4})[^\d]*(\d{3,4})'
+        matches = re.finditer(card_pattern, line)
+        
+        for match in matches:
+            cc = match.group(1)
+            month = match.group(2)
+            year = match.group(3)
+            cvv = match.group(4)
+            
+            # Format month
+            if len(month) == 1:
+                month = f"0{month}"
+            
+            # Format year
+            if len(year) == 2:
+                year = f"20{year}"
+            
+            cards.append(f"{cc}|{month}|{year}|{cvv}")
+        
+        # Method 2: If regex didn't find anything, try splitting by common delimiters
+        if not matches:
+            # Replace common delimiters with space
+            temp_line = line
+            for delimiter in ['|', '/', '\\', '-', '_', ':']:
+                temp_line = temp_line.replace(delimiter, ' ')
+            
+            # Split by spaces
+            parts = temp_line.split()
+            
+            # Group into sets of 4
+            i = 0
+            while i + 3 < len(parts):
+                potential_card = f"{parts[i]} {parts[i+1]} {parts[i+2]} {parts[i+3]}"
+                normalized = normalize_card_format(potential_card)
+                if normalized:
+                    cards.append(normalized)
+                    i += 4
+                else:
+                    i += 1
+    
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_cards = []
+    for card in cards:
+        if card not in seen:
+            seen.add(card)
+            unique_cards.append(card)
+    
+    return unique_cards
 
 async def parse_card_list_from_reply(client, message):
     """Parse card list when user replies to a message"""
@@ -143,20 +290,23 @@ async def parse_card_list_from_reply(client, message):
             return card_list, None
         
         # Extract cards from file
-        card_list = await extract_cards_from_file(file_path)
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                file_content = f.read()
+            
+            # Use our comprehensive parser
+            card_list = extract_all_cards_from_text(file_content)
+            print(f"📊 Extracted {len(card_list)} cards from file")
+        except Exception as e:
+            print(f"❌ Error extracting cards from file: {e}")
         
     # Case 2: Reply to a text message
     elif replied.text:
-        # Extract cards directly from text
-        all_cards, unique_cards = extract_cards(replied.text)
-        card_list = unique_cards
+        # Extract cards directly from text using our comprehensive parser
+        card_list = extract_all_cards_from_text(replied.text)
+        print(f"📊 Extracted {len(card_list)} cards from replied text")
     
     return card_list, file_path
-
-def is_valid_card_format(text):
-    """Check if text looks like a valid card format (CC|MM|YY|CVV)"""
-    pattern = r'^\d{15,16}\|\d{1,2}\|\d{2,4}\|\d{3,4}$'
-    return bool(re.match(pattern, text.strip()))
 
 async def parse_card_list_from_command(message):
     """Parse card list when cards are in the same message as command"""
@@ -183,62 +333,14 @@ async def parse_card_list_from_command(message):
     
     print(f"Text to parse after command: {text_to_parse}")
     
-    if not text_to_parse:
-        return card_list
+    if text_to_parse:
+        # Use our comprehensive parser
+        card_list = extract_all_cards_from_text(text_to_parse)
+        print(f"📝 Extracted {len(card_list)} cards from command: {card_list}")
     
-    # Method 1: Split by spaces and check each part
-    parts = text_to_parse.split()
-    print(f"Split parts: {parts}")
-    
-    for part in parts:
-        part = part.strip()
-        if not part:
-            continue
-        
-        # Check if this part is a valid card format
-        if is_valid_card_format(part):
-            card_list.append(part)
-            print(f"Added card from space-split: {part}")
-        else:
-            # If not a valid card format, try to extract cards using filter.py
-            all_cards, unique_cards = extract_cards(part)
-            if unique_cards:
-                card_list.extend(unique_cards)
-                print(f"Added {len(unique_cards)} cards from filter.py: {unique_cards}")
-    
-    # Method 2: Also check for newlines
-    if '\n' in text_to_parse:
-        lines = text_to_parse.split('\n')
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            
-            # Skip if this line was already processed in parts
-            if line in parts:
-                continue
-            
-            # Check if line is a valid card format
-            if is_valid_card_format(line):
-                card_list.append(line)
-                print(f"Added card from newline: {line}")
-            else:
-                # Try to extract cards using filter.py
-                all_cards, unique_cards = extract_cards(line)
-                if unique_cards:
-                    card_list.extend(unique_cards)
-                    print(f"Added {len(unique_cards)} cards from filter.py (newline): {unique_cards}")
-    
-    # Remove duplicates while preserving order
-    seen = set()
-    unique_cards = []
-    for card in card_list:
-        if card not in seen:
-            seen.add(card)
-            unique_cards.append(card)
-    
-    print(f"📝 Final parsed {len(unique_cards)} unique cards: {unique_cards}")
-    return unique_cards
+    return card_list
+
+# ========== MASS CHARGE CHECKER CLASS ==========
 
 class MassStripeChargeChecker:
     def __init__(self):
@@ -483,7 +585,7 @@ class MassStripeChargeChecker:
         return response
     
     def parse_card_details(self, card_details):
-        """Parse card details from string"""
+        """Parse card details from string in standard format CC|MM|YYYY|CVV"""
         try:
             cc_parts = card_details.split('|')
             if len(cc_parts) < 4:
@@ -723,7 +825,10 @@ async def handle_mass_stripe_charge(client: Client, message: Message):
 <b>Format 3 (Single line with multiple cards):</b>
 <code>/mxc 5414963811565512|09|28|822 4221352001240530|12|26|050</code>
 
-⟐ <b>Note:</b> <code>Cards will be auto-filtered from any format</code>
+<b>Format 4 (Space or slash separated):</b>
+<code>/mxc 5414963811565512 09 2028 822 4221352001240530 12 2026 050</code>
+
+⟐ <b>Note:</b> <code>All common formats are supported (|, space, /, - separators)</code>
 ━━━━━━━━━━━━━""")
             return
         
