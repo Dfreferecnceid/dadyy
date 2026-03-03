@@ -26,206 +26,6 @@ from BOT.helper.filter import extract_cards
 DOWNLOAD_DIR = "BOT/downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-# ========== ROBUST CARD PARSER ==========
-class RobustCardParser:
-    """Enhanced card parser that handles multiple formats and concatenated cards"""
-    
-    @staticmethod
-    def clean_text(text):
-        """Clean text by removing extra spaces and normalizing separators"""
-        if not text:
-            return ""
-        # Replace multiple spaces/tabs/newlines with single space
-        text = re.sub(r'\s+', ' ', text)
-        # Normalize separators: replace any combination of spaces, |, /, - with |
-        text = re.sub(r'[|\s/\-]+', '|', text)
-        return text.strip()
-    
-    @staticmethod
-    def is_valid_card_format(parts):
-        """Check if the parts form a valid card format"""
-        if len(parts) < 4:
-            return False
-        
-        # First part should be 15-16 digits (card number)
-        if not re.match(r'^\d{15,16}$', parts[0]):
-            return False
-        
-        # Second part should be 1-2 digits (month)
-        if not re.match(r'^\d{1,2}$', parts[1]) or int(parts[1]) > 12 or int(parts[1]) < 1:
-            return False
-        
-        # Third part - handle year formats (YY, YYYY, or YY with 20 prefix)
-        year_part = parts[2]
-        if not re.match(r'^\d{2,4}$', year_part):
-            return False
-        
-        # Fourth part should be 3-4 digits (CVV)
-        if not re.match(r'^\d{3,4}$', parts[3]):
-            return False
-        
-        return True
-    
-    @staticmethod
-    def split_concatenated_cards(text):
-        """Split concatenated cards like: card1|cvvcard2|mm|yy|cvv"""
-        cards = []
-        
-        # Method 1: Split by pipe and try to rebuild
-        if '|' in text:
-            parts = text.split('|')
-            i = 0
-            while i < len(parts):
-                # Look ahead to find a valid card sequence
-                if i + 3 < len(parts):
-                    # Try to form card with current and next 3 parts
-                    potential_card = f"{parts[i]}|{parts[i+1]}|{parts[i+2]}|{parts[i+3]}"
-                    if RobustCardParser.is_valid_card_format([parts[i], parts[i+1], parts[i+2], parts[i+3]]):
-                        cards.append(potential_card)
-                        i += 4
-                        continue
-                
-                # If we can't form a valid card, try to find valid cards within this part
-                # This handles cases like "414962XXXXXX1369|02|2030|6504154644406353681"
-                # where the CVV and next card number are concatenated
-                if i < len(parts):
-                    current = parts[i]
-                    # Check if current part contains a CVV concatenated with next card number
-                    cvv_match = re.search(r'(\d{3,4})(\d{15,16})$', current)
-                    if cvv_match and i + 2 < len(parts):
-                        # Split: CVV + next card number
-                        cvv = cvv_match.group(1)
-                        next_card = cvv_match.group(2)
-                        if i + 2 < len(parts):
-                            # Form card with next two parts as month/year
-                            potential_card = f"{next_card}|{parts[i+1]}|{parts[i+2]}|{cvv}"
-                            if RobustCardParser.is_valid_card_format([next_card, parts[i+1], parts[i+2], cvv]):
-                                cards.append(potential_card)
-                                i += 3
-                                continue
-                    
-                    # Check if current part contains month/year at the end
-                    my_match = re.search(r'(\d{1,2}/\d{2,4})(\d{3,4})$', current)
-                    if my_match:
-                        # Handle month/year followed by CVV
-                        my_part = my_match.group(1)
-                        cvv = my_match.group(2)
-                        if '/' in my_part:
-                            month, year = my_part.split('/')
-                            # Find the card number in previous part
-                            if i > 0 and re.match(r'^\d{15,16}$', parts[i-1]):
-                                potential_card = f"{parts[i-1]}|{month}|{year}|{cvv}"
-                                cards.append(potential_card)
-                                i += 1
-                                continue
-                
-                i += 1
-        
-        return cards
-    
-    @staticmethod
-    def extract_cards_from_text(text):
-        """Main method to extract cards from any text format"""
-        if not text:
-            return []
-        
-        cards = []
-        lines = text.split('\n')
-        
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-            
-            # Method 1: Try to find pipe-separated format with possible concatenation issues
-            if '|' in line:
-                # First, try the standard approach
-                parts = line.split('|')
-                if len(parts) >= 4:
-                    # Try to extract cards from concatenated parts
-                    concatenated_cards = RobustCardParser.split_concatenated_cards(line)
-                    if concatenated_cards:
-                        cards.extend(concatenated_cards)
-                    else:
-                        # Standard pipe format
-                        for i in range(0, len(parts), 4):
-                            if i + 3 < len(parts):
-                                card_parts = parts[i:i+4]
-                                if RobustCardParser.is_valid_card_format(card_parts):
-                                    cards.append('|'.join(card_parts))
-            
-            # Method 2: Space-separated format (card mm yy cvv or card mm/yy cvv)
-            else:
-                # Replace multiple spaces with single space
-                cleaned = re.sub(r'\s+', ' ', line)
-                
-                # Pattern 1: card mm yy cvv (space separated)
-                pattern1 = r'(\d{15,16})\s+(\d{1,2})\s+(\d{2,4})\s+(\d{3,4})'
-                matches = re.findall(pattern1, cleaned)
-                for match in matches:
-                    cards.append('|'.join(match))
-                
-                # Pattern 2: card mm/yy cvv (slash in date)
-                pattern2 = r'(\d{15,16})\s+(\d{1,2})/(\d{2,4})\s+(\d{3,4})'
-                matches = re.findall(pattern2, cleaned)
-                for match in matches:
-                    cards.append('|'.join(match))
-                
-                # Pattern 3: card|mm|yy|cvv but with no pipes (just spaces)
-                pattern3 = r'(\d{15,16})\|?(\d{1,2})\|?(\d{2,4})\|?(\d{3,4})'
-                matches = re.findall(pattern3, cleaned.replace(' ', '|'))
-                for match in matches:
-                    if len(match) == 4:
-                        cards.append('|'.join(match))
-        
-        # Remove duplicates while preserving order
-        seen = set()
-        unique_cards = []
-        for card in cards:
-            if card not in seen:
-                seen.add(card)
-                unique_cards.append(card)
-        
-        return unique_cards
-    
-    @staticmethod
-    def validate_card(card_str):
-        """Validate a single card string and return (is_valid, card_parts, error_message)"""
-        parts = card_str.split('|')
-        
-        if len(parts) != 4:
-            return False, parts, f"Invalid format: expected 4 parts, got {len(parts)}"
-        
-        cc, mes, ano, cvv = parts
-        
-        # Validate card number
-        if not re.match(r'^\d{15,16}$', cc):
-            return False, parts, f"Invalid card number: must be 15-16 digits"
-        
-        # Validate month
-        if not re.match(r'^\d{1,2}$', mes):
-            return False, parts, f"Invalid month: must be 1-2 digits"
-        
-        month_int = int(mes)
-        if month_int < 1 or month_int > 12:
-            return False, parts, f"Invalid month: must be between 01-12"
-        
-        # Validate year
-        if not re.match(r'^\d{2,4}$', ano):
-            return False, parts, f"Invalid year: must be 2-4 digits"
-        
-        year_int = int(ano)
-        if year_int < 100 and year_int < 24:  # If 2-digit year, assume 20xx
-            year_int += 2000
-        if year_int < 2024 or year_int > 2035:  # Reasonable range
-            return False, parts, f"Invalid year: must be between 2024-2035"
-        
-        # Validate CVV
-        if not re.match(r'^\d{3,4}$', cvv):
-            return False, parts, f"Invalid CVV: must be 3-4 digits"
-        
-        return True, parts, "Valid"
-
 # ========== PLAN-BASED CARD LIMITS ==========
 def get_card_limit_by_plan(plan_name: str, user_role: str = "Free") -> int:
     """
@@ -311,13 +111,13 @@ async def download_file(client, message, file_msg):
         return None
 
 async def extract_cards_from_file(file_path):
-    """Extract cards from downloaded file using robust parser"""
+    """Extract cards from downloaded file using SmartCardParser"""
     try:
         with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
             file_content = f.read()
         
-        # Use robust parser
-        cards = RobustCardParser.extract_cards_from_text(file_content)
+        # Use SmartCardParser's extract_all_cards_from_text method
+        cards = SmartCardParser.extract_all_cards_from_text(file_content)
         
         print(f"📊 Extracted {len(cards)} cards from file")
         return cards
@@ -347,13 +147,13 @@ async def parse_card_list_from_reply(client, message):
         
     # Case 2: Reply to a text message
     elif replied.text:
-        # Extract cards directly from text using robust parser
-        card_list = RobustCardParser.extract_cards_from_text(replied.text)
+        # Extract cards directly from text using SmartCardParser
+        card_list = SmartCardParser.extract_all_cards_from_text(replied.text)
     
     return card_list, file_path
 
 async def parse_card_list_from_command(message):
-    """Parse card list when cards are in the same message as command - ROBUST VERSION"""
+    """Parse card list when cards are in the same message as command - FIXED for concatenated cards"""
     card_list = []
     
     # Get the full message text
@@ -362,14 +162,16 @@ async def parse_card_list_from_command(message):
     # Debug: Print raw message for troubleshooting
     print(f"🔍 Raw message text: {repr(full_text)}")
     
-    # Remove the command part
+    # Remove the command part more aggressively
+    # This handles /mchk, .mchk, $mchk at the beginning
     text_without_command = re.sub(r'^[/.$]mchk\s*', '', full_text, flags=re.IGNORECASE)
     
     # Debug: Print after removing command
     print(f"🔍 After removing command: {repr(text_without_command)}")
     
-    # Use robust parser to extract cards
-    card_list = RobustCardParser.extract_cards_from_text(text_without_command)
+    # Use SmartCardParser's extract_all_cards_from_text method
+    # This will handle concatenated cards automatically
+    card_list = SmartCardParser.extract_all_cards_from_text(text_without_command)
     
     print(f"📝 Final parsed {len(card_list)} unique cards: {card_list}")
     return card_list
@@ -438,22 +240,16 @@ class MassStripeAuth2Checker:
         """OPTIMIZED: Check card using existing session (for mass checking) with rate limit handling"""
         start_time = time.time()
         
-        # Parse card details using robust parser first, then SmartCardParser for compatibility
-        # First validate with our robust parser
-        is_valid, parts, error_msg = RobustCardParser.validate_card(card_details)
+        # Parse card details using SmartCardParser
+        cc, mes, ano, cvv = SmartCardParser.extract_card_from_text(card_details)
         
-        if not is_valid:
-            # Try SmartCardParser as fallback
-            cc, mes, ano, cvv = SmartCardParser.extract_card_from_text(card_details)
-            if not cc:
-                return self.format_mass_card_response(
-                    "", "", "", "", "ERROR", f"Could not parse card details: {error_msg}", 
-                    username, time.time()-start_time, user_data, {}
-                )
-        else:
-            cc, mes, ano, cvv = parts
+        if not cc:
+            return self.format_mass_card_response(
+                "", "", "", "", "ERROR", "Could not parse card details", 
+                username, time.time()-start_time, user_data, {}
+            )
         
-        # Validate card details with SmartCardParser for additional checks
+        # Validate card details
         is_valid, validation_msg = SmartCardParser.validate_card_details(cc, mes, ano, cvv)
         if not is_valid:
             bin_info = await self.checker.get_bin_info(cc)
