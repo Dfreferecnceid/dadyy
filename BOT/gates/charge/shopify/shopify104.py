@@ -1739,7 +1739,7 @@ async def handle_shopify_route_charge(client: Client, message: Message):
 🠪 <b>Usage</b>: <code>/sp cc|mm|yy|cvv</code>
 🠪 <b>Example</b>: <code>/sp 4111111111111111|12|2030|123</code>
 ━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Charge 1.00$ protection</code>""")
+<b>~ Note:</b> <code>Shopify Charge</code>""")
             return
 
         card_details = args[1].strip()
@@ -1835,3 +1835,4 @@ async def handle_shopify_route_charge(client: Client, message: Message):
 🠪 <b>Error</b>: <code>{error_msg}</code>
 🠪 <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
 ━━━━━━━━━━━━━""")
+
