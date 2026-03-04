@@ -646,6 +646,7 @@ class MassStripeAuth2Checker:
         return response
 
 
+# Command handler for /mchk command
 @Client.on_message(filters.command(["mchk", ".mchk", "$mchk"]))
 @auth_and_free_restricted
 async def handle_mass_stripe_auth2(client: Client, message: Message):
@@ -657,6 +658,7 @@ async def handle_mass_stripe_auth2(client: Client, message: Message):
         username = message.from_user.username or str(user_id)
         
         print(f"🔍 /mchk command received from {username}")
+        print(f"🔍 Full message: {message.text}")
         
         # Check if command is disabled
         command_text = message.text.split()[0] if message.text else ""
