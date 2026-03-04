@@ -183,9 +183,10 @@ class SmartCardParser:
                     if len(parts) >= 4:
                         cvv = parts[3]
 
-                    # Try to find CVV in text if not found
+                    # Try to find CVV in text if not found - BUT ONLY 3-4 DIGITS
                     if cvv is None:
-                        cvv_match = re.search(r'(\d{3,4})(?:\s|$|/)', text)
+                        # Look specifically for 3-4 digit numbers that are NOT part of a longer sequence
+                        cvv_match = re.search(r'(?<!\d)(\d{3,4})(?!\d)', text)
                         if cvv_match:
                             cvv = cvv_match.group(1)
 
@@ -199,10 +200,22 @@ class SmartCardParser:
                         # Clean month
                         month = re.sub(r'\D', '', month)
 
-                        # Clean CVV
+                        # Clean CVV - ENSURE IT'S ONLY 3-4 DIGITS
                         cvv = re.sub(r'\D', '', cvv)
+                        if len(cvv) > 4:
+                            # If CVV is longer than 4 digits, take only the last 3-4 digits
+                            # But first check if it might be part of a larger number
+                            if len(cvv) > 10:  # Definitely not a CVV
+                                # Try to find a proper 3-4 digit CVV elsewhere
+                                cvv_alt = re.search(r'(?<!\d)(\d{3,4})(?!\d)', text)
+                                if cvv_alt:
+                                    cvv = cvv_alt.group(1)
+                                else:
+                                    cvv = cvv[:4]  # Fallback: take first 4 digits
+                            else:
+                                cvv = cvv[:4]  # Take first 4 digits if it's longer
 
-                        if cc.isdigit() and month.isdigit() and year.isdigit() and cvv.isdigit():
+                        if cc.isdigit() and month.isdigit() and year.isdigit() and cvv.isdigit() and 3 <= len(cvv) <= 4:
                             logger.parsing(f"Parsed via pipe format: {cc[:6]}XXXXXX{cc[-4:]}|{month}|{year}|{cvv}")
                             return cc, month, year, cvv
 
@@ -237,10 +250,10 @@ class SmartCardParser:
                 if month and year:
                     break
 
-            # Look for CVV (3 or 4 digits)
+            # Look for CVV (ONLY 3 or 4 digits, not part of larger numbers)
             cvv = None
             cvv_patterns = [
-                r'(\d{3,4})(?:\s|$|/)',
+                r'(?<!\d)(\d{3,4})(?!\d)',  # 3-4 digits not part of larger number
                 r'cvv[:\s]*(\d{3,4})',
                 r'cvc[:\s]*(\d{3,4})',
                 r'cid[:\s]*(\d{3,4})',
@@ -251,8 +264,10 @@ class SmartCardParser:
                     cvv_match = re.search(pattern, line.lower())
                     if cvv_match:
                         cvv = cvv_match.group(1)
-                        break
-                if cvv:
+                        # Ensure it's actually 3-4 digits
+                        if len(cvv) in [3, 4]:
+                            break
+                if cvv and len(cvv) in [3, 4]:
                     break
 
             # If we found all components
@@ -261,17 +276,21 @@ class SmartCardParser:
                 year = re.sub(r'\D', '', year)
                 cvv = re.sub(r'\D', '', cvv)
 
-                if month.isdigit() and year.isdigit() and cvv.isdigit():
+                # Ensure CVV is 3-4 digits
+                if len(cvv) > 4:
+                    cvv = cvv[:4]
+
+                if month.isdigit() and year.isdigit() and cvv.isdigit() and 3 <= len(cvv) <= 4:
                     logger.parsing(f"Parsed via multiline format: {cc[:6]}XXXXXX{cc[-4:]}|{month}|{year}|{cvv}")
                     return cc, month, year, cvv
 
-        # STRATEGY 3: Regex search in entire text
-        # Try to find CC + date + CVV patterns
+        # STRATEGY 3: Regex search in entire text with improved CVV detection
+        # Try to find CC + date + CVV patterns (CVV must be 3-4 digits)
         combined_patterns = [
-            # Pattern: CC followed by date and CVV
-            r'(\d{15,19})[^\d]*(\d{1,2})[/-]?(\d{2,4})[^\d]*(\d{3,4})',
-            # Pattern: CC, date in next 50 chars, CVV in next 20 chars
-            r'(\d{15,19}).{1,50}?(\d{1,2})[/-]?(\d{2,4}).{1,20}?(\d{3,4})',
+            # Pattern: CC followed by date and CVV (with CVV boundary checks)
+            r'(\d{15,19})[^\d]*(\d{1,2})[/-]?(\d{2,4})[^\d]*(?<!\d)(\d{3,4})(?!\d)',
+            # Pattern: CC, date in next 50 chars, CVV in next 20 chars (with CVV boundary checks)
+            r'(\d{15,19}).{1,50}?(\d{1,2})[/-]?(\d{2,4}).{1,20}?(?<!\d)(\d{3,4})(?!\d)',
         ]
 
         for pattern in combined_patterns:
@@ -290,7 +309,11 @@ class SmartCardParser:
                 if len(year) == 2:
                     year = '20' + year
 
-                if cc.isdigit() and month.isdigit() and year.isdigit() and cvv.isdigit():
+                # Ensure CVV is 3-4 digits
+                if len(cvv) > 4:
+                    cvv = cvv[:4]
+
+                if cc.isdigit() and month.isdigit() and year.isdigit() and cvv.isdigit() and 3 <= len(cvv) <= 4:
                     logger.parsing(f"Parsed via regex pattern: {cc[:6]}XXXXXX{cc[-4:]}|{month}|{year}|{cvv}")
                     return cc, month, year, cvv
 
@@ -316,15 +339,35 @@ class SmartCardParser:
                         year = '20' + year
                     break
 
-            # Extract CVV
-            cvv_pattern = r'\b(\d{3,4})\b'
-            # Try to find CVV that's NOT part of CC or date
-            for match in re.finditer(cvv_pattern, text):
-                cvv_candidate = match.group(1)
-                # Skip if it's part of CC or date
-                if cvv_candidate not in cc and cvv_candidate != month and cvv_candidate != year:
-                    cvv = cvv_candidate
-                    break
+            # Extract CVV - ONLY 3-4 DIGITS NOT PART OF LARGER NUMBERS
+            cvv = None
+            # First try to find CVV with labels
+            cvv_label_patterns = [
+                r'cvv[:\s]*(\d{3,4})',
+                r'cvc[:\s]*(\d{3,4})',
+                r'cid[:\s]*(\d{3,4})',
+                r'code[:\s]*(\d{3,4})',
+            ]
+            
+            for pattern in cvv_label_patterns:
+                cvv_match = re.search(pattern, text.lower())
+                if cvv_match:
+                    cvv = cvv_match.group(1)
+                    if len(cvv) in [3, 4]:
+                        break
+            
+            # If no labeled CVV found, look for isolated 3-4 digit numbers
+            if not cvv:
+                # Find all 3-4 digit numbers that are not part of larger numbers
+                for match in re.finditer(r'(?<!\d)(\d{3,4})(?!\d)', text):
+                    cvv_candidate = match.group(1)
+                    # Skip if it's part of CC or date
+                    if cvv_candidate not in cc and cvv_candidate != month and cvv_candidate != year:
+                        # Also check if it might be a year
+                        if len(cvv_candidate) == 4 and cvv_candidate.startswith(('20', '19')):
+                            continue
+                        cvv = cvv_candidate
+                        break
 
             if month and year and cvv:
                 logger.parsing(f"Parsed via inference: {cc[:6]}XXXXXX{cc[-4:]}|{month}|{year}|{cvv}")
@@ -360,9 +403,12 @@ class SmartCardParser:
         elif int(year) == current_year and int(month) < current_month:
             return False, "Card expired"
 
-        # Check CVV
-        if not cvv.isdigit() or not (3 <= len(cvv) <= 4):
-            return False, "Invalid CVV (must be 3-4 digits)"
+        # Check CVV - ENSURE IT'S EXACTLY 3-4 DIGITS
+        if not cvv.isdigit():
+            return False, "Invalid CVV (must contain only digits)"
+        
+        if not (3 <= len(cvv) <= 4):
+            return False, f"Invalid CVV (must be 3-4 digits, got {len(cvv)})"
 
         return True, "Valid"
 
@@ -1029,7 +1075,7 @@ class StripeAuth2Checker:
                                 ano = year_match.group(1)
                                 if len(ano) == 2:
                                     ano = '20' + ano
-                            cvv_match = re.search(r'(\d{3,4})', card_details)
+                            cvv_match = re.search(r'(?<!\d)(\d{3,4})(?!\d)', card_details)
                             if cvv_match:
                                 cvv = cvv_match.group(1)
                             break
