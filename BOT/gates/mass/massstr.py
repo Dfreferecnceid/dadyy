@@ -81,7 +81,7 @@ def get_plan_limit_message(plan_name: str, current_count: int, max_allowed: int)
 ⟐ <b>Max Allowed</b>: <code>10</code>
 ━━━━━━━━━━━━━
 <b>~ Note:</b> <code>Upgrade to ULTIMATE plan to check up to 15 cards</code>
-<b>~ Note:</b> <code>Type /plans to see all plan benefits</code>"""
+<b>~ Note:</b> <code>Go to Buy to see all plan benefits</code>"""
 
 def get_unique_filename(original_filename):
     """Generate a unique filename to avoid conflicts"""
@@ -708,3 +708,4 @@ async def handle_mass_stripe_auto(client: Client, message: Message):
                 os.remove(file_path)
             except:
                 pass
+
