@@ -21,7 +21,46 @@ from BOT.helper.permissions import auth_and_free_restricted
 from BOT.helper.Admins import is_command_disabled, get_command_offline_message
 from BOT.gc.credit import deduct_credit, get_user_credits, has_sufficient_credits, charge_processor
 from BOT.helper.filter import extract_cards
-from BOT.tools.proxy import PROXY_SYSTEM_AVAILABLE
+
+# Import proxy system - using Option A (define PROXY_SYSTEM_AVAILABLE locally)
+try:
+    from BOT.tools.proxy import (
+        get_proxy_for_user,
+        mark_proxy_success,
+        mark_proxy_failed,
+        get_random_proxy,
+        parse_proxy,
+        test_proxy
+    )
+    # Check if PROXY_ENABLED exists
+    try:
+        from BOT.tools.proxy import PROXY_ENABLED
+    except ImportError:
+        PROXY_ENABLED = True
+    
+    PROXY_SYSTEM_AVAILABLE = True  # Define it here!
+    print("✅ Proxy system imported successfully")
+except ImportError as e:
+    print(f"❌ Proxy system import error: {e}")
+    PROXY_SYSTEM_AVAILABLE = False
+    
+    def get_proxy_for_user(user_id: int, strategy: str = "random"):
+        return None
+    
+    def mark_proxy_success(proxy: str, response_time: float):
+        pass
+    
+    def mark_proxy_failed(proxy: str):
+        pass
+    
+    def get_random_proxy():
+        return None
+    
+    def parse_proxy(proxy_str: str):
+        return None
+    
+    def test_proxy(proxy_str: str):
+        return False
 
 # Download directory
 DOWNLOAD_DIR = "BOT/downloads"
@@ -453,7 +492,7 @@ async def handle_mass_stripe_charge_012(client: Client, message: Message):
         plan_name = user_plan.get("plan", "Free")
         user_role = user_data.get("role", "Free")
         
-        # Check if proxy system is available
+        # Check if proxy system is available - using locally defined PROXY_SYSTEM_AVAILABLE
         if not PROXY_SYSTEM_AVAILABLE:
             await message.reply("""<pre>❌ Proxy System Unavailable</pre>
 ━━━━━━━━━━━━━
