@@ -160,11 +160,9 @@ async def parse_card_list_from_command(message):
     # Get the full message text
     full_text = message.text or ""
     
-    # Remove the command part completely
-    # Split by lines first
+    # Remove the command part completely by splitting and taking everything after the command
     lines = full_text.split('\n')
     
-    # Process each line
     for line in lines:
         line = line.strip()
         if not line:
@@ -172,13 +170,11 @@ async def parse_card_list_from_command(message):
         
         # Check if this line contains the command
         if any(line.startswith(prefix) for prefix in ['/mchk', '.mchk', '$mchk']):
-            # Extract content after command on the same line
+            # Extract everything after the command on the same line
             parts = line.split(maxsplit=1)
             if len(parts) > 1:
-                # There are cards on the same line after command
                 remaining_text = parts[1].strip()
                 if remaining_text:
-                    # Extract cards from this text
                     all_cards, unique_cards = extract_cards(remaining_text)
                     card_list.extend(unique_cards)
         else:
@@ -190,6 +186,7 @@ async def parse_card_list_from_command(message):
     seen = set()
     unique_cards = []
     for card in card_list:
+        # Normalize card format to ensure consistent deduplication
         if card not in seen:
             seen.add(card)
             unique_cards.append(card)
@@ -272,6 +269,10 @@ class MassStripeAuth2Checker:
                 mes = parts[1].strip()
                 ano = parts[2].strip()
                 cvv = parts[3].strip()
+        
+        # Ensure year is 4 digits
+        if ano and len(ano) == 2:
+            ano = '20' + ano
         
         try:
             # Get BIN info
@@ -655,6 +656,8 @@ async def handle_mass_stripe_auth2(client: Client, message: Message):
         user_id = message.from_user.id
         username = message.from_user.username or str(user_id)
         
+        print(f"🔍 /mchk command received from {username}")
+        
         # Check if command is disabled
         command_text = message.text.split()[0] if message.text else ""
         command_name = command_text.lstrip('/.$') if command_text else "mchk"
@@ -809,8 +812,19 @@ async def handle_mass_stripe_auth2(client: Client, message: Message):
         for i, card_details in enumerate(card_list):
             checked = i + 1
             
+            # Update progress message
+            try:
+                await processing_msg.edit_text(
+                    mass_checker.get_processing_message_dynamic(
+                        card_count, checked, successful, failed, errors, username, plan_name
+                    )
+                )
+            except:
+                pass
+            
             # Check card using the shared session
             try:
+                print(f"🔄 Checking card {i+1}/{card_count}: {card_details}")
                 result = await mass_checker.check_card_with_session(
                     card_details,
                     username,
@@ -837,6 +851,7 @@ async def handle_mass_stripe_auth2(client: Client, message: Message):
                     errors += 1
                     
             except Exception as e:
+                print(f"❌ Error checking card {i+1}: {str(e)}")
                 # Handle individual card error
                 error_result = f"""<b>「$cmd → /mchk」| <b>WAYNE</b> </b>
 ━━━━━━━━━━━━━━━
@@ -853,15 +868,14 @@ async def handle_mass_stripe_auth2(client: Client, message: Message):
                 errors += 1
             
             # Update progress message with dynamic stats
-            if (i + 1) % 2 == 0 or i == len(card_list) - 1:
-                try:
-                    await processing_msg.edit_text(
-                        mass_checker.get_processing_message_dynamic(
-                            card_count, checked, successful, failed, errors, username, plan_name
-                        )
+            try:
+                await processing_msg.edit_text(
+                    mass_checker.get_processing_message_dynamic(
+                        card_count, checked, successful, failed, errors, username, plan_name
                     )
-                except:
-                    pass
+                )
+            except:
+                pass
             
             # Delay between cards
             if i < len(card_list) - 1:
@@ -915,6 +929,7 @@ async def handle_mass_stripe_auth2(client: Client, message: Message):
                 
     except Exception as e:
         error_msg = str(e)[:150]
+        print(f"❌ Mass Check Error: {error_msg}")
         await message.reply(f"""<pre>❌ Mass Check Error</pre>
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: An error occurred while processing mass check.
