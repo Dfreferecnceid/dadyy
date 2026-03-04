@@ -29,62 +29,58 @@ from BOT.helper.filter import extract_cards
 DOWNLOAD_DIR = "BOT/downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
-# ========== PLAN-BASED CARD LIMITS ==========
+# ========== UPDATED PLAN-BASED CARD LIMITS ==========
 def get_card_limit_by_plan(plan_name: str, user_role: str = "Free") -> int:
     """
     Get maximum allowed cards per mass check based on user's plan
     Returns: int (max cards allowed)
     """
-    # Owner has no limit
+    # Owner has unlimited cards
     if user_role == "Owner":
         return float('inf')  # Unlimited
     
-    # Plan-based limits
-    plan_limits = {
-        "Free": 25,
-        "Plus": 50,
-        "Pro": 75,
-        "Elite": 100,
-        "VIP": 150,
-        "ULTIMATE": 200
-    }
+    # ULTIMATE plan users can use up to 15 cards
+    if plan_name == "ULTIMATE":
+        return 15
     
-    # Check by plan name first
-    limit = plan_limits.get(plan_name, 25)  # Default to Free limit (25)
-    
-    # If plan_name not found but user_role indicates premium, use appropriate limit
-    if limit == 25 and user_role in ["Admin", "Owner"]:
-        return float('inf')  # Admin also unlimited
-    elif limit == 25 and plan_name == "Free" and user_role != "Free":
-        # This handles cases where user has premium role but plan name mismatch
-        if user_role in plan_limits:
-            return plan_limits[user_role]
-    
-    return limit
+    # All other users (Free, Plus, Pro, Elite, VIP, Admin) get 10 cards max
+    return 10
 
 def get_plan_limit_message(plan_name: str, current_count: int, max_allowed: int) -> str:
     """Generate formatted message when user exceeds card limit"""
     plan_limits_display = {
-        "Free": "25 cards",
-        "Plus": "50 cards",
-        "Pro": "75 cards",
-        "Elite": "100 cards",
-        "VIP": "150 cards",
-        "ULTIMATE": "200 cards",
+        "Free": "10 cards",
+        "Plus": "10 cards",
+        "Pro": "10 cards",
+        "Elite": "10 cards",
+        "VIP": "10 cards",
+        "ULTIMATE": "15 cards",
         "Owner": "Unlimited",
-        "Admin": "Unlimited"
+        "Admin": "10 cards"
     }
     
-    limit_display = plan_limits_display.get(plan_name, "25 cards")
+    limit_display = plan_limits_display.get(plan_name, "10 cards")
     
-    return f"""<pre>❌ Card Limit Exceeded</pre>
+    # Special message for ULTIMATE users
+    if plan_name == "ULTIMATE" and current_count > 15:
+        return f"""<pre>❌ Card Limit Exceeded</pre>
 ━━━━━━━━━━━━━
-⟐ <b>Message</b>: You can only check {limit_display} at once.
+⟐ <b>Message</b>: ULTIMATE plan users can only check up to 15 cards at once.
 ⟐ <b>Your Plan</b>: <code>{plan_name}</code>
 ⟐ <b>Cards Provided</b>: <code>{current_count}</code>
-⟐ <b>Max Allowed</b>: <code>{max_allowed}</code>
+⟐ <b>Max Allowed</b>: <code>15</code>
 ━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Upgrade your plan to check more cards at once</code>
+<b>~ Note:</b> <code>Contact @D_A_DYY for higher limits</code>"""
+    
+    # Message for all other users
+    return f"""<pre>❌ Card Limit Exceeded</pre>
+━━━━━━━━━━━━━
+⟐ <b>Message</b>: You can only check up to 10 cards at once.
+⟐ <b>Your Plan</b>: <code>{plan_name}</code>
+⟐ <b>Cards Provided</b>: <code>{current_count}</code>
+⟐ <b>Max Allowed</b>: <code>10</code>
+━━━━━━━━━━━━━
+<b>~ Note:</b> <code>Upgrade to ULTIMATE plan to check up to 15 cards</code>
 <b>~ Note:</b> <code>Type /plans to see all plan benefits</code>"""
 
 def get_unique_filename(original_filename):
@@ -518,10 +514,10 @@ async def handle_mass_stripe_auto(client: Client, message: Message):
         
         card_count = len(card_list)
         
-        # ========== PLAN-BASED CARD LIMIT CHECK ==========
+        # ========== UPDATED PLAN-BASED CARD LIMIT CHECK ==========
         max_allowed = get_card_limit_by_plan(plan_name, user_role)
         
-        # Check if card count exceeds plan limit (owner/admin with unlimited pass through)
+        # Check if card count exceeds plan limit
         if max_allowed != float('inf') and card_count > max_allowed:
             await message.reply(get_plan_limit_message(plan_name, card_count, max_allowed))
             
