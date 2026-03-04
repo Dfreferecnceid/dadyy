@@ -43,7 +43,11 @@ def get_card_limit_by_plan(plan_name: str, user_role: str = "Free") -> int:
     if plan_name == "ULTIMATE":
         return 15
     
-    # All other users (Free, Plus, Pro, Elite, VIP, Admin) get 10 cards max
+    # Check for FREE plan specifically
+    if plan_name == "Free":
+        return 5
+    
+    # All other users (Plus, Pro, Elite, VIP, Admin) get 10 cards max
     return 10
 
 def get_plan_limit_message(plan_name: str, current_count: int, max_allowed: int) -> str:
@@ -60,6 +64,18 @@ def get_plan_limit_message(plan_name: str, current_count: int, max_allowed: int)
     }
     
     limit_display = plan_limits_display.get(plan_name, "10 cards")
+    
+    # Special message for FREE users
+    if plan_name == "Free" and current_count > 5:
+        return f"""<pre>❌ Card Limit Exceeded</pre>
+━━━━━━━━━━━━━
+⟐ <b>Message</b>: Free users can only check up to 5 cards at once.
+⟐ <b>Your Plan</b>: <code>{plan_name}</code>
+⟐ <b>Cards Provided</b>: <code>{current_count}</code>
+⟐ <b>Max Allowed</b>: <code>5</code>
+━━━━━━━━━━━━━
+<b>~ Note:</b> <code>Upgrade your plan to check more cards at once</code>
+<b>~ Note:</b> <code>Type /plans to see all plan benefits</code>"""
     
     # Special message for ULTIMATE users
     if plan_name == "ULTIMATE" and current_count > 15:
@@ -81,7 +97,7 @@ def get_plan_limit_message(plan_name: str, current_count: int, max_allowed: int)
 ⟐ <b>Max Allowed</b>: <code>10</code>
 ━━━━━━━━━━━━━
 <b>~ Note:</b> <code>Upgrade to ULTIMATE plan to check up to 15 cards</code>
-<b>~ Note:</b> <code>Go to Buy to see all plan benefits</code>"""
+<b>~ Note:</b> <code>Type /plans to see all plan benefits</code>"""
 
 def get_unique_filename(original_filename):
     """Generate a unique filename to avoid conflicts"""
@@ -708,5 +724,3 @@ async def handle_mass_stripe_auto(client: Client, message: Message):
                 os.remove(file_path)
             except:
                 pass
-
-
