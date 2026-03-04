@@ -49,7 +49,7 @@ def get_card_limit_by_plan(plan_name: str, user_role: str = "Free") -> int:
 def get_plan_limit_message(plan_name: str, current_count: int, max_allowed: int) -> str:
     """Generate formatted message when user exceeds card limit"""
     plan_limits_display = {
-        "Free": "10 cards",
+        "Free": "5 cards",
         "Plus": "10 cards",
         "Pro": "10 cards",
         "Elite": "10 cards",
@@ -708,4 +708,5 @@ async def handle_mass_stripe_auto(client: Client, message: Message):
                 os.remove(file_path)
             except:
                 pass
+
 
