@@ -370,7 +370,7 @@ class MassStripeChargeChecker:
     async def format_mass_response_collective(self, results, successful, failed, total_cards, username, elapsed_time, user_data):
         """
         Format collective response when total cards <= 5
-        IMPROVED UI: No duplicate headers/footers for each card
+        FIXED: Now properly extracts and displays card details
         """
         user_id = user_data.get("user_id", "Unknown")
         first_name = html.escape(user_data.get("first_name", "User"))
@@ -392,43 +392,41 @@ class MassStripeChargeChecker:
 
 """
         
-        # Process each result to extract ONLY the card details (remove the header/footer from each)
-        for result in results:
+        # Process each result to extract ONLY the card details
+        for idx, result in enumerate(results):
             # Split the result into lines
             lines = result.split('\n')
             
-            # Extract relevant card information (skip the header and footer)
-            card_lines = []
-            skip_header = True
-            skip_footer = False
+            # Extract the card information block (lines between the first separator and the Checked By line)
+            card_block = []
+            in_card_block = False
             
             for line in lines:
-                # Skip the header line with 「$cmd → /mxc」
-                if line.startswith('<b>「$cmd → /mxc」'):
-                    skip_header = False
+                # Start collecting after we hit the separator after header
+                if line == '━━━━━━━━━━━━━━━' and not in_card_block:
+                    in_card_block = True
                     continue
                 
-                # Skip the separator line after header
-                if line == '━━━━━━━━━━━━━━━' and not skip_header:
-                    skip_header = False
-                    continue
-                
-                # Once we hit the "[ﾒ] Checked By:" line, we've reached the footer - stop adding
+                # Stop collecting when we hit the Checked By line
                 if '[ﾒ] Checked By:' in line:
-                    skip_footer = True
                     break
                 
-                # If we're past the header and not in footer, add the line
-                if not skip_header and not skip_footer:
-                    card_lines.append(line)
+                # If we're in the card block and line is not empty, add it
+                if in_card_block and line.strip():
+                    # Skip the first separator line that might have been captured
+                    if line == '━━━━━━━━━━━━━━━':
+                        continue
+                    card_block.append(line)
             
-            # Add the extracted card details to the response
-            for card_line in card_lines:
-                if card_line.strip():  # Only add non-empty lines
-                    response += card_line + '\n'
-            
-            # Add a blank line between cards for better readability
-            response += '\n'
+            # Join the card block and add to response
+            if card_block:
+                # Add a separator between cards (except for the first one)
+                if idx > 0:
+                    response += "\n"
+                
+                # Join the card lines
+                card_text = '\n'.join(card_block)
+                response += card_text + "\n"
         
         # Add FINAL summary (ONLY ONCE at the very end)
         response += f"""━━━━━━━━━━━━━━━
@@ -503,12 +501,17 @@ async def handle_mass_stripe_charge(client: Client, message: Message):
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: Please provide card details in one of these formats:
 
+<b>Format 1 (Reply to file/text):</b>
 • Reply to a text file or message containing cards with /mxc
 
+<b>Format 2 (Multi-line after command):</b>
 <code>/mxc
 5414963811565512|09|28|822
 4221352001240530|12|26|050</code>
-━━━━━━━━━━━━━
+
+<b>Format 3 (Single line):</b>
+<code>/mxc 5414963811565512|09|28|822</code>
+
 ⟐ <b>Note:</b> <code>Cards will be auto-filtered from any format</code>
 ━━━━━━━━━━━━━""")
             return
@@ -581,17 +584,15 @@ async def handle_mass_stripe_charge(client: Client, message: Message):
         errors = 0
         
         # Process each card - CHARGE REQUIRES FRESH SESSION FOR EACH CARD
-        # Unlike auth where we can share sessions, charge needs separate sessions
         for i, card_details in enumerate(card_list):
             checked = i + 1
             
-            # Create fresh client and checker for each card
-            client = None
+            # Create fresh checker for each card
             try:
                 # Create new checker instance for each card
                 card_checker = StripeChargeChecker()
                 
-                # Check card using fresh session (charge requires fresh session per card)
+                # Check card using fresh session
                 result = await card_checker.check_card(
                     card_details, 
                     username, 
@@ -616,10 +617,11 @@ async def handle_mass_stripe_charge(client: Client, message: Message):
                     
             except Exception as e:
                 # Handle individual card error
-                bin_info = await mass_checker.checker.get_bin_info(card_details.split('|')[0] if '|' in card_details else "")
+                cc_part = card_details.split('|')[0] if '|' in card_details else ""
+                bin_info = await mass_checker.checker.get_bin_info(cc_part)
                 
                 error_result = mass_checker.format_mass_card_response(
-                    card_details.split('|')[0] if '|' in card_details else "",
+                    cc_part,
                     card_details.split('|')[1] if len(card_details.split('|')) > 1 else "",
                     card_details.split('|')[2] if len(card_details.split('|')) > 2 else "",
                     card_details.split('|')[3] if len(card_details.split('|')) > 3 else "",
@@ -646,7 +648,7 @@ async def handle_mass_stripe_charge(client: Client, message: Message):
             
             # Add delay between cards to avoid rate limiting
             if i < len(card_list) - 1:
-                await asyncio.sleep(random.uniform(2, 4))  # Longer delay for charge
+                await asyncio.sleep(random.uniform(2, 4))
         
         elapsed_time = time.time() - start_time
         
@@ -659,7 +661,7 @@ async def handle_mass_stripe_charge(client: Client, message: Message):
                 card_count, username, elapsed_time, user_data, processing_msg
             )
         else:
-            # For <=5 cards: Send collective response with all cards (IMPROVED UI)
+            # For <=5 cards: Send collective response with all cards (FIXED UI)
             final_response = await mass_checker.format_mass_response_collective(
                 results, successful, failed + errors, card_count, username, elapsed_time, user_data
             )
@@ -701,4 +703,3 @@ async def handle_mass_stripe_charge(client: Client, message: Message):
                 os.remove(file_path)
             except:
                 pass
-
