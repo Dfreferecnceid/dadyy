@@ -1305,13 +1305,18 @@ class StripeAuth2Checker:
             elapsed = time.time() - start_time
             return await self.format_response(cc, mes, ano, cvv, "ERROR", f"System error: {str(e)[:80]}", username, elapsed, user_data, bin_info)
 
-# Command handler for /chk command
+# Command handler for /chk command - FIXED to not catch /mchk
 @Client.on_message(filters.command(["chk", ".chk", "$chk"]))
 @auth_and_free_restricted
 async def handle_stripe_auth2(client: Client, message: Message):
     try:
         user_id = message.from_user.id
         username = message.from_user.username or str(user_id)
+
+        # IMPORTANT: If this is /mchk command, ignore it (let masschk.py handle it)
+        if message.text and message.text.startswith(('/mchk', '.mchk', '$mchk')):
+            print(f"⚠️ /chk handler ignoring /mchk command")
+            return
 
         # CHECK: First check if command is disabled (BEFORE any other checks)
         # Import the function from Admins module
