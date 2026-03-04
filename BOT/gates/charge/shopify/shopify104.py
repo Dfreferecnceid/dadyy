@@ -1,4 +1,4 @@
-# BOT/gates/charge/shopify/scharge104.py
+# BOT/gates/charge/shopify/shopify104.py
 
 import json
 import asyncio
@@ -57,9 +57,9 @@ try:
         PROXY_ENABLED
     )
     PROXY_SYSTEM_AVAILABLE = True
-    print("✅ Proxy system imported successfully for scharge104")
+    print("✅ Proxy system imported successfully for shopify104")
 except ImportError as e:
-    print(f"❌ Proxy system import error in scharge104: {e}")
+    print(f"❌ Proxy system import error in shopify104: {e}")
     PROXY_SYSTEM_AVAILABLE = False
     def get_proxy_for_user(user_id: int, strategy: str = "random"):
         return None
@@ -1750,7 +1750,7 @@ async def handle_shopify_route_charge(client: Client, message: Message):
 ━━━━━━━━━━━━━
 🠪 <b>Message</b>: Invalid card format.
 🠪 <b>Correct Format</b>: <code>cc|mm|yy|cvv</code>
-🠪 <b>Example</b>: <code>4111111111111111|12|2025|123</code>
+🠪 <b>Example</b>: <code>4111111111111111|12|2030|123</code>
 ━━━━━━━━━━━━━""")
             return
 
@@ -1835,4 +1835,3 @@ async def handle_shopify_route_charge(client: Client, message: Message):
 🠪 <b>Error</b>: <code>{error_msg}</code>
 🠪 <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
 ━━━━━━━━━━━━━""")
-
