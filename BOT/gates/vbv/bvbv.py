@@ -99,40 +99,21 @@ def is_user_banned(user_id):
         logger.error(f"Error checking ban status: {e}")
         return False
 
-def check_cooldown(user_id, command_type="vbv"):
-    """Check cooldown for user - SKIP FOR OWNER"""
-    owner_id = load_owner_id()
-    if owner_id and str(user_id) == owner_id:
-        return True, 0
-
-    try:
-        with open("DATA/cooldowns.json", "r") as f:
-            cooldowns = json.load(f)
-    except:
-        cooldowns = {}
-
-    user_key = f"{user_id}_{command_type}"
-    current_time = time.time()
-
-    if user_key in cooldowns:
-        last_time = cooldowns[user_key]
-        user_plan = get_user_plan(user_id)
-        antispam = user_plan.get("antispam", 15)
-
-        if antispam is None:
-            antispam = 15
-
-        if current_time - last_time < antispam:
-            return False, antispam - (current_time - last_time)
-
-    cooldowns[user_key] = current_time
-    try:
-        with open("DATA/cooldowns.json", "w") as f:
-            json.dump(cooldowns, f, indent=4)
-    except:
-        pass
-
-    return True, 0
+# Braintree 3DS Status Codes
+THREE_DS_STATUS = {
+    "challenge_required": "𝑻𝑹𝑼𝑬! ❌",
+    "authenticate_successful": "𝑭𝑨𝑳𝑺𝑬! ✅",
+    "authenticate_failed": "𝑻𝑹𝑼𝑬! ❌",
+    "lookup_error": "𝑻𝑹𝑼𝑬! ❌",
+    "lookup_enrolled": "𝑻𝑹𝑼𝑬! ❌",
+    "lookup_not_enrolled": "𝑭𝑨𝑳𝑺𝑬! ✅",
+    "unsupported_card": "𝑻𝑹𝑼𝑬! ❌",
+    "unavailable": "𝑻𝑹𝑼𝑬! ❌",
+    "authentication_unavailable": "𝑻𝑹𝑼𝑬! ❌",
+    "authentication_failed": "𝑻𝑹𝑼𝑬! ❌",
+    "authentication_rejected": "𝑻𝑹𝑼𝑬! ❌",
+    "authentication_timeout": "𝑻𝑹𝑼𝑬! ❌",
+}
 
 class BraintreeVBVChecker:
     def __init__(self):
@@ -156,13 +137,19 @@ class BraintreeVBVChecker:
         self.merchant_id = "3bbxc2hs5sgbs95q"
         logger.info(f"Merchant ID: {self.merchant_id}")
         
-        # Country mappings
+        # Country code to name mapping
         self.country_map = {
             'US': 'UNITED STATES', 'GB': 'UNITED KINGDOM', 'CA': 'CANADA', 'AU': 'AUSTRALIA',
             'DE': 'GERMANY', 'FR': 'FRANCE', 'IT': 'ITALY', 'ES': 'SPAIN', 'NL': 'NETHERLANDS',
             'JP': 'JAPAN', 'SG': 'SINGAPORE', 'AE': 'UAE', 'IN': 'INDIA', 'BR': 'BRAZIL',
             'MX': 'MEXICO', 'CN': 'CHINA', 'HK': 'HONG KONG', 'KR': 'SOUTH KOREA',
             'RU': 'RUSSIA', 'CH': 'SWITZERLAND', 'SE': 'SWEDEN', 'NO': 'NORWAY',
+            'ZA': 'SOUTH AFRICA', 'NG': 'NIGERIA', 'KE': 'KENYA', 'EG': 'EGYPT',
+            'SA': 'SAUDI ARABIA', 'TR': 'TURKEY', 'PK': 'PAKISTAN', 'BD': 'BANGLADESH',
+            'TH': 'THAILAND', 'VN': 'VIETNAM', 'MY': 'MALAYSIA', 'ID': 'INDONESIA',
+            'PH': 'PHILIPPINES', 'NZ': 'NEW ZEALAND', 'IE': 'IRELAND', 'PT': 'PORTUGAL',
+            'GR': 'GREECE', 'PL': 'POLAND', 'CZ': 'CZECH REPUBLIC', 'HU': 'HUNGARY',
+            'AT': 'AUSTRIA', 'BE': 'BELGIUM', 'DK': 'DENMARK', 'FI': 'FINLAND',
         }
         
         # Currency mapping
@@ -171,7 +158,9 @@ class BraintreeVBVChecker:
             'FR': 'EUR', 'IT': 'EUR', 'ES': 'EUR', 'NL': 'EUR', 'JP': 'JPY',
             'SG': 'SGD', 'AE': 'AED', 'IN': 'INR', 'BR': 'BRL', 'MX': 'MXN',
             'CN': 'CNY', 'HK': 'HKD', 'KR': 'KRW', 'RU': 'RUB', 'CH': 'CHF',
-            'SE': 'SEK', 'NO': 'NOK',
+            'SE': 'SEK', 'NO': 'NOK', 'TH': 'THB', 'MY': 'MYR', 'ID': 'IDR',
+            'PH': 'PHP', 'VN': 'VND', 'ZA': 'ZAR', 'NG': 'NGN', 'EG': 'EGP',
+            'SA': 'SAR', 'AE': 'AED', 'PK': 'PKR', 'BD': 'BDT',
         }
         
         # Email domains
@@ -194,6 +183,9 @@ class BraintreeVBVChecker:
             'FR': '🇫🇷', 'IT': '🇮🇹', 'ES': '🇪🇸', 'JP': '🇯🇵', 'CN': '🇨🇳',
             'IN': '🇮🇳', 'BR': '🇧🇷', 'MX': '🇲🇽', 'RU': '🇷🇺', 'KR': '🇰🇷',
             'NL': '🇳🇱', 'CH': '🇨🇭', 'SE': '🇸🇪', 'AE': '🇦🇪', 'SG': '🇸🇬',
+            'TH': '🇹🇭', 'MY': '🇲🇾', 'ID': '🇮🇩', 'PH': '🇵🇭', 'VN': '🇻🇳',
+            'ZA': '🇿🇦', 'NG': '🇳🇬', 'KE': '🇰🇪', 'EG': '🇪🇬', 'SA': '🇸🇦',
+            'PK': '🇵🇰', 'BD': '🇧🇩', 'NZ': '🇳🇿', 'IE': '🇮🇪', 'PT': '🇵🇹',
         }
         return country_emojis.get(country_code.upper() if country_code else 'N/A', '🏳️')
     
@@ -534,47 +526,70 @@ class BraintreeVBVChecker:
             data = response.json()
             logger.response(f"3DS Response: {json.dumps(data)[:300]}...")
             
+            # Check for errors in response
+            if 'errors' in data:
+                error = data['errors'][0]
+                error_code = error.get('code', 'unknown')
+                error_message = error.get('message', 'Unknown error')
+                logger.error(f"Braintree error: {error_code} - {error_message}")
+                
+                # Map to 3D status
+                if error_code == "81571" or "authenticate" in error_message.lower():
+                    three_d_status = "𝑻𝑹𝑼𝑬! ❌"
+                    display_message = "authentication_failed"
+                else:
+                    three_d_status = "𝑻𝑹𝑼𝑬! ❌"
+                    display_message = error_message[:50]
+                
+                return {
+                    'status': 'error',
+                    'message': display_message,
+                    'three_d_status': three_d_status,
+                    'liability_shifted': False,
+                }, None
+            
+            # Check for payment method
             if 'paymentMethod' in data:
                 payment_method = data['paymentMethod']
                 
+                # Check for threeDSecureInfo
                 if 'threeDSecureInfo' in payment_method:
                     tds_info = payment_method['threeDSecureInfo']
                     status = tds_info.get('status', 'unknown')
                     liability_shifted = tds_info.get('liabilityShifted', False)
                     
-                    # Determine 3D status based on response
-                    if status == 'challenge_required':
-                        three_d_status = "𝑻𝑹𝑼𝑬! ❌"  # Challenge required
-                        display_message = "challenge_required"
-                        logger.gateway("3DS: Challenge Required - TRUE! ❌")
-                    elif liability_shifted or status == 'authenticate_successful':
-                        three_d_status = "𝑭𝑨𝑳𝑺𝑬! ✅"  # Non-VBV/Approved
-                        display_message = "authenticate_successful"
-                        logger.gateway("3DS: Non-VBV/Approved - FALSE! ✅")
-                    else:
-                        three_d_status = "𝑻𝑹𝑼𝑬! ❌"  # Other declines
-                        display_message = status.replace('_', ' ').title()
-                        logger.gateway(f"3DS: {status} - TRUE! ❌")
+                    # Get the appropriate 3D status display
+                    three_d_status = THREE_DS_STATUS.get(status, "𝑻𝑹𝑼𝑬! ❌")
                     
-                    nonce = payment_method.get('nonce')
-                    details = payment_method.get('details', {})
+                    # Format display message
+                    if status == 'challenge_required':
+                        display_message = "challenge_required"
+                    elif status == 'authenticate_successful':
+                        display_message = "authenticate_successful"
+                    elif status == 'lookup_error':
+                        display_message = "lookup_error"
+                    elif 'enrolled' in status:
+                        display_message = "card_enrolled"
+                    else:
+                        display_message = status.replace('_', ' ')
+                    
+                    logger.gateway(f"3DS: {status} - {three_d_status}")
                     
                     result = {
-                        'nonce': nonce,
                         'status': status,
                         'message': display_message,
                         'three_d_status': three_d_status,
                         'liability_shifted': liability_shifted,
-                        'details': details,
+                        'details': payment_method.get('details', {}),
                     }
                     
                     return result, None
                 else:
-                    logger.error("No 3DS info in response")
+                    logger.error("No threeDSecureInfo in response")
                     return None, "No 3DS info"
             else:
-                logger.error("Unexpected response format")
-                return None, "Unexpected format"
+                logger.error("No paymentMethod in response")
+                return None, "Invalid response format"
                 
         except Exception as e:
             logger.error(f"3DS lookup error: {e}")
@@ -719,15 +734,15 @@ class BraintreeVBVChecker:
                     logger.error(f"3DS lookup failed: {error}")
                     return await self.format_response(cc, mes, ano_display, cvv, "DECLINED", error or "Failed", username, elapsed, user_data, bin_info, proxy_status=proxy_status)
                 
-                # Step 4: Send feedback
-                await self.send_payment_feedback(client, random_email)
+                # Step 4: Send feedback (don't wait for response)
+                asyncio.create_task(self.send_payment_feedback(client, random_email))
                 
                 elapsed = time.time() - start_time
                 
                 message = tds_result.get('message', 'Unknown')
                 three_d_status = tds_result.get('three_d_status', "𝑻𝑹𝑼𝑬! ❌")
                 
-                # Determine status display
+                # Determine status display for internal use
                 if three_d_status == "𝑭𝑨𝑳𝑺𝑬! ✅":
                     status_display = "APPROVED"
                 else:
@@ -768,7 +783,7 @@ class BraintreeVBVChecker:
         
         first_name = html.escape(str(user_data.get("first_name", "User")))
         badge = user_data.get("plan", {}).get("badge", "🧿")
-        plan_name = user_data.get("plan", {}).get("plan", "Free User")
+        plan_name = user_data.get("plan", {}).get("plan", "Free")
         
         # Clean name
         clean_name = re.sub(r'[↯⌁«~∞🍁]', '', first_name).strip()
@@ -787,7 +802,7 @@ class BraintreeVBVChecker:
 [+] Bin: {cc[:6]}  
 [+] Info: {safe_bin_info['card_category']} - {safe_bin_info['scheme']} - {safe_bin_info['business_status']}
 [+] Bank: {bank_info} 🏦
-[+] Country: {safe_bin_info['country']} - [{safe_bin_info['emoji']}]
+[+] Country: {safe_bin_info['country']} {safe_bin_info['emoji']}
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
 [ﾒ] Checked By: {user_display} [{plan_name}]
 [ϟ] Dev ➺ DADYY
@@ -816,7 +831,7 @@ async def handle_braintree_vbv(client: Client, message: Message):
 ━━━━━━━━━━━━━""")
             return
         
-        # Load user data - FIXED: Don't require registration
+        # Load user data
         users = load_users()
         user_id_str = str(user_id)
         
