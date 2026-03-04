@@ -1305,7 +1305,7 @@ class StripeAuth2Checker:
             elapsed = time.time() - start_time
             return await self.format_response(cc, mes, ano, cvv, "ERROR", f"System error: {str(e)[:80]}", username, elapsed, user_data, bin_info)
 
-# Command handler for /chk command - FIXED to not catch /mchk
+# Command handler for /chk command - FIXED with exact pattern matching
 @Client.on_message(filters.command(["chk", ".chk", "$chk"]))
 @auth_and_free_restricted
 async def handle_stripe_auth2(client: Client, message: Message):
@@ -1313,9 +1313,18 @@ async def handle_stripe_auth2(client: Client, message: Message):
         user_id = message.from_user.id
         username = message.from_user.username or str(user_id)
 
-        # IMPORTANT: If this is /mchk command, ignore it (let masschk.py handle it)
-        if message.text and message.text.startswith(('/mchk', '.mchk', '$mchk')):
-            print(f"⚠️ /chk handler ignoring /mchk command")
+        # Get the full command text
+        full_text = message.text.strip()
+        
+        # Check if this is actually a mass check command
+        if full_text.startswith(('/mchk', '.mchk', '$mchk')):
+            print(f"⚠️ /chk handler ignoring mass check command: {full_text.split()[0]}")
+            return
+            
+        # Also check if the command starts with /m, .m, or $m (to catch any other mass commands)
+        first_word = full_text.split()[0] if full_text else ""
+        if first_word.startswith(('/m', '.m', '$m')) and first_word != '/chk' and first_word != '.chk' and first_word != '$chk':
+            print(f"⚠️ /chk handler ignoring other mass command: {first_word}")
             return
 
         # CHECK: First check if command is disabled (BEFORE any other checks)
@@ -1323,8 +1332,8 @@ async def handle_stripe_auth2(client: Client, message: Message):
         from BOT.helper.Admins import is_command_disabled, get_command_offline_message
 
         # Get the actual command that was used
-        command_text = message.text.split()[0]  # Get /chk or .chk or $chk
-        command_name = command_text.lstrip('/.$')  # Extract just 'chk'
+        command_text = message.text.split()[0] if message.text else ""
+        command_name = command_text.lstrip('/.$') if command_text else "chk"
 
         # Check if command is disabled
         if is_command_disabled(command_name):
