@@ -26,6 +26,15 @@ from BOT.helper.filter import extract_cards
 DOWNLOAD_DIR = "BOT/downloads"
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
+print("🔍 Loading masschk.py...")
+print(f"📂 Current file: {__file__}")
+
+# TEST HANDLER - This should always respond
+@Client.on_message(filters.command(["testmchk"]))
+async def test_handler(client: Client, message: Message):
+    print("✅ TEST HANDLER TRIGGERED!")
+    await message.reply("Test handler is working!")
+
 # ========== PLAN-BASED CARD LIMITS ==========
 def get_card_limit_by_plan(plan_name: str, user_role: str = "Free") -> int:
     """
@@ -649,6 +658,9 @@ class MassStripeAuth2Checker:
 @Client.on_message(filters.command(["mchk", ".mchk", "$mchk"]))
 @auth_and_free_restricted
 async def handle_mass_stripe_auth2(client: Client, message: Message):
+    print("🎯 /mchk COMMAND TRIGGERED!")
+    print(f"📨 Message: {message.text}")
+    
     file_path = None
     approved_sent = 0
     
