@@ -1,4 +1,4 @@
-# BOT/gates/auth/mass/masschk.py
+# BOT/gates/mass/masschk.py
 # Mass Stripe Auth 2 Checker - Using stauth2.py API
 
 import asyncio
@@ -15,7 +15,7 @@ import os
 import string
 from pathlib import Path
 
-# Import from stauth2.py
+# Import from stauth2.py (correct path)
 from BOT.gates.auth.stripe.stauth2 import StripeAuth2Checker, logger, load_users, is_user_banned, check_cooldown, get_user_plan, SmartCardParser
 from BOT.helper.permissions import auth_and_free_restricted
 from BOT.helper.Admins import is_command_disabled, get_command_offline_message
@@ -160,7 +160,7 @@ async def parse_card_list_from_command(message):
     # Get the full message text
     full_text = message.text or ""
     
-    # Remove the command part completely by splitting and taking everything after the command
+    # Split into lines
     lines = full_text.split('\n')
     
     for line in lines:
@@ -186,7 +186,6 @@ async def parse_card_list_from_command(message):
     seen = set()
     unique_cards = []
     for card in card_list:
-        # Normalize card format to ensure consistent deduplication
         if card not in seen:
             seen.add(card)
             unique_cards.append(card)
