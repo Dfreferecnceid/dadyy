@@ -1334,8 +1334,8 @@ class StripeCharge012Checker:
                 except:
                     pass
 
-# Command handler - MATCHING scharge1.py STYLE
-@Client.on_message(filters.command(["xx", ".xx", "$xx"]))
+# Command handler - FIXED: Only match exact /xx command, not /mxx
+@Client.on_message(filters.command(["xx", ".xx", "$xx"]) & ~filters.command(["mxx", ".mxx", "$mxx"]))
 @auth_and_free_restricted
 async def handle_stripe_charge_012(client: Client, message: Message):
     try:
