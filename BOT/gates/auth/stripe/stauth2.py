@@ -1305,35 +1305,21 @@ class StripeAuth2Checker:
             elapsed = time.time() - start_time
             return await self.format_response(cc, mes, ano, cvv, "ERROR", f"System error: {str(e)[:80]}", username, elapsed, user_data, bin_info)
 
-# Command handler for /chk command - FIXED with exact pattern matching
-@Client.on_message(filters.command(["chk", ".chk", "$chk"]))
+# Command handler for /chk command - FIXED to exclude /mchk using the same pattern as stauth.py
+@Client.on_message(filters.command(["chk", ".chk", "$chk"]) & ~filters.command(["mchk", ".mchk", "$mchk"]))
 @auth_and_free_restricted
 async def handle_stripe_auth2(client: Client, message: Message):
     try:
         user_id = message.from_user.id
         username = message.from_user.username or str(user_id)
 
-        # Get the full command text
-        full_text = message.text.strip()
-        
-        # Check if this is actually a mass check command
-        if full_text.startswith(('/mchk', '.mchk', '$mchk')):
-            print(f"⚠️ /chk handler ignoring mass check command: {full_text.split()[0]}")
-            return
-            
-        # Also check if the command starts with /m, .m, or $m (to catch any other mass commands)
-        first_word = full_text.split()[0] if full_text else ""
-        if first_word.startswith(('/m', '.m', '$m')) and first_word != '/chk' and first_word != '.chk' and first_word != '$chk':
-            print(f"⚠️ /chk handler ignoring other mass command: {first_word}")
-            return
-
         # CHECK: First check if command is disabled (BEFORE any other checks)
         # Import the function from Admins module
         from BOT.helper.Admins import is_command_disabled, get_command_offline_message
 
         # Get the actual command that was used
-        command_text = message.text.split()[0] if message.text else ""
-        command_name = command_text.lstrip('/.$') if command_text else "chk"
+        command_text = message.text.split()[0]  # Get /chk or .chk or $chk
+        command_name = command_text.lstrip('/.$')  # Extract just 'chk'
 
         # Check if command is disabled
         if is_command_disabled(command_name):
