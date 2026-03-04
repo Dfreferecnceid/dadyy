@@ -223,16 +223,16 @@ MASS_COMMANDS_CONFIG = {
             "note": "As Per User's Plan"
         },
         {
-            "name": "Mass Stripe Charge (/mxp)",
-            "command": "$mxp cc|mm|yy|cvv",
-            "command_key": "mxp",
+            "name": "Mass Stripe Charge (/mxx)",
+            "command": "$mxx cc|mm|yy|cvv",
+            "command_key": "mxx",
             "status": "",  # Will be filled dynamically
             "note": "As Per User's Plan"
         },
         {
-            "name": "Mass Stripe Charge (/mxx)",
-            "command": "$mxx cc|mm|yy|cvv",
-            "command_key": "mxx",
+            "name": "Mass Stripe Charge Auto (/mstr)",
+            "command": "$mstr cc|mm|yy|cvv",
+            "command_key": "mstr",
             "status": "",  # Will be filled dynamically
             "note": "As Per User's Plan"
         }
