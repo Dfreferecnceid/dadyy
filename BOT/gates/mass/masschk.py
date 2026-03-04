@@ -160,53 +160,32 @@ async def parse_card_list_from_command(message):
     # Get the full message text
     full_text = message.text or ""
     
-    # Remove the command part from the first line
-    lines = full_text.splitlines()
+    # Remove the command part
+    lines = full_text.split('\n')
     
-    if not lines:
-        return card_list
-    
-    # Handle first line - remove command prefix
-    first_line = lines[0]
-    command_patterns = ['/mchk', '.mchk', '$mchk']
-    
-    cleaned_lines = []
-    
+    # Skip the first line if it contains the command
     for i, line in enumerate(lines):
         line = line.strip()
         if not line:
             continue
             
-        if i == 0:
-            # Remove command from first line
-            for pattern in command_patterns:
-                if line.startswith(pattern):
-                    line = line[len(pattern):].strip()
-                    break
+        # Check if this line contains the command
+        if i == 0 and any(line.startswith(prefix) for prefix in ['/mchk', '.mchk', '$mchk']):
+            # This is the command line, extract content after command
+            parts = line.split()
+            if len(parts) > 1:
+                # There might be cards on the same line
+                remaining_text = ' '.join(parts[1:]).strip()
+                if remaining_text:
+                    # Extract cards from this text
+                    all_cards, unique_cards = extract_cards(remaining_text)
+                    card_list.extend(unique_cards)
+            continue
         
+        # Regular line - extract cards from this line
         if line:
-            cleaned_lines.append(line)
-    
-    # Join all cleaned lines with newlines and extract cards using regex
-    # This ensures cards split across lines are properly captured
-    combined_text = '\n'.join(cleaned_lines)
-    
-    # Use regex to find all card patterns (supports multiple formats)
-    # Pattern: 13-19 digit number followed by | or separator, then month, year, cvv
-    card_pattern = r'\b(\d{13,19})[|\s]+(\d{1,2})[|\s]+(\d{2,4})[|\s]+(\d{3,4})\b'
-    
-    matches = re.findall(card_pattern, combined_text)
-    
-    for match in matches:
-        cc, mes, ano, cvv = match
-        # Normalize year to 2 digits if it's 4 digits
-        if len(ano) == 4:
-            ano = ano[2:]
-        # Ensure month is 2 digits
-        if len(mes) == 1:
-            mes = '0' + mes
-        # Format as pipe-separated
-        card_list.append(f"{cc}|{mes}|{ano}|{cvv}")
+            all_cards, unique_cards = extract_cards(line)
+            card_list.extend(unique_cards)
     
     # Remove duplicates while preserving order
     seen = set()
