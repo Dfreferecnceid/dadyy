@@ -427,7 +427,7 @@ class StripeChargeChecker:
         first_name = html.escape(user_data.get("first_name", "User"))
         badge = user_data.get("plan", {}).get("badge", "🎭")
 
-        # Determine status based on message content (like in response.py)
+        # Determine status based on message content
         raw_message = str(message).lower()
 
         # Check for success patterns
@@ -445,15 +445,6 @@ class StripeChargeChecker:
             "3ds",
             "requires_action",
             "authentication_required"
-        ]
-
-        # Check for decline patterns
-        decline_patterns = [
-            "declined",
-            "failed",
-            "error",
-            "unsupported",
-            "invalid"
         ]
 
         status_flag = "Declined ❌"
@@ -650,7 +641,7 @@ class StripeChargeChecker:
                 'description': self.campaign_description,
                 'ID': '0',
                 'custom_donation_amount': '10.00',
-                'recurring_donation': 'once',  # Added based on the payload
+                'recurring_donation': 'once',
                 'first_name': user_info['first_name'],
                 'last_name': user_info['last_name'],
                 'email': user_info['email'],
@@ -935,8 +926,8 @@ class StripeChargeChecker:
                 await client.aclose()
             return await self.format_response(cc, mes, ano, cvv, "ERROR", f"System error: {str(e)[:80]}", username, time.time()-start_time, user_data)
 
-# Command handler for /xc command only
-@Client.on_message(filters.command(["xc", ".xc", "$xc"]))
+# Command handler for /xc command only - FIXED: Only match exact /xc command, not /mxc
+@Client.on_message(filters.command(["xc", ".xc", "$xc"]) & ~filters.command(["mxc", ".mxc", "$mxc"]))
 @auth_and_free_restricted
 async def handle_stripe_charge(client: Client, message: Message):
     try:
