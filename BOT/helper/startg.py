@@ -152,18 +152,18 @@ SHOPIFY_CHARGE_CONFIG = {
             "note": "2 Credits"
         },
         {
-            "name": "Self Shopify - 0$",
-            "command": "$slf cc|mm|yy|cvv",
-            "command_key": "slf",
-            "status": "",  # Will be filled dynamically
-            "note": "2 Credits"
-        },
-        {
             "name": "Shopify Charge (/so) - 0.60$",  # NEW COMMAND
             "command": "$so cc|mm|yy|cvv",
             "command_key": "so",
             "status": "",  # Will be filled dynamically
             "note": "2 Credits"
+        },
+        {
+            "name": "Shopify Charge (/sf) - 0.77$",  # PLACEHOLDER
+            "command": "$sf cc|mm|yy|cvv",
+            "command_key": "sf",
+            "status": "",  # Will be filled dynamically
+            "note": "2 credits"
         },
         {
             "name": "Shopify Charge (/sp) - 1.00$",  # PLACEHOLDER
@@ -180,18 +180,18 @@ SHOPIFY_CHARGE_CONFIG = {
             "note": "2 credits"
         },
         {
-            "name": "Shopify Charge (/sf) - 0.77$",  # PLACEHOLDER
-            "command": "$sf cc|mm|yy|cvv",
-            "command_key": "sf",
-            "status": "",  # Will be filled dynamically
-            "note": "2 credits"
-        },
-        {
-            "name": "Shopify Charge (/sy) - Coming Soon",  # PLACEHOLDER
+            "name": "Mass Shopify Charge  (/sy)",  # PLACEHOLDER
             "command": "$sy cc|mm|yy|cvv",
             "command_key": "sy",
             "status": "",  # Will be filled dynamically
-            "note": "Coming Soon ⏳"
+            "note": "5 credits"
+        },
+        {
+            "name": "Self Shopify - 0$",
+            "command": "$slf cc|mm|yy|cvv",
+            "command_key": "slf",
+            "status": "",  # Will be filled dynamically
+            "note": "2 Credits"
         }
     ]
 }
