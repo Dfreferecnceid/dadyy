@@ -501,17 +501,12 @@ async def handle_mass_stripe_charge(client: Client, message: Message):
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: Please provide card details in one of these formats:
 
-<b>Format 1 (Reply to file/text):</b>
 • Reply to a text file or message containing cards with /mxc
 
-<b>Format 2 (Multi-line after command):</b>
 <code>/mxc
 5414963811565512|09|28|822
 4221352001240530|12|26|050</code>
-
-<b>Format 3 (Single line):</b>
-<code>/mxc 5414963811565512|09|28|822</code>
-
+━━━━━━━━━━━━━
 ⟐ <b>Note:</b> <code>Cards will be auto-filtered from any format</code>
 ━━━━━━━━━━━━━""")
             return
@@ -703,3 +698,4 @@ async def handle_mass_stripe_charge(client: Client, message: Message):
                 os.remove(file_path)
             except:
                 pass
+
