@@ -725,18 +725,13 @@ async def handle_mass_stripe_auth2(client: Client, message: Message):
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: Please provide card details in one of these formats:
 
-<b>Format 1 (Reply to file/text):</b>
 • Reply to a text file or message containing cards with /mchk
 
-<b>Format 2 (Multi-line after command):</b>
 <code>/mchk
 5414963811565512|09|28|822
 4221352001240530|12|26|050</code>
-
-<b>Format 3 (Single line):</b>
-<code>/mchk 5414963811565512|09|28|822 4221352001240530|12|26|050</code>
-
-⟐ <b>Note:</b> <code>Cards will be auto-filtered from any format</code>
+━━━━━━━━━━━━━
+⟐ <b>Note:</b> <code>Use correct format</code>
 ━━━━━━━━━━━━━""")
             return
         
@@ -958,3 +953,4 @@ async def handle_mass_stripe_auth2(client: Client, message: Message):
                 pass
 
 print("✅ Mass Stripe Auth 2 (mchk) loaded successfully!")
+
