@@ -160,30 +160,29 @@ async def parse_card_list_from_command(message):
     # Get the full message text
     full_text = message.text or ""
     
-    # Remove the command part
+    # Remove the command part completely
+    # Split by lines first
     lines = full_text.split('\n')
     
-    # Skip the first line if it contains the command
-    for i, line in enumerate(lines):
+    # Process each line
+    for line in lines:
         line = line.strip()
         if not line:
             continue
-            
+        
         # Check if this line contains the command
-        if i == 0 and any(line.startswith(prefix) for prefix in ['/mchk', '.mchk', '$mchk']):
-            # This is the command line, extract content after command
-            parts = line.split()
+        if any(line.startswith(prefix) for prefix in ['/mchk', '.mchk', '$mchk']):
+            # Extract content after command on the same line
+            parts = line.split(maxsplit=1)
             if len(parts) > 1:
-                # There might be cards on the same line
-                remaining_text = ' '.join(parts[1:]).strip()
+                # There are cards on the same line after command
+                remaining_text = parts[1].strip()
                 if remaining_text:
                     # Extract cards from this text
                     all_cards, unique_cards = extract_cards(remaining_text)
                     card_list.extend(unique_cards)
-            continue
-        
-        # Regular line - extract cards from this line
-        if line:
+        else:
+            # Regular line without command - extract cards directly
             all_cards, unique_cards = extract_cards(line)
             card_list.extend(unique_cards)
     
@@ -195,6 +194,7 @@ async def parse_card_list_from_command(message):
             seen.add(card)
             unique_cards.append(card)
     
+    print(f"📝 Parsed {len(unique_cards)} cards from command: {unique_cards}")
     return unique_cards
 
 class MassStripeAuth2Checker:
@@ -718,7 +718,7 @@ async def handle_mass_stripe_auth2(client: Client, message: Message):
 4221352001240530|12|26|050</code>
 
 <b>Format 3 (Single line):</b>
-<code>/mchk 5414963811565512|09|28|822</code>
+<code>/mchk 5414963811565512|09|28|822 4221352001240530|12|26|050</code>
 
 ⟐ <b>Note:</b> <code>Cards will be auto-filtered from any format</code>
 ━━━━━━━━━━━━━""")
@@ -793,7 +793,7 @@ async def handle_mass_stripe_auth2(client: Client, message: Message):
         
         # Create ONE shared session for ALL cards
         print("🔄 Creating shared session for mass check...")
-        client, nonce, session_msg = await mass_checker.checker.create_authenticated_session()
+        session_client, nonce, session_msg = await mass_checker.checker.create_authenticated_session()
         
         if not nonce:
             await processing_msg.edit_text("""<pre>❌ Session Creation Failed</pre>
@@ -815,7 +815,7 @@ async def handle_mass_stripe_auth2(client: Client, message: Message):
                     card_details,
                     username,
                     user_data,
-                    client=client,
+                    client=session_client,
                     nonce=nonce,
                     retry_count=0
                 )
@@ -828,7 +828,7 @@ async def handle_mass_stripe_auth2(client: Client, message: Message):
                     # For >5 cards, send approved cards immediately
                     if card_count > 5:
                         await mass_checker.send_approved_card_immediately(
-                            client, message, result, i+1, card_count
+                            session_client, message, result, i+1, card_count
                         )
                         approved_sent += 1
                 elif "DECLINED" in result:
@@ -868,9 +868,9 @@ async def handle_mass_stripe_auth2(client: Client, message: Message):
                 await asyncio.sleep(random.uniform(1, 2))
         
         # Close the shared session after all cards are processed
-        if client:
+        if session_client:
             try:
-                await client.aclose()
+                await session_client.aclose()
                 print("✅ Shared session closed successfully")
             except:
                 print("⚠️ Failed to close shared session")
@@ -882,7 +882,7 @@ async def handle_mass_stripe_auth2(client: Client, message: Message):
             # For >5 cards: We've already sent approved cards immediately
             # Now just send the final summary
             await mass_checker.send_final_summary(
-                client, message, successful, failed + errors,
+                session_client, message, successful, failed + errors,
                 card_count, username, elapsed_time, user_data, processing_msg
             )
         else:
