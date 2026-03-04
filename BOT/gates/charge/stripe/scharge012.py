@@ -1,4 +1,4 @@
-# BOT/gates/charge/scharge012.py
+# BOT/gates/charge/stripe/scharge012.py
 
 import json
 import asyncio
@@ -33,7 +33,7 @@ try:
 except ImportError:
     charge_processor = None
 
-# Import proxy system - INTEGRATED FROM SHOPIFY.PY
+# Import proxy system
 try:
     from BOT.tools.proxy import (
         get_proxy_for_user,
@@ -253,7 +253,7 @@ class StripeCharge012Checker:
         # User agent for proxy
         self.user_id = user_id
         
-        # Proxy management - INTEGRATED FROM SHOPIFY.PY
+        # Proxy management
         self.proxy_url = None
         self.proxy_status = "Dead 🚫"  # Default status
         self.proxy_used = False
@@ -413,7 +413,6 @@ class StripeCharge012Checker:
         message = re.sub(r'\.?\s*Try\s+again\.?$', '', message, flags=re.IGNORECASE)
         
         # Remove trailing periods, spaces, and parentheses
-        # FIX: Remove trailing ) or ). patterns
         message = re.sub(r'\)\.?$', '', message)  # Remove trailing ) or ). 
         message = re.sub(r'\.$', '', message)     # Remove trailing single period
         message = message.rstrip('. )').strip()  # Remove trailing periods, spaces, and )
@@ -1152,7 +1151,7 @@ class StripeCharge012Checker:
         card_masked = card_details[:12] + "XXXX" + card_details[-4:] if len(card_details) > 4 else card_details
         logger.info(f"🔍 Starting Stripe Charge €0.12 check: {card_masked}")
 
-        # Step 0: Get proxy for user (INTEGRATED FROM SHOPIFY.PY)
+        # Step 0: Get proxy for user
         logger.step(0, 6, "Getting proxy...")
         
         if not PROXY_SYSTEM_AVAILABLE:
@@ -1431,7 +1430,7 @@ async def handle_stripe_charge_012(client: Client, message: Message):
 ━━━━━━━━━━━━━""")
             return
 
-        # Show processing message - MATCHING scharge1.py STYLE
+        # Show processing message
         processing_msg = await message.reply(
             charge_processor.get_processing_message(
                 cc, mes, ano, cvv, username, plan_name, 
