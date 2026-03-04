@@ -17,10 +17,10 @@ from pathlib import Path
 
 # Import all shopify gate checkers from the shopify directory
 from BOT.gates.charge.shopify.shopify import ShopifyChargeCheckerHTTP as ShopifyChecker
-from BOT.gates.charge.shopify.scharge054 import ShopifyTaffyChecker as Shopify054Checker
+from BOT.gates.charge.shopify.shopify054 import ShopifyTaffyChecker as Shopify054Checker
 from BOT.gates.charge.shopify.shopify077 import ShopifyMiddleEasternChecker as Shopify077Checker
 from BOT.gates.charge.shopify.shopify100 import ShopifyKauffmanChecker as Shopify100Checker
-from BOT.gates.charge.shopify.scharge104 import ShopifyRouteChargeChecker as Shopify104Checker
+from BOT.gates.charge.shopify.shopify104 import ShopifyRouteChargeChecker as Shopify104Checker
 from BOT.helper.permissions import auth_and_free_restricted
 from BOT.helper.Admins import is_command_disabled, get_command_offline_message
 from BOT.gc.credit import deduct_credit, get_user_credits, has_sufficient_credits, charge_processor
@@ -753,4 +753,5 @@ async def handle_mass_shopify_auto(client: Client, message: Message):
             try:
                 os.remove(file_path)
             except:
+
                 pass
