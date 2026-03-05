@@ -1546,7 +1546,7 @@ async def handle_stripe_charge_012(client: Client, message: Message):
                 await message.reply(charge_processor.get_usage_message(
                     "xx", 
                     "Stripe Charge €0.12",
-                    "4111111111111111|12|2025|123"
+                    "4111111111111111|12|2030|123"
                 ))
             else:
                 await message.reply("""<pre>#WAYNE ─[STRIPE CHARGE €0.12]─</pre>
