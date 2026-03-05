@@ -2442,10 +2442,8 @@ async def handle_shopify_taffy(client: Client, message: Message):
         if not parsed:
             await message.reply("""<pre>❌ Invalid Format</pre>
 ━━━━━━━━━━━━━
-🠪 <b>Message</b>: Could not extract card details. Please use format like:
+🠪 <b>Message</b>: Could not extract card details.
 🠪 <b>Format 1</b>: <code>cc|mm|yy|cvv</code>
-🠪 <b>Format 2</b>: <code>cc mm yy cvv</code>
-🠪 <b>Format 3</b>: <code>cc,mm,yyyy,cvv</code>
 ━━━━━━━━━━━━━""")
             return
 
@@ -2527,3 +2525,4 @@ async def handle_shopify_taffy(client: Client, message: Message):
 🠪 <b>Error</b>: <code>{error_msg}</code>
 🠪 <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
 ━━━━━━━━━━━━━""")
+
