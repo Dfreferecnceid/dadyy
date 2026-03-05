@@ -787,11 +787,11 @@ class ShopifyTaffyCheckout:
         return f"{self.checkout_token}-{timestamp}"
 
     async def get_product_page(self):
-        """Step 1: Get product page to get initial cookies"""
+        """Step 1: Get product page to get initial cookies - INCREASED TIMEOUT TO 30 SECONDS"""
         self.step(1, "GET PRODUCT PAGE", f"Loading saltwater taffy product page")
         
         try:
-            resp = await self.client.get(self.product_url, headers=self.headers, timeout=25, follow_redirects=True)
+            resp = await self.client.get(self.product_url, headers=self.headers, timeout=30, follow_redirects=True)
             
             if resp.status_code != 200:
                 self.logger.error_log("PRODUCT_PAGE", f"Failed: {resp.status_code}")
@@ -812,7 +812,7 @@ class ShopifyTaffyCheckout:
             return False, f"Product page error: {str(e)[:50]}"
 
     async def add_to_cart(self):
-        """Step 2: Add 5 units of saltwater taffy to cart"""
+        """Step 2: Add 5 units of saltwater taffy to cart - INCREASED TIMEOUT TO 30 SECONDS"""
         self.step(2, "ADD TO CART", "Adding 5 x Saltwater Taffy (0.50$ total)")
         
         cart_headers = {
@@ -834,7 +834,7 @@ class ShopifyTaffyCheckout:
                 f"{self.base_url}/cart/add.js",
                 headers=cart_headers,
                 data=cart_data,
-                timeout=25,
+                timeout=30,
                 follow_redirects=True
             )
             
@@ -857,7 +857,7 @@ class ShopifyTaffyCheckout:
             return False, f"Add to cart error: {str(e)[:50]}"
 
     async def get_checkout_token(self):
-        """Step 3: Get checkout token by proceeding to checkout"""
+        """Step 3: Get checkout token by proceeding to checkout - INCREASED TIMEOUT TO 30 SECONDS"""
         self.step(3, "GET CHECKOUT TOKEN", "Obtaining checkout token")
         
         checkout_headers = {
@@ -874,7 +874,7 @@ class ShopifyTaffyCheckout:
                 checkout_url,
                 headers=checkout_headers,
                 follow_redirects=True,
-                timeout=25
+                timeout=30
             )
             
             # Get final URL from redirects
@@ -912,7 +912,7 @@ class ShopifyTaffyCheckout:
             return False, f"Checkout token error: {str(e)[:50]}"
 
     async def get_session_token(self):
-        """Step 4: Extract session token from checkout page"""
+        """Step 4: Extract session token from checkout page - INCREASED TIMEOUT TO 30 SECONDS"""
         self.step(4, "GET SESSION TOKEN", "Extracting session token")
         
         checkout_headers = {
@@ -927,7 +927,7 @@ class ShopifyTaffyCheckout:
             resp = await self.client.get(
                 checkout_page_url,
                 headers=checkout_headers,
-                timeout=25,
+                timeout=30,
                 follow_redirects=True
             )
             
@@ -955,7 +955,7 @@ class ShopifyTaffyCheckout:
             return False, f"Session token error: {str(e)[:50]}"
 
     async def submit_proposal(self):
-        """Step 5: Submit proposal with pickup delivery method"""
+        """Step 5: Submit proposal with pickup delivery method - INCREASED TIMEOUT TO 30 SECONDS"""
         self.step(5, "SUBMIT PROPOSAL", "Setting pickup delivery method")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
@@ -1110,7 +1110,7 @@ class ShopifyTaffyCheckout:
                 graphql_url + "?operationName=Proposal",
                 headers=graphql_headers,
                 json=payload,
-                timeout=25
+                timeout=30
             )
             
             if resp.status_code != 200:
@@ -1162,7 +1162,7 @@ class ShopifyTaffyCheckout:
             return False, f"Proposal error: {str(e)[:50]}"
 
     async def update_contact_info(self):
-        """Step 6: Update contact information with email"""
+        """Step 6: Update contact information with email - INCREASED TIMEOUT TO 30 SECONDS"""
         self.step(6, "UPDATE CONTACT", f"Setting email: {self.email}")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
@@ -1312,7 +1312,7 @@ class ShopifyTaffyCheckout:
                 graphql_url + "?operationName=Proposal",
                 headers=graphql_headers,
                 json=payload,
-                timeout=25
+                timeout=30
             )
             
             if resp.status_code != 200:
@@ -1340,7 +1340,7 @@ class ShopifyTaffyCheckout:
             return False, f"Contact update error: {str(e)[:50]}"
 
     async def select_pickup_delivery(self):
-        """Step 7: Select pickup delivery method (Heart of Iowa location)"""
+        """Step 7: Select pickup delivery method (Heart of Iowa location) - INCREASED TIMEOUT TO 30 SECONDS"""
         self.step(7, "SELECT PICKUP", "Choosing Heart of Iowa pickup location")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
@@ -1489,7 +1489,7 @@ class ShopifyTaffyCheckout:
                 graphql_url + "?operationName=Proposal",
                 headers=graphql_headers,
                 json=payload,
-                timeout=25
+                timeout=30
             )
             
             if resp.status_code != 200:
@@ -1517,7 +1517,7 @@ class ShopifyTaffyCheckout:
             return False, f"Pickup selection error: {str(e)[:50]}"
 
     async def create_payment_session(self, cc, mes, ano, cvv):
-        """Step 8: Create payment session with PCI"""
+        """Step 8: Create payment session with PCI - INCREASED TIMEOUT TO 30 SECONDS"""
         self.step(8, "CREATE PAYMENT", "Creating payment session with PCI")
         
         pci_headers = {
@@ -1573,12 +1573,12 @@ class ShopifyTaffyCheckout:
         
         try:
             # Use separate client for PCI
-            async with httpx.AsyncClient(proxy=self.proxy_url, timeout=25) as pci_client:
+            async with httpx.AsyncClient(proxy=self.proxy_url, timeout=30) as pci_client:
                 resp = await pci_client.post(
                     'https://checkout.pci.shopifyinc.com/sessions',
                     headers=pci_headers,
                     json=pci_payload,
-                    timeout=25
+                    timeout=30
                 )
                 
                 if resp.status_code != 200:
@@ -1609,7 +1609,7 @@ class ShopifyTaffyCheckout:
             return False, "PCI_ERROR"
 
     async def update_billing_address(self, payment_session_id):
-        """Step 9: Update billing address with pickup location address"""
+        """Step 9: Update billing address with pickup location address - INCREASED TIMEOUT TO 30 SECONDS"""
         self.step(9, "UPDATE BILLING", "Setting billing address")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
@@ -1804,7 +1804,7 @@ class ShopifyTaffyCheckout:
                 graphql_url + "?operationName=Proposal",
                 headers=graphql_headers,
                 json=payload,
-                timeout=25
+                timeout=30
             )
             
             if resp.status_code != 200:
@@ -1832,7 +1832,7 @@ class ShopifyTaffyCheckout:
             return False, f"Billing update error: {str(e)[:50]}"
 
     async def submit_for_completion(self, payment_session_id):
-        """Step 10: Submit for completion - final payment"""
+        """Step 10: Submit for completion - final payment - INCREASED TIMEOUT TO 30 SECONDS"""
         self.step(10, "SUBMIT PAYMENT", "Finalizing payment")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
@@ -2038,7 +2038,7 @@ class ShopifyTaffyCheckout:
                 graphql_url + "?operationName=SubmitForCompletion",
                 headers=graphql_headers,
                 json=payload,
-                timeout=25
+                timeout=30
             )
             
             if resp.status_code != 200:
@@ -2100,7 +2100,7 @@ class ShopifyTaffyCheckout:
             return False, f"Submit error: {str(e)[:50]}"
 
     async def poll_receipt(self, headers, max_polls=5):
-        """Step 12: Poll for receipt status"""
+        """Step 12: Poll for receipt status - INCREASED TIMEOUT TO 30 SECONDS"""
         self.step(12, "POLL RECEIPT", "Polling for payment status")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
@@ -2125,7 +2125,7 @@ class ShopifyTaffyCheckout:
                     graphql_url,
                     headers={**headers, 'accept': 'application/json'},
                     params=poll_params,
-                    timeout=25
+                    timeout=30
                 )
                 
                 if resp.status_code != 200:
@@ -2142,7 +2142,7 @@ class ShopifyTaffyCheckout:
                         graphql_url + "?operationName=PollForReceipt",
                         headers=headers,
                         json=poll_payload,
-                        timeout=25
+                        timeout=30
                     )
                 
                 if resp.status_code != 200:
@@ -2220,13 +2220,13 @@ class ShopifyTaffyCheckout:
                     self.logger.error_log("NO_PROXY", "No working proxies available")
                     return False, "NO_PROXY_AVAILABLE"
                 
-                self.client = httpx.AsyncClient(proxy=self.proxy_url, timeout=25, follow_redirects=True)
+                self.client = httpx.AsyncClient(proxy=self.proxy_url, timeout=30, follow_redirects=True)
                 self.proxy_status = "Live ⚡️"
                 self.proxy_used = True
                 self.logger.data_extracted("Proxy", f"{self.proxy_url[:30]}...", "Proxy System")
             else:
                 self.proxy_status = "No Proxy"
-                self.client = httpx.AsyncClient(timeout=25, follow_redirects=True)
+                self.client = httpx.AsyncClient(timeout=30, follow_redirects=True)
             
             # Step 1: Get product page
             success, result = await self.get_product_page()
