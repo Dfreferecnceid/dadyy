@@ -14,6 +14,7 @@ from pyrogram import Client, filters
 from pyrogram.types import Message
 import html
 import os
+import unicodedata
 
 # Import from helper modules
 try:
@@ -45,6 +46,28 @@ except ImportError:
     def get_bin_details(bin_number):
         return {}
 
+# Import smart card parser from filter.py
+try:
+    from BOT.helper.filter import extract_cards, normalize_year
+    FILTER_AVAILABLE = True
+    print("✅ Smart card parser imported successfully from filter.py")
+except ImportError as e:
+    print(f"❌ Filter import error: {e}")
+    FILTER_AVAILABLE = False
+    # Fallback basic parser if filter.py not available
+    def extract_cards(text):
+        cards = []
+        for line in text.splitlines():
+            parts = line.replace('|', ' ').split()
+            if len(parts) >= 4:
+                cards.append('|'.join(parts[:4]))
+        return cards, list(set(cards))
+    def normalize_year(y):
+        y = y.strip()
+        if len(y) == 4:
+            return y[-2:]
+        return y
+
 # Import proxy system functions
 try:
     from BOT.tools.proxy import (
@@ -73,6 +96,157 @@ except ImportError as e:
         return None
     def test_proxy(proxy_str: str):
         return False
+
+# ========== INTELLIGENT CARD PARSING (COPIED FROM SHOPIFY054.PY) ==========
+def strip_all_unicode(text):
+    """
+    Remove ALL Unicode characters, keep only ASCII (letters, numbers, basic punctuation)
+    """
+    # Normalize unicode characters to ASCII where possible
+    try:
+        # First, try to normalize using NFKD form which decomposes unicode characters
+        normalized = unicodedata.normalize('NFKD', text)
+        # Then encode to ASCII, ignoring errors, and decode back
+        ascii_text = normalized.encode('ASCII', 'ignore').decode('ASCII')
+    except:
+        # Fallback: manually filter out non-ASCII characters
+        ascii_text = ''.join(char for char in text if ord(char) < 128)
+    
+    # Keep only digits, letters, pipes, spaces, commas, slashes, and hyphens
+    # This preserves card separators while removing decorative characters
+    cleaned = re.sub(r'[^0-9a-zA-Z\|\s,\/\-]', ' ', ascii_text)
+    
+    # Replace multiple spaces with single space
+    cleaned = re.sub(r'\s+', ' ', cleaned)
+    
+    return cleaned.strip()
+
+def extract_card_from_cleaned_text(text):
+    """
+    Extract card details from cleaned ASCII text
+    """
+    # Pattern 1: Standard format with pipe (cc|mm|yy|cvv)
+    pattern1 = r'(\d{13,16})\s*[|\s]\s*(\d{1,2})\s*[|\s]\s*(\d{2,4})\s*[|\s]\s*(\d{3,4})'
+    match = re.search(pattern1, text)
+    if match:
+        cc, mes, ano, cvv = match.groups()
+        # Normalize year
+        if len(ano) == 4:
+            ano = ano[-2:]
+        mes = mes.zfill(2)
+        return [cc, mes, ano, cvv]
+    
+    # Pattern 2: Space or comma separated (cc mm yy cvv) or (cc,mm,yy,cvv)
+    pattern2 = r'(\d{13,16})\s*[, ]\s*(\d{1,2})\s*[, ]\s*(\d{2,4})\s*[, ]\s*(\d{3,4})'
+    match = re.search(pattern2, text)
+    if match:
+        cc, mes, ano, cvv = match.groups()
+        if len(ano) == 4:
+            ano = ano[-2:]
+        mes = mes.zfill(2)
+        return [cc, mes, ano, cvv]
+    
+    # Pattern 3: Find all digit sequences and try to find valid card
+    digits = re.findall(r'\d+', text)
+    
+    # Try to find a valid card sequence
+    for i in range(len(digits) - 3):
+        potential_cc = digits[i]
+        potential_mes = digits[i+1]
+        potential_ano = digits[i+2]
+        potential_cvv = digits[i+3]
+        
+        # Check if this looks like a valid card
+        if (13 <= len(potential_cc) <= 16 and 
+            len(potential_mes) in [1, 2] and 
+            len(potential_ano) in [2, 4] and 
+            len(potential_cvv) in [3, 4]):
+            
+            # Validate month
+            try:
+                mes_int = int(potential_mes)
+                if 1 <= mes_int <= 12:
+                    # Validate year (not too far in past/future)
+                    current_year = datetime.now().year % 100
+                    
+                    # Handle 4-digit year
+                    if len(potential_ano) == 4:
+                        ano_val = int(potential_ano) % 100
+                    else:
+                        ano_val = int(potential_ano)
+                    
+                    # Year should be within reasonable range (current year to +10 years)
+                    if current_year - 5 <= ano_val <= current_year + 10:
+                        cc = potential_cc
+                        mes = potential_mes.zfill(2)
+                        ano = potential_ano[-2:]  # Always take last 2 digits
+                        cvv = potential_cvv
+                        return [cc, mes, ano, cvv]
+            except:
+                continue
+    
+    # Pattern 4: Look for card number followed by expiry and CVV with labels
+    pattern4 = r'[Cc]ard:?\s*(\d{13,16}).*?(\d{1,2})[\/\-](\d{2,4}).*?(\d{3,4})'
+    match = re.search(pattern4, text, re.IGNORECASE | re.DOTALL)
+    if match:
+        cc, mes, ano, cvv = match.groups()
+        if len(ano) == 4:
+            ano = ano[-2:]
+        mes = mes.zfill(2)
+        return [cc, mes, ano, cvv]
+    
+    # Pattern 5: Generic pattern with slashes for dates
+    pattern5 = r'(\d{13,16}).*?(\d{1,2})[\/\-](\d{2,4}).*?(\d{3,4})'
+    match = re.search(pattern5, text, re.DOTALL)
+    if match:
+        cc, mes, ano, cvv = match.groups()
+        if len(ano) == 4:
+            ano = ano[-2:]
+        mes = mes.zfill(2)
+        return [cc, mes, ano, cvv]
+    
+    return None
+
+def parse_card_input(card_input):
+    """
+    Parse card input by first stripping ALL Unicode, then extracting card details
+    """
+    # Step 1: Strip all Unicode characters
+    cleaned_text = strip_all_unicode(card_input)
+    
+    # Step 2: Extract card from cleaned text
+    result = extract_card_from_cleaned_text(cleaned_text)
+    if result:
+        return result
+    
+    # Step 3: If still no result, try filter.py as fallback
+    if FILTER_AVAILABLE:
+        all_cards, unique_cards = extract_cards(card_input)  # Use original for filter
+        if unique_cards:
+            card_parts = unique_cards[0].split('|')
+            if len(card_parts) == 4:
+                cc, mes, ano, cvv = card_parts
+                if len(ano) == 4:
+                    ano = ano[-2:]
+                mes = mes.zfill(2)
+                return [cc, mes, ano, cvv]
+    
+    # Step 4: Last resort - try direct split on original
+    if '|' in card_input:
+        parts = card_input.split('|')
+        if len(parts) >= 4:
+            cc = re.sub(r'\D', '', parts[0])
+            mes = re.sub(r'\D', '', parts[1])
+            ano = re.sub(r'\D', '', parts[2])
+            cvv = re.sub(r'\D', '', parts[3])
+            if cc and mes and ano and cvv:
+                if len(ano) == 4:
+                    ano = ano[-2:]
+                mes = mes.zfill(2)
+                return [cc, mes, ano, cvv]
+    
+    return None
+# ========== END OF INTELLIGENT CARD PARSING ==========
 
 # ========== DETAILED LOGGER ==========
 class ShopifyLogger:
@@ -600,10 +774,10 @@ class RouteChargeCheckout:
         
         try:
             # Use HEAD request first to get cookies faster
-            resp = await self.client.head(self.product_url, headers=self.headers, timeout=15, follow_redirects=True)
+            resp = await self.client.head(self.product_url, headers=self.headers, timeout=25, follow_redirects=True)
             
             # Then GET for actual content if needed
-            resp = await self.client.get(self.product_url, headers=self.headers, timeout=15, follow_redirects=True)
+            resp = await self.client.get(self.product_url, headers=self.headers, timeout=25, follow_redirects=True)
             
             if resp.status_code != 200:
                 self.logger.error_log("PRODUCT_PAGE", f"Failed: {resp.status_code}")
@@ -666,7 +840,7 @@ class RouteChargeCheckout:
                         checkout_url,
                         headers=checkout_headers,
                         follow_redirects=True,
-                        timeout=15
+                        timeout=25
                     )
                     
                     # Get final URL from redirects
@@ -679,7 +853,7 @@ class RouteChargeCheckout:
                             checkout_url,
                             headers=checkout_headers,
                             follow_redirects=True,
-                            timeout=20
+                            timeout=25
                         )
                         current_url = str(resp.url)
                         self.checkout_token = self.extract_checkout_token(current_url)
@@ -751,7 +925,7 @@ class RouteChargeCheckout:
                 f"{self.base_url}/shopify_pay/accelerated_checkout",
                 headers=accel_headers,
                 json=accel_payload,
-                timeout=15,
+                timeout=25,
                 follow_redirects=True
             )
             
@@ -968,7 +1142,7 @@ class RouteChargeCheckout:
                 graphql_url,
                 headers=graphql_headers,
                 json=payload,
-                timeout=15
+                timeout=25
             )
             
             if resp.status_code != 200:
@@ -1066,12 +1240,12 @@ class RouteChargeCheckout:
         
         try:
             # Use separate client for PCI
-            async with httpx.AsyncClient(proxy=self.proxy_url, timeout=15) as pci_client:
+            async with httpx.AsyncClient(proxy=self.proxy_url, timeout=25) as pci_client:
                 resp = await pci_client.post(
                     'https://checkout.pci.shopifyinc.com/sessions',
                     headers=pci_headers,
                     json=pci_payload,
-                    timeout=15
+                    timeout=25
                 )
                 
                 if resp.status_code != 200:
@@ -1332,7 +1506,7 @@ class RouteChargeCheckout:
                 graphql_url,
                 headers=graphql_headers,
                 json=payload,
-                timeout=15
+                timeout=25
             )
             
             if resp.status_code != 200:
@@ -1551,13 +1725,13 @@ class RouteChargeCheckout:
                     return False, "NO_PROXY_AVAILABLE"
                 
                 # Initialize client with proxy (no test to save time)
-                self.client = httpx.AsyncClient(proxy=self.proxy_url, timeout=15)
+                self.client = httpx.AsyncClient(proxy=self.proxy_url, timeout=25)
                 self.proxy_status = "Live ⚡️"
                 self.proxy_used = True
                 self.logger.data_extracted("Proxy", f"{self.proxy_url[:30]}...", "Proxy System")
             else:
                 self.proxy_status = "No Proxy"
-                self.client = httpx.AsyncClient(timeout=15)
+                self.client = httpx.AsyncClient(timeout=25)
             
             # Step 1: Get product page (fast)
             success, result = await self.get_product_page()
@@ -1616,22 +1790,20 @@ class ShopifyRouteChargeChecker:
         self.proxy_status = "Dead 🚫"
 
     async def check_card(self, card_details, username, user_data):
-        """Main card checking method"""
+        """Main card checking method with intelligent parsing"""
         start_time = time.time()
 
         self.logger = ShopifyLogger(self.user_id)
         self.logger.start_check(card_details)
 
         try:
-            cc_parts = card_details.split('|')
-            if len(cc_parts) < 4:
+            # Use intelligent parser to extract card details
+            parsed = parse_card_input(card_details)
+            if not parsed:
                 elapsed_time = time.time() - start_time
                 return format_shopify_response("", "", "", "", "Invalid card format", elapsed_time, username, user_data, self.proxy_status)
 
-            cc = cc_parts[0].strip().replace(" ", "")
-            mes = cc_parts[1].strip()
-            ano = cc_parts[2].strip()
-            cvv = cc_parts[3].strip()
+            cc, mes, ano, cvv = parsed
 
             # Basic validation
             if not cc.isdigit() or len(cc) < 15:
@@ -1672,10 +1844,10 @@ class ShopifyRouteChargeChecker:
             elapsed_time = time.time() - start_time
             self.logger.error_log("UNKNOWN", str(e))
             try:
-                cc = cc_parts[0]
-                mes = cc_parts[1]
-                ano = cc_parts[2]
-                cvv = cc_parts[3]
+                cc = parsed[0] if 'parsed' in locals() else ""
+                mes = parsed[1] if 'parsed' in locals() else ""
+                ano = parsed[2] if 'parsed' in locals() else ""
+                cvv = parsed[3] if 'parsed' in locals() else ""
             except:
                 cc = mes = ano = cvv = ""
             error_msg = str(e)
@@ -1736,28 +1908,35 @@ async def handle_shopify_route_charge(client: Client, message: Message):
             await message.reply("""<pre>#WAYNE ━[SHOPIFY CHARGE]━━</pre>
 ━━━━━━━━━━━━━
 🠪 <b>Command</b>: <code>/sp</code> or <code>.sp</code> or <code>$sp</code>
-🠪 <b>Usage</b>: <code>/sp cc|mm|yy|cvv</code>
+🠪 <b>Usage</b>: <code>/sp cc|mm|yy|cvv</code> (or any format)
 🠪 <b>Example</b>: <code>/sp 4111111111111111|12|2030|123</code>
 ━━━━━━━━━━━━━
 <b>~ Note:</b> <code>Shopify Charge</code>""")
             return
 
-        card_details = args[1].strip()
+        # Get the full message text after the command
+        full_text = message.text
+        # Remove the command part
+        command_parts = full_text.split(maxsplit=1)
+        if len(command_parts) < 2:
+            await message.reply("Please provide card details")
+            return
+        
+        card_input = command_parts[1].strip()
 
-        cc_parts = card_details.split('|')
-        if len(cc_parts) < 4:
+        # Parse using the intelligent parser
+        parsed = parse_card_input(card_input)
+        if not parsed:
             await message.reply("""<pre>❌ Invalid Format</pre>
 ━━━━━━━━━━━━━
-🠪 <b>Message</b>: Invalid card format.
-🠪 <b>Correct Format</b>: <code>cc|mm|yy|cvv</code>
-🠪 <b>Example</b>: <code>4111111111111111|12|2030|123</code>
+🠪 <b>Message</b>: Could not extract card details. Please use format like:
+🠪 <b>Format 1</b>: <code>cc|mm|yy|cvv</code>
+🠪 <b>Format 2</b>: <code>cc mm yy cvv</code>
+🠪 <b>Format 3</b>: <code>cc,mm,yyyy,cvv</code>
 ━━━━━━━━━━━━━""")
             return
 
-        cc = cc_parts[0]
-        mes = cc_parts[1]
-        ano = cc_parts[2]
-        cvv = cc_parts[3]
+        cc, mes, ano, cvv = parsed
 
         processing_msg = await message.reply(
             f"""
@@ -1782,7 +1961,7 @@ async def handle_shopify_route_charge(client: Client, message: Message):
                 result = await charge_processor.execute_charge_command(
                     user_id,
                     checker.check_card,
-                    card_details,
+                    card_input,  # Pass original input
                     username,
                     user_data,
                     credits_needed=2,
@@ -1796,13 +1975,13 @@ async def handle_shopify_route_charge(client: Client, message: Message):
                 elif isinstance(result, str):
                     await processing_msg.edit_text(result, disable_web_page_preview=True)
                 else:
-                    result_text = await checker.check_card(card_details, username, user_data)
+                    result_text = await checker.check_card(card_input, username, user_data)
                     await processing_msg.edit_text(result_text, disable_web_page_preview=True)
 
             except Exception as e:
                 print(f"❌ Charge processor error: {str(e)}")
                 try:
-                    result_text = await checker.check_card(card_details, username, user_data)
+                    result_text = await checker.check_card(card_input, username, user_data)
                     await processing_msg.edit_text(result_text, disable_web_page_preview=True)
                 except Exception as inner_e:
                     await processing_msg.edit_text(
@@ -1815,7 +1994,7 @@ async def handle_shopify_route_charge(client: Client, message: Message):
                     )
         else:
             try:
-                result_text = await checker.check_card(card_details, username, user_data)
+                result_text = await checker.check_card(card_input, username, user_data)
                 await processing_msg.edit_text(result_text, disable_web_page_preview=True)
             except Exception as e:
                 await processing_msg.edit_text(
