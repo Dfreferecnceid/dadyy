@@ -658,8 +658,9 @@ class StripeCharge3Checker:
         first_name = html.escape(str(user_data.get("first_name", "User")))
         badge = user_data.get("plan", {}).get("badge", "🧿")
 
-        # Trim the message for display
-        trimmed_message = self.trim_error_message(str(message)) if message else ""
+        # Trim the message for display - FIX: Convert message to string safely
+        message_str = str(message) if message is not None else ""
+        trimmed_message = self.trim_error_message(message_str)
 
         if any(pattern in trimmed_message.lower() for pattern in ["3d secure", "authentication required", "3ds", "requires_confirmation", "requires_action"]):
             status_emoji = "❌"
@@ -681,7 +682,7 @@ class StripeCharge3Checker:
 
         # FIX: Format elapsed_time safely
         try:
-            time_str = f"{elapsed_time:.2f}"
+            time_str = f"{float(elapsed_time):.2f}"
         except (ValueError, TypeError):
             time_str = str(elapsed_time)
 
@@ -1386,7 +1387,9 @@ class StripeCharge3Checker:
                         raise Exception(f"Proxy test failed with status {test_resp.status_code}")
                         
             except Exception as e:
-                logger.warning(f"Proxy test attempt {test_attempt + 1} failed: {str(e)}")
+                # FIX: Convert the exception to string properly to avoid float concatenation
+                error_str = str(e)
+                logger.warning(f"Proxy test attempt {test_attempt + 1} failed: {error_str}")
                 if test_attempt == 0:
                     await asyncio.sleep(1.5)
                     continue
@@ -1394,7 +1397,7 @@ class StripeCharge3Checker:
                     self.proxy_status = "Dead 🚫"
                     mark_proxy_failed(self.proxy_url)
                     await self.client.aclose()
-                    return await self.format_response("", "", "", "", "ERROR", f"Proxy test failed: {str(e)}", username, time.time()-start_time, user_data)
+                    return await self.format_response("", "", "", "", "ERROR", f"Proxy test failed: {error_str}", username, time.time()-start_time, user_data)
         
         if not proxy_working:
             self.proxy_status = "Dead 🚫"
@@ -1501,8 +1504,10 @@ class StripeCharge3Checker:
             self.proxy_status = "Dead 🚫"
             return await self.format_response(cc, mes, ano, cvv, "ERROR", "Connection failed", username, time.time()-start_time, user_data, bin_info)
         except Exception as e:
-            logger.error(f"Unexpected error: {str(e)}")
-            return await self.format_response(cc, mes, ano, cvv, "ERROR", f"System error: {str(e)[:80]}", username, time.time()-start_time, user_data, bin_info)
+            # FIX: Convert the exception to string properly
+            error_str = str(e)
+            logger.error(f"Unexpected error: {error_str}")
+            return await self.format_response(cc, mes, ano, cvv, "ERROR", f"System error: {error_str[:80]}", username, time.time()-start_time, user_data, bin_info)
         finally:
             # Ensure client is closed
             if self.client:
@@ -1658,4 +1663,3 @@ async def handle_stripe_charge_3(client: Client, message: Message):
 ⟐ <b>Error</b>: <code>{error_msg}</code>
 ⟐ <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
 ━━━━━━━━━━━━━""")
-
