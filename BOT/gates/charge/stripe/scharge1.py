@@ -1295,7 +1295,7 @@ async def handle_stripe_charge_1(client: Client, message: Message):
                 await message.reply(charge_processor.get_usage_message(
                     "xo", 
                     "Stripe Charge 1$",
-                    "4111111111111111|12|2025|123"
+                    "4111111111111111|12|2030|123"
                 ))
             else:
                 await message.reply("""<pre>#WAYNE ─[STRIPE CHARGE 1$]─</pre>
@@ -1376,3 +1376,4 @@ async def handle_stripe_charge_1(client: Client, message: Message):
 ⟐ <b>Error</b>: <code>{error_msg}</code>
 ⟐ <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
 ━━━━━━━━━━━━━""")
+
