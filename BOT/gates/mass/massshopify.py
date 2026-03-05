@@ -249,11 +249,21 @@ class MassShopifyAutoChecker:
             }
         ]
         self.retry_count = 0
-        self.max_retries = 2  # Maximum retries per card when rate limited
+        self.max_retries = 3  # Maximum retries per card when specific errors occur
     
-    def get_random_gate(self, user_id=None):
-        """Get a random gate for card checking"""
-        gate_template = random.choice(self.gates)
+    def get_random_gate(self, user_id=None, exclude_gates=None):
+        """Get a random gate for card checking, optionally excluding certain gates"""
+        if exclude_gates is None:
+            exclude_gates = []
+        
+        # Filter out excluded gates
+        available_gates = [gate for gate in self.gates if gate['name'] not in exclude_gates]
+        
+        if not available_gates:
+            # If all gates are excluded, use all gates
+            available_gates = self.gates
+        
+        gate_template = random.choice(available_gates)
         
         # Create instance based on whether it needs user_id
         if gate_template['needs_user_id'] and user_id:
@@ -289,7 +299,7 @@ class MassShopifyAutoChecker:
         except:
             return "", "", "", ""
     
-    def get_processing_message_dynamic(self, total_cards, checked, hits, declines, errors, username, user_plan):
+    def get_processing_message_dynamic(self, total_cards, checked, hits, declines, errors, retries, username, user_plan):
         """Get dynamic processing message that updates in real-time"""
         left = total_cards - checked
         
@@ -301,11 +311,41 @@ class MassShopifyAutoChecker:
 ✅ <b>Hits:</b> <code>{hits}</code>
 ❌ <b>Declines:</b> <code>{declines}</code>
 ⚠️ <b>Errors:</b> <code>{errors}</code>
+🔄 <b>Retries:</b> <code>{retries}</code>
 ⏳ <b>Left:</b> <code>{left}</code>
 
 ━━━━━━━━━━━━━━━
 👤 <b>User:</b> @{username}
 💎 <b>Plan:</b> {user_plan}"""
+    
+    def needs_retry_with_different_gate(self, result_text):
+        """
+        Check if the result indicates we should retry with a different gate
+        Returns: boolean
+        """
+        result_lower = result_text.lower()
+        
+        # Errors that trigger retry with different gate
+        retry_patterns = [
+            "checkout start error",
+            "unknown receipt status",
+            "product page error",
+            "billing update error",
+            "checkout error",
+            "checkout start",
+            "receipt status",
+            "product page",
+            "billing update",
+            "could not create checkout",
+            "failed to initialize checkout",
+            "unable to load checkout"
+        ]
+        
+        for pattern in retry_patterns:
+            if pattern in result_lower:
+                return True
+        
+        return False
     
     def categorize_result(self, result_text):
         """
@@ -360,7 +400,11 @@ class MassShopifyAutoChecker:
             "processing error",
             "system error",
             "technical error",
-            "server error"
+            "server error",
+            
+            # Specific errors that should be errors
+            "checkout start error",
+            "unknown receipt status"
         ]
         
         for pattern in error_patterns:
@@ -422,7 +466,7 @@ class MassShopifyAutoChecker:
         # Default to decline if we can't categorize (safer to count as decline than error)
         return "decline"
     
-    async def format_card_result(self, result_text, gate_info, card_details, username, user_data):
+    async def format_card_result(self, result_text, gate_info, card_details, username, user_data, retry_count=0):
         """
         Format individual card result for mass response
         Extracts relevant parts from the full Shopify result
@@ -455,10 +499,13 @@ class MassShopifyAutoChecker:
                 elif '<b>[+] Country</b>:' in line:
                     country_line = line.strip()
             
+            # Add retry indicator if this was a retry
+            retry_indicator = f" [Retry {retry_count}]" if retry_count > 0 else ""
+            
             # Format the result
             formatted = f"""
 <b>[•] Card-</b> <code>{cc}|{mes}|{ano[-2:]}|{cvv}</code>
-<b>[•] Gateway -</b> {gate_info['gateway_display']}
+<b>[•] Gateway -</b> {gate_info['gateway_display']}{retry_indicator}
 {status_line}
 {response_line}
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
@@ -481,10 +528,10 @@ class MassShopifyAutoChecker:
 <b>Gate ID:</b> {gate_info['id_display']}
 """
     
-    async def send_approved_card_immediately(self, client, message, result, card_number, total_cards, gate_info, card_details, username, user_data):
+    async def send_approved_card_immediately(self, client, message, result, card_number, total_cards, gate_info, card_details, username, user_data, retry_count=0):
         """Send approved card immediately without waiting for all cards to finish"""
         try:
-            formatted_result = await self.format_card_result(result, gate_info, card_details, username, user_data)
+            formatted_result = await self.format_card_result(result, gate_info, card_details, username, user_data, retry_count)
             await message.reply(formatted_result, disable_web_page_preview=True)
             await asyncio.sleep(0.5)
             return True
@@ -492,7 +539,7 @@ class MassShopifyAutoChecker:
             print(f"Failed to send approved card immediately: {e}")
             return False
     
-    async def send_final_summary(self, client, message, successful, declines, errors, total_cards, username, elapsed_time, user_data, processing_msg):
+    async def send_final_summary(self, client, message, successful, declines, errors, retries, total_cards, username, elapsed_time, user_data, processing_msg):
         """Send final summary after all cards are processed"""
         user_id = user_data.get("user_id", "Unknown")
         first_name = html.escape(user_data.get("first_name", "User"))
@@ -515,6 +562,7 @@ class MassShopifyAutoChecker:
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
 <b>[+] Results:</b> ✅ {successful} | ❌ {declines} | ⚠️ {errors}
 <b>[+] Total Cards:</b> <code>{total_cards}</code>
+<b>[+] Retries:</b> <code>{retries}</code>
 <b>[+] Credits Used:</b> <code>5</code>
 ━━━━━━━━━━━━━━━
 <b>[ﾒ] Checked By:</b> {user_display}
@@ -527,7 +575,7 @@ class MassShopifyAutoChecker:
         except Exception as e:
             print(f"Failed to send summary: {e}")
     
-    async def format_mass_response_collective(self, results, gate_infos, card_details_list, successful, declines, errors, total_cards, username, elapsed_time, user_data):
+    async def format_mass_response_collective(self, results, gate_infos, card_details_list, retry_counts, successful, declines, errors, retries, total_cards, username, elapsed_time, user_data):
         """
         Format collective response when total cards <= 5
         """
@@ -546,6 +594,7 @@ class MassShopifyAutoChecker:
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
 <b>[+] Results:</b> ✅ {successful} | ❌ {declines} | ⚠️ {errors}
 <b>[+] Total Cards:</b> <code>{total_cards}</code>
+<b>[+] Retries:</b> <code>{retries}</code>
 <b>[+] Credits Used:</b> <code>5</code> 
 ━━━━━━━━━━━━━━━
 
@@ -555,8 +604,9 @@ class MassShopifyAutoChecker:
         for idx, result in enumerate(results):
             gate_info = gate_infos[idx] if idx < len(gate_infos) else {'gateway_display': 'Unknown', 'id_display': 'Unknown'}
             card_details = card_details_list[idx] if idx < len(card_details_list) else ""
+            retry_count = retry_counts[idx] if idx < len(retry_counts) else 0
             
-            formatted = await self.format_card_result(result, gate_info, card_details, username, user_data)
+            formatted = await self.format_card_result(result, gate_info, card_details, username, user_data, retry_count)
             response += formatted
             
             if idx < len(results) - 1:
@@ -570,6 +620,81 @@ class MassShopifyAutoChecker:
 <b>[ﾒ] Time:</b> <code>{elapsed_time:.2f} 𝐬</code> |<b>P/x:</b> <code>Mass ⚡️</code></b>"""
         
         return response
+    
+    async def check_card_with_retry(self, card_details, username, user_data, user_id, client=None, message=None, card_count=None, send_immediate=False):
+        """
+        Check a card with retry logic using different gates for specific errors
+        Returns: (final_result, gate_info, category, retry_count)
+        """
+        attempted_gates = []
+        retry_count = 0
+        final_result = None
+        final_gate = None
+        final_category = "error"
+        
+        while retry_count <= self.max_retries:
+            # Get a random gate excluding previously attempted ones
+            gate = self.get_random_gate(user_id, exclude_gates=attempted_gates)
+            gate_name = gate['name']
+            gate_checker = gate['checker']
+            
+            print(f"🔄 Card {card_details[:16]}... Attempt {retry_count + 1} with {gate_name}")
+            
+            try:
+                # Check the card
+                result = await gate_checker.check_card(card_details, username, user_data)
+                
+                # Check if this result needs retry with different gate
+                if self.needs_retry_with_different_gate(result):
+                    print(f"⚠️ Card {card_details[:16]}... got retryable error with {gate_name}, will try another gate")
+                    attempted_gates.append(gate_name)
+                    retry_count += 1
+                    
+                    # If we have more retries left, continue
+                    if retry_count <= self.max_retries:
+                        await asyncio.sleep(random.uniform(1.5, 2.5))  # Small delay before retry
+                        continue
+                    else:
+                        # Max retries reached, use this result
+                        final_result = result
+                        final_gate = gate
+                        final_category = self.categorize_result(result)
+                        break
+                else:
+                    # This is a final result (hit, decline, or non-retryable error)
+                    final_result = result
+                    final_gate = gate
+                    final_category = self.categorize_result(result)
+                    
+                    # Send immediately if it's a hit and we're in >5 cards mode
+                    if final_category == "hit" and send_immediate and client and message:
+                        await self.send_approved_card_immediately(
+                            client, message, result, None, card_count, gate, card_details, username, user_data, retry_count
+                        )
+                    break
+                    
+            except Exception as e:
+                print(f"❌ Error on attempt {retry_count + 1} with {gate_name}: {e}")
+                attempted_gates.append(gate_name)
+                retry_count += 1
+                
+                if retry_count <= self.max_retries:
+                    await asyncio.sleep(random.uniform(1.5, 2.5))
+                else:
+                    # Max retries reached, create error result
+                    error_result = f"""<b>「$cmd → /sy」| <b>WAYNE</b> </b>
+━━━━━━━━━━━━━━━
+<b>[•] Card-</b> <code>{card_details}</code>
+<b>[•] Gateway -</b> {gate['gateway_display']}
+<b>[•] Status-</b> <code>ERROR ❌</code>
+<b>[•] Response-</b> <code>{str(e)[:80]}</code>
+━━━━━━━━━━━━━━━
+<b>Gate ID:</b> {gate['id_display']}"""
+                    final_result = error_result
+                    final_gate = gate
+                    final_category = "error"
+        
+        return final_result, final_gate, final_category, retry_count
 
 
 @Client.on_message(filters.command(["sy", ".sy", "$sy"]))
@@ -728,74 +853,48 @@ async def handle_mass_shopify_auto(client: Client, message: Message):
         
         # Send initial processing message
         processing_msg = await message.reply(
-            mass_checker.get_processing_message_dynamic(card_count, 0, 0, 0, 0, username, plan_name)
+            mass_checker.get_processing_message_dynamic(card_count, 0, 0, 0, 0, 0, username, plan_name)
         )
         
         results = []
         gate_infos = []
         card_details_list = []
+        retry_counts = []
         successful = 0
         declines = 0
         errors = 0
+        total_retries = 0
         
-        # Process each card - Each card gets a fresh session with a random gate
+        # Process each card - Each card gets retry logic with different gates
         for i, card_details in enumerate(card_list):
             checked = i + 1
             
-            # Select random gate for this card
-            gate = mass_checker.get_random_gate(user_id)
-            gate_name = gate['name']
-            gate_checker = gate['checker']
-            gate_display = gate['gateway_display']
+            print(f"\n🔄 Processing card {i+1}/{card_count}: {card_details[:16]}...")
             
-            print(f"🔄 Card {i+1}: Using {gate_name}")
+            # Determine if we should send hits immediately (for >5 cards)
+            send_immediate = card_count > 5
             
-            try:
-                # Check card using the randomly selected gate
-                # All Shopify checkers have the same check_card method signature: check_card(card_details, username, user_data)
-                result = await gate_checker.check_card(
-                    card_details,
-                    username,
-                    user_data
-                )
-                
-                # Store results
-                results.append(result)
-                gate_infos.append(gate)
-                card_details_list.append(card_details)
-                
-                # Categorize the result properly
-                category = mass_checker.categorize_result(result)
-                
-                if category == "hit":
-                    successful += 1
-                    # For >5 cards, send approved cards immediately
-                    if card_count > 5:
-                        await mass_checker.send_approved_card_immediately(
-                            client, message, result, i+1, card_count, gate, card_details, username, user_data
-                        )
-                        approved_sent += 1
-                elif category == "decline":
-                    declines += 1
-                else:  # error
-                    errors += 1
-                    
-            except Exception as e:
-                print(f"❌ Error checking card {i+1} with {gate_name}: {e}")
-                
-                # Create error result
-                error_result = f"""<b>「$cmd → /sy」| <b>WAYNE</b> </b>
-━━━━━━━━━━━━━━━
-<b>[•] Card-</b> <code>{card_details}</code>
-<b>[•] Gateway -</b> {gate_display}
-<b>[•] Status-</b> <code>ERROR ❌</code>
-<b>[•] Response-</b> <code>{str(e)[:80]}</code>
-━━━━━━━━━━━━━━━
-<b>Gate ID:</b> {gate['id_display']}"""
-                
-                results.append(error_result)
-                gate_infos.append(gate)
-                card_details_list.append(card_details)
+            # Check card with retry logic
+            result, gate, category, retry_count = await mass_checker.check_card_with_retry(
+                card_details, username, user_data, user_id,
+                client=client, message=message, card_count=card_count, send_immediate=send_immediate
+            )
+            
+            # Store results
+            results.append(result)
+            gate_infos.append(gate)
+            card_details_list.append(card_details)
+            retry_counts.append(retry_count)
+            total_retries += retry_count
+            
+            # Update counters based on category
+            if category == "hit":
+                successful += 1
+                if send_immediate:
+                    approved_sent += 1
+            elif category == "decline":
+                declines += 1
+            else:  # error
                 errors += 1
             
             # Update progress message with dynamic stats
@@ -803,15 +902,15 @@ async def handle_mass_shopify_auto(client: Client, message: Message):
                 try:
                     await processing_msg.edit_text(
                         mass_checker.get_processing_message_dynamic(
-                            card_count, checked, successful, declines, errors, username, plan_name
+                            card_count, checked, successful, declines, errors, total_retries, username, plan_name
                         )
                     )
                 except:
                     pass
             
-            # Add delay between cards to avoid rate limiting - slightly longer for Shopify
+            # Add delay between cards to avoid rate limiting
             if i < len(card_list) - 1:
-                await asyncio.sleep(random.uniform(2.5, 4))
+                await asyncio.sleep(random.uniform(2.0, 3.0))
         
         elapsed_time = time.time() - start_time
         
@@ -820,13 +919,14 @@ async def handle_mass_shopify_auto(client: Client, message: Message):
             # For >5 cards: We've already sent approved cards immediately
             # Now just send the final summary
             await mass_checker.send_final_summary(
-                client, message, successful, declines, errors, 
+                client, message, successful, declines, errors, total_retries,
                 card_count, username, elapsed_time, user_data, processing_msg
             )
         else:
             # For <=5 cards: Send collective response with all cards
             final_response = await mass_checker.format_mass_response_collective(
-                results, gate_infos, card_details_list, successful, declines, errors, 
+                results, gate_infos, card_details_list, retry_counts, 
+                successful, declines, errors, total_retries,
                 card_count, username, elapsed_time, user_data
             )
             
