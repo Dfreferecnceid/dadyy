@@ -79,7 +79,7 @@ async def start_command(client: Client, message: Message):
         user_credits = user_data.get("plan", {}).get("credits", "0")
 
     final_text = f"""
-[<a href='https://t.me/WayneCHK'>⛯</a>] <b>WAYNE | Version - 1.0</b>
+[<a href='https://t.me/WayneCHK'>⛯</a>] <b>WAYNE | Version - 2.0</b>
 <pre>Constantly Upgrading...</pre>
 ━━━━━━━━━━━━━
 <b>Hello,</b> {profile}
@@ -357,7 +357,7 @@ async def buy_command(client: Client, message: Message):
 
 ━━━━━━━━━━━━━
 <b>Credit System (DAILY RESET):</b>
-⟐ <b>Free Users</b>: <code>100 daily credits (resets every 24h)</code>
+⟐ <b>Free Users</b>: <code>100 daily credits</code>
 ⟐ <b>Premium Users</b>: <code>Daily credits reset every 24h</code>
 
 ━━━━━━━━━━━━━
