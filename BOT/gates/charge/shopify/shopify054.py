@@ -45,6 +45,29 @@ except ImportError:
     def get_bin_details(bin_number):
         return {}
 
+# Import smart card parser from filter.py
+try:
+    from BOT.helper.filter import extract_cards, normalize_year
+    FILTER_AVAILABLE = True
+    print("✅ Smart card parser imported successfully from filter.py")
+except ImportError as e:
+    print(f"❌ Filter import error: {e}")
+    FILTER_AVAILABLE = False
+    # Fallback basic parser if filter.py not available
+    def extract_cards(text):
+        # Basic fallback parser
+        cards = []
+        for line in text.splitlines():
+            parts = line.replace('|', ' ').split()
+            if len(parts) >= 4:
+                cards.append('|'.join(parts[:4]))
+        return cards, list(set(cards))
+    def normalize_year(y):
+        y = y.strip()
+        if len(y) == 4:
+            return y[-2:]
+        return y
+
 # Import proxy system functions
 try:
     from BOT.tools.proxy import (
@@ -273,6 +296,43 @@ def check_cooldown(user_id, command_type="so"):
         pass
 
     return True, 0
+
+def parse_card_input(card_input):
+    """
+    Parse card input using the smart parser from filter.py
+    Supports multiple formats: 
+    - 4111111111111111|12|25|123
+    - 4111111111111111,12,2025,123
+    - 4111111111111111 12 25 123
+    - CSV format: "Card Number,EXP,CVV" etc.
+    """
+    # Use the filter.py extract_cards function
+    all_cards, unique_cards = extract_cards(card_input)
+    
+    if unique_cards:
+        # Return the first valid card found
+        return unique_cards[0].split('|')
+    
+    # If filter fails, try basic fallback parsing
+    parts = re.split(r'[|\s,]+', card_input.strip())
+    if len(parts) >= 4:
+        cc = re.sub(r'\D', '', parts[0])
+        mes = re.sub(r'\D', '', parts[1])
+        ano = re.sub(r'\D', '', parts[2])
+        cvv = re.sub(r'\D', '', parts[3])
+        
+        # Validate basic requirements
+        if cc.isdigit() and 13 <= len(cc) <= 16:
+            if mes.isdigit() and 1 <= len(mes) <= 2:
+                if ano.isdigit() and len(ano) in [2, 4]:
+                    if cvv.isdigit() and len(cvv) in [3, 4]:
+                        # Normalize year to 2 digits
+                        if len(ano) == 4:
+                            ano = ano[-2:]
+                        mes = mes.zfill(2)
+                        return [cc, mes, ano, cvv]
+    
+    return None
 
 
 # ========== FORMAT RESPONSE FUNCTION ==========
@@ -615,11 +675,10 @@ class ShopifyTaffyCheckout:
         return f"{self.checkout_token}-{timestamp}"
 
     async def get_product_page(self):
-        """Step 1: Get product page to get initial cookies - EXTENDED TIMEOUT 25s"""
+        """Step 1: Get product page to get initial cookies"""
         self.step(1, "GET PRODUCT PAGE", f"Loading saltwater taffy product page")
         
         try:
-            # Extended timeout to 25 seconds for critical operation
             resp = await self.client.get(self.product_url, headers=self.headers, timeout=25, follow_redirects=True)
             
             if resp.status_code != 200:
@@ -641,7 +700,7 @@ class ShopifyTaffyCheckout:
             return False, f"Product page error: {str(e)[:50]}"
 
     async def add_to_cart(self):
-        """Step 2: Add 5 units of saltwater taffy to cart - EXTENDED TIMEOUT 25s"""
+        """Step 2: Add 5 units of saltwater taffy to cart"""
         self.step(2, "ADD TO CART", "Adding 5 x Saltwater Taffy (0.50$ total)")
         
         cart_headers = {
@@ -659,7 +718,6 @@ class ShopifyTaffyCheckout:
         }
         
         try:
-            # Extended timeout to 25 seconds for critical operation
             resp = await self.client.post(
                 f"{self.base_url}/cart/add.js",
                 headers=cart_headers,
@@ -687,7 +745,7 @@ class ShopifyTaffyCheckout:
             return False, f"Add to cart error: {str(e)[:50]}"
 
     async def get_checkout_token(self):
-        """Step 3: Get checkout token by proceeding to checkout - EXTENDED TIMEOUT 25s"""
+        """Step 3: Get checkout token by proceeding to checkout"""
         self.step(3, "GET CHECKOUT TOKEN", "Obtaining checkout token")
         
         checkout_headers = {
@@ -697,7 +755,7 @@ class ShopifyTaffyCheckout:
         }
         
         try:
-            # Proceed to checkout - extended timeout to 25 seconds
+            # Proceed to checkout
             checkout_url = f"{self.base_url}/checkout"
             
             resp = await self.client.get(
@@ -742,7 +800,7 @@ class ShopifyTaffyCheckout:
             return False, f"Checkout token error: {str(e)[:50]}"
 
     async def get_session_token(self):
-        """Step 4: Extract session token from checkout page - EXTENDED TIMEOUT 25s"""
+        """Step 4: Extract session token from checkout page"""
         self.step(4, "GET SESSION TOKEN", "Extracting session token")
         
         checkout_headers = {
@@ -754,7 +812,6 @@ class ShopifyTaffyCheckout:
         try:
             checkout_page_url = f"{self.base_url}/checkouts/cn/{self.checkout_token}/en-us"
             
-            # Extended timeout to 25 seconds
             resp = await self.client.get(
                 checkout_page_url,
                 headers=checkout_headers,
@@ -786,7 +843,7 @@ class ShopifyTaffyCheckout:
             return False, f"Session token error: {str(e)[:50]}"
 
     async def submit_proposal(self):
-        """Step 5: Submit proposal with pickup delivery method - EXTENDED TIMEOUT 25s"""
+        """Step 5: Submit proposal with pickup delivery method"""
         self.step(5, "SUBMIT PROPOSAL", "Setting pickup delivery method")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
@@ -937,7 +994,6 @@ class ShopifyTaffyCheckout:
         }
         
         try:
-            # Extended timeout to 25 seconds
             resp = await self.client.post(
                 graphql_url + "?operationName=Proposal",
                 headers=graphql_headers,
@@ -994,7 +1050,7 @@ class ShopifyTaffyCheckout:
             return False, f"Proposal error: {str(e)[:50]}"
 
     async def update_contact_info(self):
-        """Step 6: Update contact information with email - EXTENDED TIMEOUT 25s"""
+        """Step 6: Update contact information with email"""
         self.step(6, "UPDATE CONTACT", f"Setting email: {self.email}")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
@@ -1140,7 +1196,6 @@ class ShopifyTaffyCheckout:
         }
         
         try:
-            # Extended timeout to 25 seconds
             resp = await self.client.post(
                 graphql_url + "?operationName=Proposal",
                 headers=graphql_headers,
@@ -1168,15 +1223,12 @@ class ShopifyTaffyCheckout:
         except httpx.ProxyError as e:
             self.logger.error_log("PROXY", f"Proxy error on contact update: {str(e)}")
             return False, "PROXY_DEAD"
-        except httpx.TimeoutException as e:
-            self.logger.error_log("TIMEOUT", f"Timeout on contact update: {str(e)}")
-            return False, "TIMEOUT"
         except Exception as e:
             self.logger.error_log("CONTACT_UPDATE", str(e))
             return False, f"Contact update error: {str(e)[:50]}"
 
     async def select_pickup_delivery(self):
-        """Step 7: Select pickup delivery method (Heart of Iowa location) - EXTENDED TIMEOUT 25s"""
+        """Step 7: Select pickup delivery method (Heart of Iowa location)"""
         self.step(7, "SELECT PICKUP", "Choosing Heart of Iowa pickup location")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
@@ -1321,7 +1373,6 @@ class ShopifyTaffyCheckout:
         }
         
         try:
-            # Extended timeout to 25 seconds
             resp = await self.client.post(
                 graphql_url + "?operationName=Proposal",
                 headers=graphql_headers,
@@ -1349,15 +1400,12 @@ class ShopifyTaffyCheckout:
         except httpx.ProxyError as e:
             self.logger.error_log("PROXY", f"Proxy error on pickup selection: {str(e)}")
             return False, "PROXY_DEAD"
-        except httpx.TimeoutException as e:
-            self.logger.error_log("TIMEOUT", f"Timeout on pickup selection: {str(e)}")
-            return False, "TIMEOUT"
         except Exception as e:
             self.logger.error_log("PICKUP_SELECTION", str(e))
             return False, f"Pickup selection error: {str(e)[:50]}"
 
     async def create_payment_session(self, cc, mes, ano, cvv):
-        """Step 8: Create payment session with PCI - EXTENDED TIMEOUT 25s"""
+        """Step 8: Create payment session with PCI"""
         self.step(8, "CREATE PAYMENT", "Creating payment session with PCI")
         
         pci_headers = {
@@ -1412,7 +1460,7 @@ class ShopifyTaffyCheckout:
         }
         
         try:
-            # Use separate client for PCI with extended timeout 25s
+            # Use separate client for PCI
             async with httpx.AsyncClient(proxy=self.proxy_url, timeout=25) as pci_client:
                 resp = await pci_client.post(
                     'https://checkout.pci.shopifyinc.com/sessions',
@@ -1449,7 +1497,7 @@ class ShopifyTaffyCheckout:
             return False, "PCI_ERROR"
 
     async def update_billing_address(self, payment_session_id):
-        """Step 9: Update billing address with pickup location address - EXTENDED TIMEOUT 25s"""
+        """Step 9: Update billing address with pickup location address"""
         self.step(9, "UPDATE BILLING", "Setting billing address")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
@@ -1640,7 +1688,6 @@ class ShopifyTaffyCheckout:
         }
         
         try:
-            # Extended timeout to 25 seconds
             resp = await self.client.post(
                 graphql_url + "?operationName=Proposal",
                 headers=graphql_headers,
@@ -1668,15 +1715,12 @@ class ShopifyTaffyCheckout:
         except httpx.ProxyError as e:
             self.logger.error_log("PROXY", f"Proxy error on billing update: {str(e)}")
             return False, "PROXY_DEAD"
-        except httpx.TimeoutException as e:
-            self.logger.error_log("TIMEOUT", f"Timeout on billing update: {str(e)}")
-            return False, "TIMEOUT"
         except Exception as e:
             self.logger.error_log("BILLING_UPDATE", str(e))
             return False, f"Billing update error: {str(e)[:50]}"
 
     async def submit_for_completion(self, payment_session_id):
-        """Step 10: Submit for completion - final payment - EXTENDED TIMEOUT 25s"""
+        """Step 10: Submit for completion - final payment"""
         self.step(10, "SUBMIT PAYMENT", "Finalizing payment")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
@@ -1878,7 +1922,6 @@ class ShopifyTaffyCheckout:
         }
         
         try:
-            # Extended timeout to 25 seconds for final submission
             resp = await self.client.post(
                 graphql_url + "?operationName=SubmitForCompletion",
                 headers=graphql_headers,
@@ -1945,7 +1988,7 @@ class ShopifyTaffyCheckout:
             return False, f"Submit error: {str(e)[:50]}"
 
     async def poll_receipt(self, headers, max_polls=5):
-        """Step 12: Poll for receipt status - EXTENDED TIMEOUT 25s"""
+        """Step 12: Poll for receipt status"""
         self.step(12, "POLL RECEIPT", "Polling for payment status")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
@@ -1966,7 +2009,6 @@ class ShopifyTaffyCheckout:
                     'id': self.poll_id
                 }
                 
-                # Extended timeout to 25 seconds for polling
                 resp = await self.client.get(
                     graphql_url,
                     headers={**headers, 'accept': 'application/json'},
@@ -2066,7 +2108,6 @@ class ShopifyTaffyCheckout:
                     self.logger.error_log("NO_PROXY", "No working proxies available")
                     return False, "NO_PROXY_AVAILABLE"
                 
-                # Extended timeout for client initialization
                 self.client = httpx.AsyncClient(proxy=self.proxy_url, timeout=25, follow_redirects=True)
                 self.proxy_status = "Live ⚡️"
                 self.proxy_used = True
@@ -2157,15 +2198,13 @@ class ShopifyTaffyChecker:
         self.logger.start_check(card_details)
 
         try:
-            cc_parts = card_details.split('|')
-            if len(cc_parts) < 4:
+            # Use smart parser to extract card details
+            parsed = parse_card_input(card_details)
+            if not parsed:
                 elapsed_time = time.time() - start_time
                 return format_shopify_response("", "", "", "", "Invalid card format", elapsed_time, username, user_data, self.proxy_status)
 
-            cc = cc_parts[0].strip().replace(" ", "")
-            mes = cc_parts[1].strip()
-            ano = cc_parts[2].strip()
-            cvv = cc_parts[3].strip()
+            cc, mes, ano, cvv = parsed
 
             # Basic validation
             if not cc.isdigit() or len(cc) < 15:
@@ -2206,10 +2245,10 @@ class ShopifyTaffyChecker:
             elapsed_time = time.time() - start_time
             self.logger.error_log("UNKNOWN", str(e))
             try:
-                cc = cc_parts[0]
-                mes = cc_parts[1]
-                ano = cc_parts[2]
-                cvv = cc_parts[3]
+                cc = parsed[0] if 'parsed' in locals() else ""
+                mes = parsed[1] if 'parsed' in locals() else ""
+                ano = parsed[2] if 'parsed' in locals() else ""
+                cvv = parsed[3] if 'parsed' in locals() else ""
             except:
                 cc = mes = ano = cvv = ""
             error_msg = str(e)
@@ -2270,28 +2309,27 @@ async def handle_shopify_taffy(client: Client, message: Message):
             await message.reply("""<pre>#WAYNE ━[SHOPIFY CHARGE 0.54$]━━</pre>
 ━━━━━━━━━━━━━
 🠪 <b>Command</b>: <code>/sh</code>
-🠪 <b>Usage</b>: <code>/so cc|mm|yy|cvv</code>
-🠪 <b>Example</b>: <code>/so 4111111111111111|12|2030|123</code>
+🠪 <b>Usage</b>: <code>/sh cc|mm|yy|cvv</code> (or any format)
+🠪 <b>Example</b>: <code>/sh 4111111111111111|12|2030|123</code>
 ━━━━━━━━━━━━━
 <b>~ Note:</b> <code>Shopify Charge</code>""")
             return
 
         card_details = args[1].strip()
 
-        cc_parts = card_details.split('|')
-        if len(cc_parts) < 4:
+        # Parse using the smart parser
+        parsed = parse_card_input(card_details)
+        if not parsed:
             await message.reply("""<pre>❌ Invalid Format</pre>
 ━━━━━━━━━━━━━
-🠪 <b>Message</b>: Invalid card format.
-🠪 <b>Correct Format</b>: <code>cc|mm|yy|cvv</code>
-🠪 <b>Example</b>: <code>4111111111111111|12|2030|123</code>
+🠪 <b>Message</b>: Invalid card format. Please use format like:
+🠪 <b>Format 1</b>: <code>cc|mm|yy|cvv</code>
+🠪 <b>Format 2</b>: <code>cc,mm,yyyy,cvv</code>
+🠪 <b>Format 3</b>: <code>cc mm yy cvv</code>
 ━━━━━━━━━━━━━""")
             return
 
-        cc = cc_parts[0]
-        mes = cc_parts[1]
-        ano = cc_parts[2]
-        cvv = cc_parts[3]
+        cc, mes, ano, cvv = parsed
 
         processing_msg = await message.reply(
             f"""
