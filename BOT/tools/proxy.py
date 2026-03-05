@@ -286,7 +286,7 @@ class ProxyManager:
             return f"http://{user}:{pwd}@{host}:{port}"
 
         # Format: HOST:PORT (no auth)
-        match3 = re.fullmatch r"([a-zA-Z0-9\.\-]+):(\d+)", proxy_raw)
+        match3 = re.fullmatch(r"([a-zA-Z0-9\.\-]+):(\d+)", proxy_raw)
         if match3:
             host, port = match3.groups()
             return f"http://{host}:{port}"
