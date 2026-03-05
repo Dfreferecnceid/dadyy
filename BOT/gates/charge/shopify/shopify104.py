@@ -769,15 +769,15 @@ class RouteChargeCheckout:
         return f"{self.checkout_token}-{timestamp}"
 
     async def get_product_page(self):
-        """Step 1: Get product page to get initial cookies (FAST)"""
+        """Step 1: Get product page to get initial cookies (FAST) - INCREASED TIMEOUT TO 30 SECONDS"""
         self.step(1, "GET PRODUCT PAGE", f"Loading product page")
         
         try:
             # Use HEAD request first to get cookies faster
-            resp = await self.client.head(self.product_url, headers=self.headers, timeout=25, follow_redirects=True)
+            resp = await self.client.head(self.product_url, headers=self.headers, timeout=30, follow_redirects=True)
             
             # Then GET for actual content if needed
-            resp = await self.client.get(self.product_url, headers=self.headers, timeout=25, follow_redirects=True)
+            resp = await self.client.get(self.product_url, headers=self.headers, timeout=30, follow_redirects=True)
             
             if resp.status_code != 200:
                 self.logger.error_log("PRODUCT_PAGE", f"Failed: {resp.status_code}")
@@ -798,7 +798,7 @@ class RouteChargeCheckout:
             return False, f"Product page error: {str(e)[:50]}"
 
     async def get_checkout_token(self):
-        """Step 2: Get checkout token with multiple fallback methods"""
+        """Step 2: Get checkout token with multiple fallback methods - INCREASED TIMEOUT TO 30 SECONDS"""
         self.step(2, "GET CHECKOUT TOKEN", "Obtaining checkout token")
         
         # Try multiple variant IDs in case the product variant changes
@@ -840,7 +840,7 @@ class RouteChargeCheckout:
                         checkout_url,
                         headers=checkout_headers,
                         follow_redirects=True,
-                        timeout=25
+                        timeout=30
                     )
                     
                     # Get final URL from redirects
@@ -853,7 +853,7 @@ class RouteChargeCheckout:
                             checkout_url,
                             headers=checkout_headers,
                             follow_redirects=True,
-                            timeout=25
+                            timeout=30
                         )
                         current_url = str(resp.url)
                         self.checkout_token = self.extract_checkout_token(current_url)
@@ -894,7 +894,7 @@ class RouteChargeCheckout:
         return False, "CHECKOUT_TOKEN_ERROR"
 
     async def accelerated_checkout(self):
-        """Step 3: Send accelerated checkout request (FAST)"""
+        """Step 3: Send accelerated checkout request (FAST) - INCREASED TIMEOUT TO 30 SECONDS"""
         self.step(3, "ACCELERATED CHECKOUT", "Sending request")
         
         accel_headers = {
@@ -925,7 +925,7 @@ class RouteChargeCheckout:
                 f"{self.base_url}/shopify_pay/accelerated_checkout",
                 headers=accel_headers,
                 json=accel_payload,
-                timeout=25,
+                timeout=30,
                 follow_redirects=True
             )
             
@@ -962,7 +962,7 @@ class RouteChargeCheckout:
         }
 
     async def submit_proposal(self, stable_id, coordinates):
-        """Step 5: Submit proposal (FAST)"""
+        """Step 5: Submit proposal (FAST) - INCREASED TIMEOUT TO 30 SECONDS"""
         self.step(5, "SUBMIT PROPOSAL", "Submitting proposal")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
@@ -1142,7 +1142,7 @@ class RouteChargeCheckout:
                 graphql_url,
                 headers=graphql_headers,
                 json=payload,
-                timeout=25
+                timeout=30
             )
             
             if resp.status_code != 200:
@@ -1184,7 +1184,7 @@ class RouteChargeCheckout:
             return False, f"Proposal error: {str(e)[:50]}"
 
     async def create_payment_session(self, cc, mes, ano, cvv):
-        """Step 6: Create payment session with PCI (FAST)"""
+        """Step 6: Create payment session with PCI (FAST) - INCREASED TIMEOUT TO 30 SECONDS"""
         self.step(6, "CREATE PAYMENT", "Creating payment session")
         
         pci_headers = {
@@ -1240,12 +1240,12 @@ class RouteChargeCheckout:
         
         try:
             # Use separate client for PCI
-            async with httpx.AsyncClient(proxy=self.proxy_url, timeout=25) as pci_client:
+            async with httpx.AsyncClient(proxy=self.proxy_url, timeout=30) as pci_client:
                 resp = await pci_client.post(
                     'https://checkout.pci.shopifyinc.com/sessions',
                     headers=pci_headers,
                     json=pci_payload,
-                    timeout=25
+                    timeout=30
                 )
                 
                 if resp.status_code != 200:
@@ -1276,7 +1276,7 @@ class RouteChargeCheckout:
             return False, "PCI_ERROR"
 
     async def submit_for_completion(self, stable_id, queue_token, payment_session_id, coordinates):
-        """Step 7: Submit for completion (FAST)"""
+        """Step 7: Submit for completion (FAST) - INCREASED TIMEOUT TO 30 SECONDS"""
         self.step(7, "SUBMIT PAYMENT", "Submitting payment")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
@@ -1506,7 +1506,7 @@ class RouteChargeCheckout:
                 graphql_url,
                 headers=graphql_headers,
                 json=payload,
-                timeout=25
+                timeout=30
             )
             
             if resp.status_code != 200:
@@ -1568,7 +1568,7 @@ class RouteChargeCheckout:
             return False, f"Submit error: {str(e)[:50]}"
 
     async def poll_receipt(self, headers, max_polls=5):
-        """Step 9: Poll for receipt status with improved retry logic - INCREASED TO 5 ATTEMPTS"""
+        """Step 9: Poll for receipt status with improved retry logic - INCREASED TIMEOUT TO 30 SECONDS"""
         self.step(9, "POLL RECEIPT", "Polling for status")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
@@ -1594,7 +1594,7 @@ class RouteChargeCheckout:
                     graphql_url,
                     headers={**headers, 'accept': 'application/json'},
                     params=poll_params,
-                    timeout=25  # INCREASED TIMEOUT TO 25 SECONDS
+                    timeout=30  # INCREASED TIMEOUT TO 30 SECONDS
                 )
                 
                 if resp.status_code != 200:
@@ -1607,7 +1607,7 @@ class RouteChargeCheckout:
                         },
                         "id": "baa45c97a49dae99440b5f8a954dfb31b01b7af373f5335204c29849f3397502"
                     }
-                    resp = await self.client.post(graphql_url, headers=headers, json=poll_payload, timeout=25)
+                    resp = await self.client.post(graphql_url, headers=headers, json=poll_payload, timeout=30)
                 
                 if resp.status_code != 200:
                     if poll_attempts < max_attempts:
@@ -1688,7 +1688,7 @@ class RouteChargeCheckout:
         }
         
         try:
-            resp = await self.client.post(graphql_url, headers=headers, json=poll_payload, timeout=25)
+            resp = await self.client.post(graphql_url, headers=headers, json=poll_payload, timeout=30)
             
             if resp.status_code != 200:
                 return False, f"Final poll failed: {resp.status_code}"
@@ -1724,14 +1724,14 @@ class RouteChargeCheckout:
                     self.logger.error_log("NO_PROXY", "No working proxies available")
                     return False, "NO_PROXY_AVAILABLE"
                 
-                # Initialize client with proxy (no test to save time)
-                self.client = httpx.AsyncClient(proxy=self.proxy_url, timeout=25)
+                # Initialize client with proxy (no test to save time) - TIMEOUT 30 SECONDS
+                self.client = httpx.AsyncClient(proxy=self.proxy_url, timeout=30)
                 self.proxy_status = "Live ⚡️"
                 self.proxy_used = True
                 self.logger.data_extracted("Proxy", f"{self.proxy_url[:30]}...", "Proxy System")
             else:
                 self.proxy_status = "No Proxy"
-                self.client = httpx.AsyncClient(timeout=25)
+                self.client = httpx.AsyncClient(timeout=30)
             
             # Step 1: Get product page (fast)
             success, result = await self.get_product_page()
