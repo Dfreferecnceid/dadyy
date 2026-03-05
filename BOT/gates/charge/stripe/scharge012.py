@@ -714,6 +714,12 @@ class StripeCharge012Checker:
         
         bank_info = safe_bin_info['bank'].upper() if safe_bin_info['bank'] != 'N/A' else 'N/A'
 
+        # FIX: Format elapsed_time safely
+        try:
+            time_str = f"{elapsed_time:.2f}"
+        except (ValueError, TypeError):
+            time_str = str(elapsed_time)
+
         response = f"""<b>「$cmd → /xx」| <b>WAYNE</b> </b>
 ━━━━━━━━━━━━━━━
 <b>[•] Card-</b> <code>{cc}|{mes}|{ano}|{cvv}</code>
@@ -729,7 +735,7 @@ class StripeCharge012Checker:
 <b>[ﾒ] Checked By:</b> {user_display}
 <b>[ϟ] Dev ➺</b> <b><i>DADYY</i></b>
 ━━━━━━━━━━━━━━━
-<b>[ﾒ] T/t:</b> <code>{elapsed_time:.2f} 𝐬</code> |<b>P/x:</b> <code>{self.proxy_status}</code></b>"""
+<b>[ﾒ] T/t:</b> <code>{time_str} 𝐬</code> |<b>P/x:</b> <code>{self.proxy_status}</code></b>"""
 
         return response
 
