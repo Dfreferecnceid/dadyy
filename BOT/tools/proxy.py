@@ -1528,9 +1528,16 @@ async def proxy_stats_handler(client, message: Message):
         rt = proxy_data['response_time']
         site = proxy_data.get('site', 'Unknown')
         status = proxy_data['status']
+        
+        # FIX: Convert rt to float safely
+        try:
+            rt_float = float(rt)
+            rt_str = f"{rt_float:.2f}"
+        except (ValueError, TypeError):
+            rt_str = str(rt)
 
         response += f"{i}. {status} <code>{proxy}</code>\n"
-        response += f"   → {rate:.1f}% | {rt:.2f}s | {site} | {success}✅ {fails}❌\n"
+        response += f"   → {rate:.1f}% | {rt_str}s | {site} | {success}✅ {fails}❌\n"
 
     response += "━━━━━━━━━━━━━━━\n"
 
