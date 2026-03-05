@@ -2456,10 +2456,10 @@ async def handle_shopify_kauffman(client: Client, message: Message):
             await message.reply("""<pre>#WAYNE ━[SHOPIFY CHARGE 2.00$]━━</pre>
 ━━━━━━━━━━━━━
 🠪 <b>Command</b>: <code>/si</code>
-🠪 <b>Usage</b>: <code>/si cc|mm|yy|cvv</code> (or any format)
+🠪 <b>Usage</b>: <code>/si cc|mm|yy|cvv</code>
 🠪 <b>Example</b>: <code>/si 4111111111111111|12|2030|123</code>
 ━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Shopify Charge</code>""")
+<b>~ Note:</b> <code>Shopify Charge 2$</code>""")
             return
 
         # Get the full message text after the command
@@ -2477,10 +2477,8 @@ async def handle_shopify_kauffman(client: Client, message: Message):
         if not parsed:
             await message.reply("""<pre>❌ Invalid Format</pre>
 ━━━━━━━━━━━━━
-🠪 <b>Message</b>: Could not extract card details. Please use format like:
+🠪 <b>Message</b>: Could not extract card details.
 🠪 <b>Format 1</b>: <code>cc|mm|yy|cvv</code>
-🠪 <b>Format 2</b>: <code>cc mm yy cvv</code>
-🠪 <b>Format 3</b>: <code>cc,mm,yyyy,cvv</code>
 ━━━━━━━━━━━━━""")
             return
 
@@ -2562,3 +2560,4 @@ async def handle_shopify_kauffman(client: Client, message: Message):
 🠪 <b>Error</b>: <code>{error_msg}</code>
 🠪 <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
 ━━━━━━━━━━━━━""")
+
