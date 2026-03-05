@@ -13,6 +13,7 @@ from pyrogram import Client, filters
 from pyrogram.types import Message
 import html
 import os
+import unicodedata  # ADDED: For Unicode normalization
 
 # Import from helper modules
 try:
@@ -43,6 +44,15 @@ try:
 except ImportError:
     def get_bin_details(bin_number):
         return {}
+
+# Import filter.py for smart card parsing
+try:
+    from BOT.helper.filter import extract_cards
+    FILTER_AVAILABLE = True
+    print("✅ Filter module imported successfully for shopify")
+except ImportError as e:
+    print(f"❌ Filter module import error in shopify: {e}")
+    FILTER_AVAILABLE = False
 
 # Import proxy system functions
 try:
@@ -455,6 +465,198 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
 <b>[ﾒ] T/t</b>: <code>[{timet:.2f} 𝐬]</code> <b>|P/x:</b> [<code>{proxy_status}</code>]
 """
     return result
+
+
+# ========== UNIVERSAL UNICODE STRIPPER & CARD EXTRACTOR ==========
+def strip_all_unicode(text):
+    """
+    Strips ALL Unicode characters, emojis, fancy fonts, and special characters
+    Returns only ASCII characters, numbers, and basic punctuation
+    """
+    # Normalize Unicode text to ASCII form
+    normalized = unicodedata.normalize('NFKD', text)
+    
+    # Convert to ASCII, ignoring non-ASCII characters
+    ascii_text = normalized.encode('ASCII', 'ignore').decode('ASCII')
+    
+    return ascii_text
+
+
+def extract_cc_from_ascii(text):
+    """
+    Extracts credit card details from ASCII text
+    Returns (cc, mm, yy, cvv) or (None, None, None, None)
+    """
+    # Find all sequences of digits
+    digit_sequences = re.findall(r'\d+', text)
+    
+    if len(digit_sequences) < 4:
+        return None, None, None, None
+    
+    # Try to identify valid card pattern
+    for i in range(len(digit_sequences) - 3):
+        potential_cc = digit_sequences[i]
+        potential_month = digit_sequences[i+1]
+        potential_year = digit_sequences[i+2]
+        potential_cvv = digit_sequences[i+3]
+        
+        # Validate CC length (13-19 digits)
+        if not (13 <= len(potential_cc) <= 19):
+            continue
+            
+        # Validate month (1-12)
+        try:
+            month_val = int(potential_month)
+            if not (1 <= month_val <= 12):
+                continue
+        except:
+            continue
+            
+        # Validate year (2 or 4 digits)
+        if not (len(potential_year) in [2, 4]):
+            continue
+            
+        # Validate CVV (3-4 digits)
+        if not (len(potential_cvv) in [3, 4]):
+            continue
+        
+        # All validations passed
+        cc = potential_cc
+        mm = potential_month.zfill(2)
+        yy = potential_year[-2:] if len(potential_year) == 4 else potential_year
+        cvv = potential_cvv
+        
+        return cc, mm, yy, cvv
+    
+    return None, None, None, None
+
+
+def intelligent_card_parse(text):
+    """
+    Universal card parser that handles ANY type of Unicode/fancy text
+    Strips all Unicode first, then extracts CC details
+    """
+    try:
+        # Step 1: Try using filter.py if available (it handles many formats)
+        if FILTER_AVAILABLE:
+            try:
+                all_cards, unique_cards = extract_cards(text)
+                if unique_cards:
+                    first_card = unique_cards[0]
+                    parts = first_card.split('|')
+                    if len(parts) >= 4:
+                        cc = parts[0].strip()
+                        mm = parts[1].strip().zfill(2)
+                        yy = parts[2].strip()
+                        cvv = parts[3].strip()
+                        
+                        # Ensure 2-digit year
+                        if len(yy) == 4:
+                            yy = yy[-2:]
+                        
+                        # Validate
+                        if (13 <= len(cc) <= 19 and cc.isdigit() and 
+                            mm.isdigit() and 1 <= int(mm) <= 12 and
+                            yy.isdigit() and len(yy) in [2, 4] and
+                            cvv.isdigit() and len(cvv) in [3, 4]):
+                            return cc, mm, yy, cvv
+            except:
+                pass
+        
+        # Step 2: Strip ALL Unicode characters (emojis, fancy fonts, special chars)
+        ascii_text = strip_all_unicode(text)
+        
+        # Step 3: Try direct format matching on ASCII text
+        # Pattern: cc|mm|yy|cvv
+        pipe_pattern = r'(\d{13,19})\s*[\|\:\;]\s*(\d{1,2})\s*[\|\:\;]\s*(\d{2,4})\s*[\|\:\;]\s*(\d{3,4})'
+        pipe_match = re.search(pipe_pattern, ascii_text)
+        if pipe_match:
+            cc = pipe_match.group(1)
+            mm = pipe_match.group(2).zfill(2)
+            yy = pipe_match.group(3)
+            cvv = pipe_match.group(4)
+            if len(yy) == 4:
+                yy = yy[-2:]
+            return cc, mm, yy, cvv
+        
+        # Pattern: cc mm yy cvv (space-separated)
+        space_pattern = r'(\d{13,19})\s+(\d{1,2})\s+(\d{2,4})\s+(\d{3,4})'
+        space_match = re.search(space_pattern, ascii_text)
+        if space_match:
+            cc = space_match.group(1)
+            mm = space_match.group(2).zfill(2)
+            yy = space_match.group(3)
+            cvv = space_match.group(4)
+            if len(yy) == 4:
+                yy = yy[-2:]
+            return cc, mm, yy, cvv
+        
+        # Pattern: cc,mm,yy,cvv (comma-separated)
+        comma_pattern = r'(\d{13,19})\s*[,]\s*(\d{1,2})\s*[,]\s*(\d{2,4})\s*[,]\s*(\d{3,4})'
+        comma_match = re.search(comma_pattern, ascii_text)
+        if comma_match:
+            cc = comma_match.group(1)
+            mm = comma_match.group(2).zfill(2)
+            yy = comma_match.group(3)
+            cvv = comma_match.group(4)
+            if len(yy) == 4:
+                yy = yy[-2:]
+            return cc, mm, yy, cvv
+        
+        # Pattern: cc/mm/yy/cvv (slash-separated)
+        slash_pattern = r'(\d{13,19})\s*[/]\s*(\d{1,2})\s*[/]\s*(\d{2,4})\s*[/]\s*(\d{3,4})'
+        slash_match = re.search(slash_pattern, ascii_text)
+        if slash_match:
+            cc = slash_match.group(1)
+            mm = slash_match.group(2).zfill(2)
+            yy = slash_match.group(3)
+            cvv = slash_match.group(4)
+            if len(yy) == 4:
+                yy = yy[-2:]
+            return cc, mm, yy, cvv
+        
+        # Pattern: cc mm/yy cvv (common format)
+        common_pattern = r'(\d{13,19})\s+(\d{1,2})[/\-](\d{2,4})\s+(\d{3,4})'
+        common_match = re.search(common_pattern, ascii_text)
+        if common_match:
+            cc = common_match.group(1)
+            mm = common_match.group(2).zfill(2)
+            yy = common_match.group(3)
+            cvv = common_match.group(4)
+            if len(yy) == 4:
+                yy = yy[-2:]
+            return cc, mm, yy, cvv
+        
+        # Pattern: look for "Card:" or "CC:" followed by details
+        card_label_pattern = r'(?:card|cc|c[ck])\s*[:：=]\s*(\d{13,19})[\s\|:,]+(\d{1,2})[\s\|:,]+(\d{2,4})[\s\|:,]+(\d{3,4})'
+        card_label_match = re.search(card_label_pattern, ascii_text, re.IGNORECASE)
+        if card_label_match:
+            cc = card_label_match.group(1)
+            mm = card_label_match.group(2).zfill(2)
+            yy = card_label_match.group(3)
+            cvv = card_label_match.group(4)
+            if len(yy) == 4:
+                yy = yy[-2:]
+            return cc, mm, yy, cvv
+        
+        # Step 4: If no pattern matched, try generic digit sequence extraction
+        cc, mm, yy, cvv = extract_cc_from_ascii(ascii_text)
+        if cc:
+            return cc, mm, yy, cvv
+        
+    except Exception as e:
+        print(f"Card parsing error: {e}")
+    
+    return None, None, None, None
+
+
+# ========== CARD PARSING FUNCTION ==========
+def parse_card_input(card_input):
+    """
+    Parse card input using universal Unicode stripper
+    Returns (cc, mm, yy, cvv) tuple or (None, None, None, None) if invalid
+    """
+    return intelligent_card_parse(card_input)
 
 
 # ========== HTTP CHECKOUT CLASS ==========
@@ -1700,29 +1902,24 @@ class ShopifyChargeCheckerHTTP:
         self.logger.start_check(card_details)
 
         try:
-            cc_parts = card_details.split('|')
-            if len(cc_parts) < 4:
+            # Parse card using universal Unicode stripper
+            cc, mes, ano, cvv = parse_card_input(card_details)
+            
+            if not cc or not mes or not ano or not cvv:
                 elapsed_time = time.time() - start_time
-                return format_shopify_response("", "", "", "", "Invalid card format", elapsed_time, username, user_data, self.proxy_status)
+                self.logger.error_log("INVALID_FORMAT", f"Could not parse card from: {card_details[:100]}...")
+                return format_shopify_response("", "", "", "", "Invalid card format - could not extract CC details", elapsed_time, username, user_data, self.proxy_status)
 
-            cc = cc_parts[0].strip().replace(" ", "")
-            mes = cc_parts[1].strip()
-            ano = cc_parts[2].strip()
-            cvv = cc_parts[3].strip()
-
-            if not cc.isdigit() or len(cc) < 15:
+            # Additional validation
+            if len(cc) < 15 or len(cc) > 19:
                 elapsed_time = time.time() - start_time
-                return format_shopify_response(cc, mes, ano, cvv, "Invalid card number", elapsed_time, username, user_data, self.proxy_status)
+                return format_shopify_response(cc, mes, ano, cvv, "Invalid card number length", elapsed_time, username, user_data, self.proxy_status)
 
-            if not mes.isdigit() or len(mes) not in [1, 2] or not (1 <= int(mes) <= 12):
+            if not (1 <= int(mes) <= 12):
                 elapsed_time = time.time() - start_time
                 return format_shopify_response(cc, mes, ano, cvv, "Invalid month", elapsed_time, username, user_data, self.proxy_status)
 
-            if not ano.isdigit() or len(ano) not in [2, 4]:
-                elapsed_time = time.time() - start_time
-                return format_shopify_response(cc, mes, ano, cvv, "Invalid year", elapsed_time, username, user_data, self.proxy_status)
-
-            if not cvv.isdigit() or len(cvv) not in [3, 4]:
+            if len(cvv) not in [3, 4]:
                 elapsed_time = time.time() - start_time
                 return format_shopify_response(cc, mes, ano, cvv, "Invalid CVV", elapsed_time, username, user_data, self.proxy_status)
 
@@ -1749,10 +1946,12 @@ class ShopifyChargeCheckerHTTP:
             self.logger.error_log("UNKNOWN", str(e))
             self.logger.complete_result(False, "UNKNOWN_ERROR", str(e), elapsed_time)
             try:
-                cc = cc_parts[0]
-                mes = cc_parts[1]
-                ano = cc_parts[2]
-                cvv = cc_parts[3]
+                # Try to parse card for response
+                parsed_cc, parsed_mes, parsed_ano, parsed_cvv = parse_card_input(card_details)
+                if parsed_cc:
+                    cc, mes, ano, cvv = parsed_cc, parsed_mes, parsed_ano, parsed_cvv
+                else:
+                    cc = mes = ano = cvv = ""
             except:
                 cc = mes = ano = cvv = ""
             # Extract clean error message
@@ -1814,28 +2013,32 @@ async def handle_shopify_charge(client: Client, message: Message):
             await message.reply("""<pre>#WAYNE ━[SHOPIFY CHARGE]━━</pre>
 ━━━━━━━━━━━━━
 🠪 <b>Command</b>: <code>/so</code> 
-🠪 <b>Usage</b>: <code>/so cc|mm|yy|cvv</code>
-🠪 <b>Example</b>: <code>/so 4111111111111111|12|2030|123</code>
+🠪 <b>Usage</b>: <code>/so [card details]</code>
+🠪 <b>Examples</b>:
+   • <code>/so 4160811500282783 03 2027 084</code>
+   • <code>/so 4160811500282783|03|2027|084</code>
+   • <code>/so 4160811500282783,03,2027,084</code>
+   • <code>/so [paste any formatted card text with Unicode]</code>
 ━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Charges via Shopify gateway</code>""")
+<b>~ Note:</b> <code>Universal Unicode stripper - handles ANY fancy text!</code>""")
             return
 
-        card_details = args[1].strip()
+        card_details = ' '.join(args[1:])  # Join all remaining arguments to handle multi-word inputs
 
-        cc_parts = card_details.split('|')
-        if len(cc_parts) < 4:
+        # Validate that we can parse the card using universal Unicode stripper
+        cc, mes, ano, cvv = parse_card_input(card_details)
+        if not cc or not mes or not ano or not cvv:
             await message.reply("""<pre>❌ Invalid Format</pre>
 ━━━━━━━━━━━━━
-🠪 <b>Message</b>: Invalid card format.
-🠪 <b>Correct Format</b>: <code>cc|mm|yy|cvv</code>
-🠪 <b>Example</b>: <code>4111111111111111|12|2030|123</code>
+🠪 <b>Message</b>: Could not extract valid card information.
+🠪 <b>Supported formats:</b>
+   • Space-separated: cc mm yy cvv
+   • Pipe-separated: cc|mm|yy|cvv
+   • Comma-separated: cc,mm,yy,cvv
+   • Any text containing card details (ALL Unicode stripped automatically)
+🠪 <b>Example:</b> <code>/so 4160811500282783 03 2027 084</code>
 ━━━━━━━━━━━━━""")
             return
-
-        cc = cc_parts[0]
-        mes = cc_parts[1]
-        ano = cc_parts[2]
-        cvv = cc_parts[3]
 
         # Check if proxy system is available
         if not PROXY_SYSTEM_AVAILABLE:
