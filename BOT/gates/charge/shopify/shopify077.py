@@ -2287,12 +2287,9 @@ async def handle_shopify_middle_eastern(client: Client, message: Message):
 🠪 <b>Command</b>: <code>/sf</code>
 🠪 <b>Usage</b>: <code>/sf [card details]</code>
 🠪 <b>Examples</b>:
-   • <code>/sf 4160811500282783 03 2027 084</code>
-   • <code>/sf 4160811500282783|03|2027|084</code>
-   • <code>/sf 4160811500282783,03,2027,084</code>
-   • <code>/sf [paste any formatted card text with Unicode]</code>
+   • <code>/sf 4111111111111112|12|2030|123</code>
 ━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Universal Unicode stripper - handles ANY fancy text!</code>""")
+<b>~ Note:</b> <code>Shopify Charge 0.77$</code>""")
             return
 
         card_details = ' '.join(args[1:])  # Join all remaining arguments to handle multi-word inputs
@@ -2303,12 +2300,7 @@ async def handle_shopify_middle_eastern(client: Client, message: Message):
             await message.reply("""<pre>❌ Invalid Format</pre>
 ━━━━━━━━━━━━━
 🠪 <b>Message</b>: Could not extract valid card information.
-🠪 <b>Supported formats:</b>
-   • Space-separated: cc mm yy cvv
-   • Pipe-separated: cc|mm|yy|cvv
-   • Comma-separated: cc,mm,yy,cvv
-   • Any text containing card details (ALL Unicode stripped automatically)
-🠪 <b>Example:</b> <code>/sf 4160811500282783 03 2027 084</code>
+🠪 <b>Example:</b> <code>/sf 4111111111111111|12|2030|123</code>
 ━━━━━━━━━━━━━""")
             return
 
@@ -2389,3 +2381,4 @@ async def handle_shopify_middle_eastern(client: Client, message: Message):
 🠪 <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
 
 ━━━━━━━━━━━━━""")
+
