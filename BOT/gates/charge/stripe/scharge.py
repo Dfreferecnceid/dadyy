@@ -627,12 +627,6 @@ class StripeChargeChecker:
         user_display = f"『{badge}』{clean_name}"
         bank_info = bin_info['bank'].upper() if bin_info['bank'] != 'N/A' else 'N/A'
 
-        # FIX: Format elapsed_time safely
-        try:
-            time_str = f"{elapsed_time:.2f}"
-        except (ValueError, TypeError):
-            time_str = str(elapsed_time)
-
         # Format response with /xc command name
         response = f"""<b>『$cmd → /xc』| <b>WAYNE</b> </b>
 ━━━━━━━━━━━━━━━━━━━━━━
@@ -649,7 +643,7 @@ class StripeChargeChecker:
 <b>[ﾒ] Checked By:</b> {user_display}
 <b>[ϟ] Dev ➺</b> <b><i>DADYY</i></b>
 ━━━━━━━━━━━━━━━━━━━━━━
-<b>[ﾒ] T/t:</b> <code>{time_str} 𝐬</code> |<b>P/x:</b> <code>Live ⚡️</code></b>"""
+<b>[ﾒ] T/t:</b> <code>{elapsed_time:.2f} 𝐬</code> |<b>P/x:</b> <code>Live ⚡️</code></b>"""
 
         return response
 
