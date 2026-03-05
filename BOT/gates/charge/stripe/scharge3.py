@@ -1658,3 +1658,4 @@ async def handle_stripe_charge_3(client: Client, message: Message):
 ⟐ <b>Error</b>: <code>{error_msg}</code>
 ⟐ <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
 ━━━━━━━━━━━━━""")
+
