@@ -2015,12 +2015,9 @@ async def handle_shopify_charge(client: Client, message: Message):
 🠪 <b>Command</b>: <code>/so</code> 
 🠪 <b>Usage</b>: <code>/so [card details]</code>
 🠪 <b>Examples</b>:
-   • <code>/so 4160811500282783 03 2027 084</code>
    • <code>/so 4160811500282783|03|2027|084</code>
-   • <code>/so 4160811500282783,03,2027,084</code>
-   • <code>/so [paste any formatted card text with Unicode]</code>
 ━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Universal Unicode stripper - handles ANY fancy text!</code>""")
+<b>~ Note:</b> <code>Shopify Charge 0.60$</code>""")
             return
 
         card_details = ' '.join(args[1:])  # Join all remaining arguments to handle multi-word inputs
@@ -2031,11 +2028,6 @@ async def handle_shopify_charge(client: Client, message: Message):
             await message.reply("""<pre>❌ Invalid Format</pre>
 ━━━━━━━━━━━━━
 🠪 <b>Message</b>: Could not extract valid card information.
-🠪 <b>Supported formats:</b>
-   • Space-separated: cc mm yy cvv
-   • Pipe-separated: cc|mm|yy|cvv
-   • Comma-separated: cc,mm,yy,cvv
-   • Any text containing card details (ALL Unicode stripped automatically)
 🠪 <b>Example:</b> <code>/so 4160811500282783 03 2027 084</code>
 ━━━━━━━━━━━━━""")
             return
