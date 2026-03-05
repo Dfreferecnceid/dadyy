@@ -985,7 +985,9 @@ class ShopifyHTTPCheckout:
                     if test_resp.status_code == 200:
                         self.proxy_status = "Live ⚡️"
                         self.proxy_used = True
-                        self.logger.data_extracted("Proxy Info", f"{self.proxy_url[:50]}... | Response: {self.proxy_response_time:.2f}s", "Proxy System")
+                        # FIX: Convert float to string for logging
+                        response_time_str = f"{self.proxy_response_time:.2f}"
+                        self.logger.data_extracted("Proxy Info", f"{self.proxy_url[:50]}... | Response: {response_time_str}s", "Proxy System")
                         
                         # Mark proxy as successful initially
                         mark_proxy_success(self.proxy_url, self.proxy_response_time)
