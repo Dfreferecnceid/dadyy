@@ -571,6 +571,12 @@ class StripeCharge1Checker:
         # Safe bank info with upper() handling
         bank_info = safe_bin_info['bank'].upper() if safe_bin_info['bank'] != 'N/A' else 'N/A'
 
+        # FIX: Format elapsed_time safely
+        try:
+            time_str = f"{elapsed_time:.2f}"
+        except (ValueError, TypeError):
+            time_str = str(elapsed_time)
+
         response = f"""<b>「$cmd → /xo」| <b>WAYNE</b> </b>
 ━━━━━━━━━━━━━━━
 <b>[•] Card-</b> <code>{cc}|{mes}|{ano}|{cvv}</code>
@@ -586,7 +592,7 @@ class StripeCharge1Checker:
 <b>[ﾒ] Checked By:</b> {user_display}
 <b>[ϟ] Dev ➺</b> <b><i>DADYY</i></b>
 ━━━━━━━━━━━━━━━
-<b>[ﾒ] T/t:</b> <code>{elapsed_time:.2f} 𝐬</code> |<b>P/x:</b> <code>Live ⚡️</code></b>"""
+<b>[ﾒ] T/t:</b> <code>{time_str} 𝐬</code> |<b>P/x:</b> <code>Live ⚡️</code></b>"""
 
         return response
 
@@ -1376,4 +1382,3 @@ async def handle_stripe_charge_1(client: Client, message: Message):
 ⟐ <b>Error</b>: <code>{error_msg}</code>
 ⟐ <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
 ━━━━━━━━━━━━━""")
-
