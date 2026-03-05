@@ -9,6 +9,7 @@ import random
 import string
 import os
 import ssl
+import unicodedata
 from datetime import datetime, timedelta
 from pyrogram import Client, filters
 from pyrogram.types import Message
@@ -67,6 +68,15 @@ except ImportError as e:
     
     def test_proxy(proxy_str: str):
         return False
+
+# Import smart card parser from filter.py
+try:
+    from BOT.helper.filter import extract_cards, normalize_year
+    FILTER_AVAILABLE = True
+    print("✅ Smart card parser imported successfully from filter.py")
+except ImportError as e:
+    print(f"❌ Filter import error: {e}")
+    FILTER_AVAILABLE = False
 
 # Custom logger with emoji formatting
 class EmojiLogger:
@@ -177,6 +187,156 @@ def check_cooldown(user_id, command_type="xx"):
         logger.error(f"Failed to save cooldowns: {e}")
 
     return True, 0
+
+# ========== INTELLIGENT CARD PARSING (Adapted from shopify054.py) ==========
+def strip_all_unicode(text):
+    """
+    Remove ALL Unicode characters, keep only ASCII (letters, numbers, basic punctuation)
+    """
+    # Normalize unicode characters to ASCII where possible
+    try:
+        # First, try to normalize using NFKD form which decomposes unicode characters
+        normalized = unicodedata.normalize('NFKD', text)
+        # Then encode to ASCII, ignoring errors, and decode back
+        ascii_text = normalized.encode('ASCII', 'ignore').decode('ASCII')
+    except:
+        # Fallback: manually filter out non-ASCII characters
+        ascii_text = ''.join(char for char in text if ord(char) < 128)
+    
+    # Keep only digits, letters, pipes, spaces, commas, slashes, and hyphens
+    # This preserves card separators while removing decorative characters
+    cleaned = re.sub(r'[^0-9a-zA-Z\|\s,\/\-]', ' ', ascii_text)
+    
+    # Replace multiple spaces with single space
+    cleaned = re.sub(r'\s+', ' ', cleaned)
+    
+    return cleaned.strip()
+
+def extract_card_from_cleaned_text(text):
+    """
+    Extract card details from cleaned ASCII text
+    """
+    # Pattern 1: Standard format with pipe (cc|mm|yy|cvv)
+    pattern1 = r'(\d{13,16})\s*[|\s]\s*(\d{1,2})\s*[|\s]\s*(\d{2,4})\s*[|\s]\s*(\d{3,4})'
+    match = re.search(pattern1, text)
+    if match:
+        cc, mes, ano, cvv = match.groups()
+        # Normalize year
+        if len(ano) == 4:
+            ano = ano[-2:]
+        mes = mes.zfill(2)
+        return [cc, mes, ano, cvv]
+    
+    # Pattern 2: Space or comma separated (cc mm yy cvv) or (cc,mm,yy,cvv)
+    pattern2 = r'(\d{13,16})\s*[, ]\s*(\d{1,2})\s*[, ]\s*(\d{2,4})\s*[, ]\s*(\d{3,4})'
+    match = re.search(pattern2, text)
+    if match:
+        cc, mes, ano, cvv = match.groups()
+        if len(ano) == 4:
+            ano = ano[-2:]
+        mes = mes.zfill(2)
+        return [cc, mes, ano, cvv]
+    
+    # Pattern 3: Find all digit sequences and try to find valid card
+    digits = re.findall(r'\d+', text)
+    
+    # Try to find a valid card sequence
+    for i in range(len(digits) - 3):
+        potential_cc = digits[i]
+        potential_mes = digits[i+1]
+        potential_ano = digits[i+2]
+        potential_cvv = digits[i+3]
+        
+        # Check if this looks like a valid card
+        if (13 <= len(potential_cc) <= 16 and 
+            len(potential_mes) in [1, 2] and 
+            len(potential_ano) in [2, 4] and 
+            len(potential_cvv) in [3, 4]):
+            
+            # Validate month
+            try:
+                mes_int = int(potential_mes)
+                if 1 <= mes_int <= 12:
+                    # Validate year (not too far in past/future)
+                    current_year = datetime.now().year % 100
+                    
+                    # Handle 4-digit year
+                    if len(potential_ano) == 4:
+                        ano_val = int(potential_ano) % 100
+                    else:
+                        ano_val = int(potential_ano)
+                    
+                    # Year should be within reasonable range (current year to +10 years)
+                    if current_year - 5 <= ano_val <= current_year + 10:
+                        cc = potential_cc
+                        mes = potential_mes.zfill(2)
+                        ano = potential_ano[-2:]  # Always take last 2 digits
+                        cvv = potential_cvv
+                        return [cc, mes, ano, cvv]
+            except:
+                continue
+    
+    # Pattern 4: Look for card number followed by expiry and CVV with labels
+    pattern4 = r'[Cc]ard:?\s*(\d{13,16}).*?(\d{1,2})[\/\-](\d{2,4}).*?(\d{3,4})'
+    match = re.search(pattern4, text, re.IGNORECASE | re.DOTALL)
+    if match:
+        cc, mes, ano, cvv = match.groups()
+        if len(ano) == 4:
+            ano = ano[-2:]
+        mes = mes.zfill(2)
+        return [cc, mes, ano, cvv]
+    
+    # Pattern 5: Generic pattern with slashes for dates
+    pattern5 = r'(\d{13,16}).*?(\d{1,2})[\/\-](\d{2,4}).*?(\d{3,4})'
+    match = re.search(pattern5, text, re.DOTALL)
+    if match:
+        cc, mes, ano, cvv = match.groups()
+        if len(ano) == 4:
+            ano = ano[-2:]
+        mes = mes.zfill(2)
+        return [cc, mes, ano, cvv]
+    
+    return None
+
+def parse_card_input(card_input):
+    """
+    Parse card input by first stripping ALL Unicode, then extracting card details
+    """
+    # Step 1: Strip all Unicode characters
+    cleaned_text = strip_all_unicode(card_input)
+    
+    # Step 2: Extract card from cleaned text
+    result = extract_card_from_cleaned_text(cleaned_text)
+    if result:
+        return result
+    
+    # Step 3: If still no result, try filter.py as fallback
+    if FILTER_AVAILABLE:
+        all_cards, unique_cards = extract_cards(card_input)  # Use original for filter
+        if unique_cards:
+            card_parts = unique_cards[0].split('|')
+            if len(card_parts) == 4:
+                cc, mes, ano, cvv = card_parts
+                if len(ano) == 4:
+                    ano = ano[-2:]
+                mes = mes.zfill(2)
+                return [cc, mes, ano, cvv]
+    
+    # Step 4: Last resort - try direct split on original
+    if '|' in card_input:
+        parts = card_input.split('|')
+        if len(parts) >= 4:
+            cc = re.sub(r'\D', '', parts[0])
+            mes = re.sub(r'\D', '', parts[1])
+            ano = re.sub(r'\D', '', parts[2])
+            cvv = re.sub(r'\D', '', parts[3])
+            if cc and mes and ano and cvv:
+                if len(ano) == 4:
+                    ano = ano[-2:]
+                mes = mes.zfill(2)
+                return [cc, mes, ano, cvv]
+    
+    return None
 
 class StripeCharge012Checker:
     def __init__(self, user_id=None):
@@ -1147,9 +1307,7 @@ class StripeCharge012Checker:
         cc = mes = ano = cvv = ""
         bin_info = None
         
-        # Mask card for logging
-        card_masked = card_details[:12] + "XXXX" + card_details[-4:] if len(card_details) > 4 else card_details
-        logger.info(f"🔍 Starting Stripe Charge €0.12 check: {card_masked}")
+        logger.info(f"🔍 Starting Stripe Charge €0.12 check")
 
         # Step 0: Get proxy for user
         logger.step(0, 6, "Getting proxy...")
@@ -1230,14 +1388,12 @@ class StripeCharge012Checker:
             return await self.format_response("", "", "", "", "ERROR", "Proxy connection failed", username, time.time()-start_time, user_data)
 
         try:
-            cc_parts = card_details.split('|')
-            if len(cc_parts) < 4:
+            # Use intelligent parser to extract card details
+            parsed = parse_card_input(card_details)
+            if not parsed:
                 return await self.format_response("", "", "", "", "ERROR", "Invalid card format. Use: CC|MM|YY|CVV", username, time.time()-start_time, user_data)
 
-            cc = cc_parts[0].strip().replace(" ", "")
-            mes = cc_parts[1].strip()
-            ano = cc_parts[2].strip()
-            cvv = cc_parts[3].strip()
+            cc, mes, ano, cvv = parsed
 
             if not cc.isdigit() or len(cc) < 15:
                 return await self.format_response(cc, mes, ano, cvv, "ERROR", "Invalid card number", username, time.time()-start_time, user_data)
@@ -1395,37 +1551,40 @@ async def handle_stripe_charge_012(client: Client, message: Message):
             else:
                 await message.reply("""<pre>#WAYNE ─[STRIPE CHARGE €0.12]─</pre>
 ━━━━━━━━━━━━━
-⟐ <b>Command</b>: <code>/xx</code> or <code>.xx</code> or <code>$xx</code>
-⟐ <b>Usage</b>: <code>/xx cc|mm|yy|cvv</code>
+⟐ <b>Command</b>: <code>/xx</code>
+⟐ <b>Usage</b>: <code>/xx cc|mm|yy|cvv</code> (or any format)
 ⟐ <b>Example</b>: <code>/xx 4111111111111111|12|2025|123</code>
 ━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Charges €0.12 via Stripe gateway (Deducts 2 credits AFTER check completes)</code>
-<b>~ Note:</b> <code>Free users can use in authorized groups with credit deduction</code>""")
+<b>~ Note:</b> <code>Stripe Charges €0.12</code>""")
             return
 
-        card_details = args[1].strip()
+        # Get the full message text after the command
+        full_text = message.text
+        # Remove the command part
+        command_parts = full_text.split(maxsplit=1)
+        if len(command_parts) < 2:
+            await message.reply("Please provide card details")
+            return
+        
+        card_input = command_parts[1].strip()
 
-        cc_parts = card_details.split('|')
-        if len(cc_parts) < 4:
+        # Parse using the intelligent parser
+        parsed = parse_card_input(card_input)
+        if not parsed:
             await message.reply("""<pre>❌ Invalid Format</pre>
 ━━━━━━━━━━━━━
-⟐ <b>Message</b>: Invalid card format.
-⟐ <b>Correct Format</b>: <code>cc|mm|yy|cvv</code>
-⟐ <b>Example</b>: <code>4111111111111111|12|2025|123</code>
+⟐ <b>Message</b>: Could not extract card details.
+⟐ <b>Format 1</b>: <code>cc|mm|yy|cvv</code>
 ━━━━━━━━━━━━━""")
             return
 
-        cc = cc_parts[0]
-        mes = cc_parts[1]
-        ano = cc_parts[2]
-        cvv = cc_parts[3]
+        cc, mes, ano, cvv = parsed
 
         # Check if proxy system is available
         if not PROXY_SYSTEM_AVAILABLE:
             await message.reply("""<pre>❌ Proxy System Unavailable</pre>
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: Proxy system is not available.
-⟐ <b>Solution</b>: <code>Ensure BOT/tools/proxy.py exists and is working</code>
 ⟐ <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
 ━━━━━━━━━━━━━""")
             return
@@ -1455,7 +1614,7 @@ async def handle_stripe_charge_012(client: Client, message: Message):
             success, result, credits_deducted = await charge_processor.execute_charge_command(
                 user_id,                    # positional
                 checker.check_card,         # positional
-                card_details,               # check_args[0]
+                card_input,                  # check_args[0]
                 username,                   # check_args[1]
                 user_data,                  # check_args[2]
                 credits_needed=2,           # keyword
@@ -1466,7 +1625,7 @@ async def handle_stripe_charge_012(client: Client, message: Message):
             await processing_msg.edit_text(result, disable_web_page_preview=True)
         else:
             # Fallback to old method if charge_processor not available
-            result = await checker.check_card(card_details, username, user_data)
+            result = await checker.check_card(card_input, username, user_data)
             await processing_msg.edit_text(result, disable_web_page_preview=True)
 
     except Exception as e:
