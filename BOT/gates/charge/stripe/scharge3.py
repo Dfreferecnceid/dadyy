@@ -1569,7 +1569,7 @@ async def handle_stripe_charge_3(client: Client, message: Message):
 ━━━━━━━━━━━━━
 ⟐ <b>Command</b>: <code>/xs</code>
 ⟐ <b>Usage</b>: <code>/xs cc|mm|yy|cvv</code>
-⟐ <b>Example</b>: <code>/xs 4111111111111111|12|2025|123</code>
+⟐ <b>Example</b>: <code>/xs 4111111111111111|12|2030|123</code>
 ━━━━━━━━━━━━━
 <b>~ Note:</b> <code>Stripe Charge 3.50$</code>""")
             return
