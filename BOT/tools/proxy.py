@@ -33,6 +33,15 @@ _proxy_lock = threading.Lock()
 # IST timezone for date tracking
 IST = pytz.timezone("Asia/Kolkata")
 
+def safe_str(obj):
+    """Safely convert any object to string"""
+    try:
+        if obj is None:
+            return "None"
+        return str(obj)
+    except:
+        return "Unknown"
+
 def get_ist_date():
     """Get current IST date as string (YYYY-MM-DD)"""
     return datetime.now(IST).strftime("%Y-%m-%d")
@@ -80,7 +89,7 @@ class ProxyManager:
                 try:
                     self._check_and_run_daily_validation()
                 except Exception as e:
-                    print(f"❌ Daily validation checker error: {e}")
+                    print(f"❌ Daily validation checker error: {safe_str(e)}")
                 time.sleep(3600)  # Check every hour
         
         thread = threading.Thread(target=check_daily, daemon=True)
@@ -97,7 +106,7 @@ class ProxyManager:
             
             # If no previous validation or new day, run daily validation
             if self.last_daily_validation_date != current_date:
-                print(f"📅 New day detected ({current_date}). Running daily proxy validation...")
+                print(f"📅 New day detected ({safe_str(current_date)}). Running daily proxy validation...")
                 # Run in separate thread to not block
                 threading.Thread(target=self._run_daily_validation, daemon=True).start()
 
@@ -112,7 +121,7 @@ class ProxyManager:
                     self.daily_good_count = data.get("good_count", 0)
                     self.daily_bad_count = data.get("bad_count", 0)
         except Exception as e:
-            print(f"⚠️ Error loading daily validation data: {e}")
+            print(f"⚠️ Error loading daily validation data: {safe_str(e)}")
 
     def _save_daily_validation_data(self):
         """Save daily validation tracking data"""
@@ -127,7 +136,7 @@ class ProxyManager:
             with open(DAILY_VALIDATION_FILE, "w") as f:
                 json.dump(data, f, indent=2)
         except Exception as e:
-            print(f"⚠️ Error saving daily validation data: {e}")
+            print(f"⚠️ Error saving daily validation data: {safe_str(e)}")
 
     def _run_daily_validation(self):
         """Run daily validation of up to 15 proxies"""
@@ -154,7 +163,7 @@ class ProxyManager:
                 self._save_daily_validation_data()
                 return
 
-            print(f"📅 Daily validation: Checking {len(proxies_to_check)} proxies...")
+            print(f"📅 Daily validation: Checking {safe_str(len(proxies_to_check))} proxies...")
 
             # Validate each proxy
             for proxy in proxies_to_check:
@@ -190,7 +199,7 @@ class ProxyManager:
                             self.perm_dead_proxies.discard(proxy)
                         
                         self.daily_good_count += 1
-                        print(f"📅 ✅ Daily: Good proxy - {proxy[:50]}...")
+                        print(f"📅 ✅ Daily: Good proxy - {safe_str(proxy[:50])}...")
                     else:
                         # Proxy is bad - remove it
                         with _proxy_lock:
@@ -204,10 +213,10 @@ class ProxyManager:
                                 self.proxy_stats[proxy]['fails'] += 1
                         
                         self.daily_bad_count += 1
-                        print(f"📅 ❌ Daily: Bad proxy - {proxy[:50]}...")
+                        print(f"📅 ❌ Daily: Bad proxy - {safe_str(proxy[:50])}...")
 
                 except Exception as e:
-                    print(f"📅 ❌ Daily validation error for {proxy[:50]}: {e}")
+                    print(f"📅 ❌ Daily validation error for {safe_str(proxy[:50])}: {safe_str(e)}")
                     self.daily_bad_count += 1
 
             # Update last validation date
@@ -215,10 +224,10 @@ class ProxyManager:
             self._save_daily_validation_data()
             self._save_valid_proxies()
 
-            print(f"📅 Daily validation complete: {self.daily_good_count} good, {self.daily_bad_count} bad")
+            print(f"📅 Daily validation complete: {safe_str(self.daily_good_count)} good, {safe_str(self.daily_bad_count)} bad")
 
         except Exception as e:
-            print(f"❌ Daily validation error: {e}")
+            print(f"❌ Daily validation error: {safe_str(e)}")
         finally:
             self.validation_in_progress = False
 
@@ -277,7 +286,7 @@ class ProxyManager:
             return f"http://{user}:{pwd}@{host}:{port}"
 
         # Format: HOST:PORT (no auth)
-        match3 = re.fullmatch(r"([a-zA-Z0-9\.\-]+):(\d+)", proxy_raw)
+        match3 = re.fullmatch r"([a-zA-Z0-9\.\-]+):(\d+)", proxy_raw)
         if match3:
             host, port = match3.groups()
             return f"http://{host}:{port}"
@@ -294,9 +303,9 @@ class ProxyManager:
                 try:
                     with open(PROXY_FILE, "r") as f:
                         self.user_proxies = json.load(f)
-                    print(f"✅ Loaded {len(self.user_proxies)} user-specific proxies")
+                    print(f"✅ Loaded {safe_str(len(self.user_proxies))} user-specific proxies")
                 except Exception as e:
-                    print(f"❌ Error loading user proxies: {e}")
+                    print(f"❌ Error loading user proxies: {safe_str(e)}")
                     self.user_proxies = {}
 
             # Load previously validated proxies (GLOBAL POOL)
@@ -306,10 +315,10 @@ class ProxyManager:
             new_proxies = self._load_proxies_from_csv()
 
             if new_proxies:
-                print(f"📥 Found {len(new_proxies)} new proxies in CSV, validating with dual-site check...")
+                print(f"📥 Found {safe_str(len(new_proxies))} new proxies in CSV, validating with dual-site check...")
                 self._validate_proxy_batch_dual(new_proxies)
             else:
-                print(f"⚠️ No proxies found in {GLOBAL_PROXY_FILE}")
+                print(f"⚠️ No proxies found in {safe_str(GLOBAL_PROXY_FILE)}")
 
             # Save validated proxies
             self._save_valid_proxies()
@@ -320,7 +329,7 @@ class ProxyManager:
             # Load daily validation data
             self._load_daily_validation_data()
             
-            print(f"🎯 Proxy Manager Ready: {len(self.valid_proxies)} valid proxies available in global pool")
+            print(f"🎯 Proxy Manager Ready: {safe_str(len(self.valid_proxies))} valid proxies available in global pool")
 
     def _load_valid_proxies(self):
         """Load previously validated working proxies"""
@@ -332,10 +341,10 @@ class ProxyManager:
                     self.perm_dead_proxies = set(data.get('dead', []))
                     self.proxy_stats = data.get('stats', {})
                     self.user_added_proxies = data.get('user_added', {})
-                print(f"📂 Loaded {len(self.valid_proxies)} pre-validated proxies")
-                print(f"📂 Loaded {len(self.perm_dead_proxies)} known dead proxies")
+                print(f"📂 Loaded {safe_str(len(self.valid_proxies))} pre-validated proxies")
+                print(f"📂 Loaded {safe_str(len(self.perm_dead_proxies))} known dead proxies")
         except Exception as e:
-            print(f"❌ Error loading validated proxies: {e}")
+            print(f"❌ Error loading validated proxies: {safe_str(e)}")
             self.valid_proxies = []
             self.perm_dead_proxies = set()
             self.proxy_stats = {}
@@ -346,7 +355,7 @@ class ProxyManager:
         raw_proxies = []
 
         if not os.path.exists(GLOBAL_PROXY_FILE):
-            print(f"⚠️ Global proxy file not found: {GLOBAL_PROXY_FILE}")
+            print(f"⚠️ Global proxy file not found: {safe_str(GLOBAL_PROXY_FILE)}")
             return []
 
         try:
@@ -374,7 +383,7 @@ class ProxyManager:
             return new_proxies
 
         except Exception as e:
-            print(f"❌ Error loading proxies from CSV: {e}")
+            print(f"❌ Error loading proxies from CSV: {safe_str(e)}")
             return []
 
     def _test_proxy_dual_sync(self, proxy_url: str) -> Tuple[bool, float, Optional[str], str]:
@@ -413,7 +422,7 @@ class ProxyManager:
                         return True, response_time, ip, f"{site_name} ({response_time:.2f}s)"
 
             except Exception as e:
-                error_msg = f"{site_name}: {str(e)[:50]}"
+                error_msg = f"{site_name}: {safe_str(e)[:50]}"
                 continue
 
         return best_result
@@ -427,7 +436,7 @@ class ProxyManager:
         self.validation_in_progress = True
 
         try:
-            print(f"🔍 Validating {len(proxies)} proxies (dual-site check)...")
+            print(f"🔍 Validating {safe_str(len(proxies))} proxies (dual-site check)...")
 
             # Submit all validation tasks
             future_to_proxy = {}
@@ -455,22 +464,22 @@ class ProxyManager:
                             'last_validated': time.time()
                         }
                         valid_count += 1
-                        print(f"✅ Proxy validated via {result[3]}: {proxy[:50]}...")
+                        print(f"✅ Proxy validated via {safe_str(result[3])}: {safe_str(proxy[:50])}...")
                     else:
                         self.perm_dead_proxies.add(proxy)
                         dead_count += 1
-                        print(f"❌ Proxy dead: {proxy[:50]}...")
+                        print(f"❌ Proxy dead: {safe_str(proxy[:50])}...")
 
                 except Exception as e:
                     self.perm_dead_proxies.add(proxy)
                     dead_count += 1
-                    print(f"❌ Proxy error: {proxy[:50]}... - {str(e)[:50]}")
+                    print(f"❌ Proxy error: {safe_str(proxy[:50])}... - {safe_str(e)[:50]}")
 
-            print(f"📊 Validation Complete: {valid_count} valid, {dead_count} dead")
+            print(f"📊 Validation Complete: {safe_str(valid_count)} valid, {safe_str(dead_count)} dead")
             self.last_validation = time.time()
 
         except Exception as e:
-            print(f"❌ Batch validation error: {e}")
+            print(f"❌ Batch validation error: {safe_str(e)}")
         finally:
             self.validation_in_progress = False
 
@@ -488,10 +497,10 @@ class ProxyManager:
             with open(VALID_PROXY_FILE, "w") as f:
                 json.dump(data, f, indent=2)
 
-            print(f"💾 Saved {len(self.valid_proxies)} valid proxies to {VALID_PROXY_FILE}")
+            print(f"💾 Saved {safe_str(len(self.valid_proxies))} valid proxies to {safe_str(VALID_PROXY_FILE)}")
 
         except Exception as e:
-            print(f"❌ Error saving validated proxies: {e}")
+            print(f"❌ Error saving validated proxies: {safe_str(e)}")
 
     def get_proxy_for_user(self, user_id: int, strategy: str = "random") -> Optional[str]:
         """Get proxy for user (personal proxy → valid global proxy → None)"""
@@ -511,7 +520,7 @@ class ProxyManager:
                     return personal_proxy
                 else:
                     # Personal proxy is dead, remove it
-                    print(f"⚠️ Personal proxy for user {user_id} is dead, removing...")
+                    print(f"⚠️ Personal proxy for user {safe_str(user_id)} is dead, removing...")
                     self.user_proxies.pop(user_str, None)
                     self.save_user_proxies()
 
@@ -586,37 +595,43 @@ class ProxyManager:
     def mark_proxy_failed(self, proxy: str):
         """Mark proxy as failed (temporarily dead) - NOW DIES AFTER 1 FAILURE"""
         with _proxy_lock:
-            # Safely handle proxy stats
-            if proxy in self.proxy_stats and isinstance(self.proxy_stats[proxy], dict):
-                # Get current fails count safely
-                current_fails = self.proxy_stats[proxy].get('fails', 0)
-                # Ensure it's an integer
-                try:
-                    current_fails = int(current_fails)
-                except (ValueError, TypeError):
-                    current_fails = 0
-                
-                # Increment fails
-                self.proxy_stats[proxy]['fails'] = current_fails + 1
-                
-                # CHANGED: Now die immediately after 1 failure
-                if self.proxy_stats[proxy]['fails'] >= self.failure_threshold:
-                    self.dead_proxies.add(proxy)
-                    # Convert failure_threshold to string safely
-                    threshold_str = str(self.failure_threshold)
-                    print(f"⚠️ Marked proxy as dead after {threshold_str} failure: {proxy[:50]}...")
+            try:
+                # Safely handle proxy stats
+                if proxy in self.proxy_stats and isinstance(self.proxy_stats[proxy], dict):
+                    # Get current fails count safely
+                    current_fails = self.proxy_stats[proxy].get('fails', 0)
+                    # Ensure it's an integer
+                    try:
+                        current_fails = int(current_fails) if current_fails is not None else 0
+                    except (ValueError, TypeError):
+                        current_fails = 0
                     
-                    # If consistently failing, mark as permanently dead
-                    if self.proxy_stats[proxy]['fails'] >= self.failure_threshold * 2:
-                        self.perm_dead_proxies.add(proxy)
-                        self.dead_proxies.discard(proxy)
-                        if proxy in self.valid_proxies:
-                            self.valid_proxies.remove(proxy)
-                        print(f"🗑️ Moved proxy to permanently dead: {proxy[:50]}...")
-            else:
-                # If no stats or invalid stats, still mark as dead
+                    # Increment fails
+                    self.proxy_stats[proxy]['fails'] = current_fails + 1
+                    
+                    # CHANGED: Now die immediately after 1 failure
+                    if self.proxy_stats[proxy]['fails'] >= self.failure_threshold:
+                        self.dead_proxies.add(proxy)
+                        # Convert everything to strings safely
+                        threshold_str = safe_str(self.failure_threshold)
+                        proxy_display = safe_str(proxy[:50])
+                        print(f"⚠️ Marked proxy as dead after {threshold_str} failure: {proxy_display}...")
+                        
+                        # If consistently failing, mark as permanently dead
+                        if self.proxy_stats[proxy]['fails'] >= self.failure_threshold * 2:
+                            self.perm_dead_proxies.add(proxy)
+                            self.dead_proxies.discard(proxy)
+                            if proxy in self.valid_proxies:
+                                self.valid_proxies.remove(proxy)
+                            print(f"🗑️ Moved proxy to permanently dead: {proxy_display}...")
+                else:
+                    # If no stats or invalid stats, still mark as dead
+                    self.dead_proxies.add(proxy)
+                    print(f"⚠️ Marked unknown proxy as dead: {safe_str(proxy[:50])}...")
+            except Exception as e:
+                # If anything goes wrong in marking as failed, still mark as dead
                 self.dead_proxies.add(proxy)
-                print(f"⚠️ Marked unknown proxy as dead: {proxy[:50]}...")
+                print(f"⚠️ Error in mark_proxy_failed, but marked as dead anyway: {safe_str(proxy[:50])}... Error: {safe_str(e)}")
 
     def _clean_dead_proxies(self):
         """Remove old dead proxies after timeout"""
@@ -634,7 +649,7 @@ class ProxyManager:
                     self.perm_dead_proxies.add(proxy)
                     if proxy in self.valid_proxies:
                         self.valid_proxies.remove(proxy)
-                    print(f"🗑️ Auto-removed permanently dead proxy: {proxy[:50]}...")
+                    print(f"🗑️ Auto-removed permanently dead proxy: {safe_str(proxy[:50])}...")
 
         self.dead_proxies -= to_remove
         
@@ -657,14 +672,14 @@ class ProxyManager:
         
         if old_dead:
             self.perm_dead_proxies -= old_dead
-            print(f"🧹 Cleared {len(old_dead)} old permanently dead proxies")
+            print(f"🧹 Cleared {safe_str(len(old_dead))} old permanently dead proxies")
 
     def _revive_proxies(self):
         """Try to revive some dead proxies if pool is empty"""
         if not self.dead_proxies:
             return
             
-        print(f"🔄 Trying to revive {len(self.dead_proxies)} dead proxies...")
+        print(f"🔄 Trying to revive {safe_str(len(self.dead_proxies))} dead proxies...")
         
         revived = 0
         proxies_to_test = list(self.dead_proxies)[:10]  # Test only 10 at a time
@@ -678,10 +693,10 @@ class ProxyManager:
                 self.proxy_stats[proxy]['fails'] = 0
                 self.proxy_stats[proxy]['last_validated'] = time.time()
                 revived += 1
-                print(f"✅ Revived proxy: {proxy[:50]}...")
+                print(f"✅ Revived proxy: {safe_str(proxy[:50])}...")
         
         if revived > 0:
-            print(f"🎉 Revived {revived} proxies")
+            print(f"🎉 Revived {safe_str(revived)} proxies")
             self._save_valid_proxies()
 
     def save_user_proxies(self):
@@ -690,7 +705,7 @@ class ProxyManager:
             with open(PROXY_FILE, "w") as f:
                 json.dump(self.user_proxies, f, indent=2)
         except Exception as e:
-            print(f"❌ Error saving user proxies: {e}")
+            print(f"❌ Error saving user proxies: {safe_str(e)}")
 
     def validate_single_proxy(self, proxy_raw: str) -> Tuple[bool, str, float, str]:
         """Validate a single proxy immediately with dual-site check"""
@@ -915,7 +930,7 @@ class ProxyManager:
             good_count = 0
             bad_count = 0
 
-            print(f"📊 /pxstats: Validating {len(proxies_to_check)} proxies...")
+            print(f"📊 /pxstats: Validating {safe_str(len(proxies_to_check))} proxies...")
 
             for proxy in proxies_to_check:
                 try:
@@ -950,7 +965,7 @@ class ProxyManager:
                             self.perm_dead_proxies.discard(proxy)
                         
                         good_count += 1
-                        print(f"📊 ✅ Good proxy: {proxy[:50]}...")
+                        print(f"📊 ✅ Good proxy: {safe_str(proxy[:50])}...")
                     else:
                         # Proxy is bad
                         with _proxy_lock:
@@ -964,10 +979,10 @@ class ProxyManager:
                                 self.proxy_stats[proxy]['fails'] += 1
                         
                         bad_count += 1
-                        print(f"📊 ❌ Bad proxy: {proxy[:50]}...")
+                        print(f"📊 ❌ Bad proxy: {safe_str(proxy[:50])}...")
 
                 except Exception as e:
-                    print(f"📊 ❌ Error validating {proxy[:50]}: {e}")
+                    print(f"📊 ❌ Error validating {safe_str(proxy[:50])}: {safe_str(e)}")
                     bad_count += 1
 
             # Update daily counters
@@ -983,14 +998,14 @@ class ProxyManager:
                 'validated': good_count + bad_count,
                 'good': good_count,
                 'bad': bad_count,
-                'message': f'Validated {good_count + bad_count} proxies: {good_count} good, {bad_count} bad'
+                'message': f'Validated {safe_str(good_count + bad_count)} proxies: {safe_str(good_count)} good, {safe_str(bad_count)} bad'
             }
 
         except Exception as e:
-            print(f"❌ Batch validation error in /pxstats: {e}")
+            print(f"❌ Batch validation error in /pxstats: {safe_str(e)}")
             return {
                 'status': 'error',
-                'message': str(e)
+                'message': safe_str(e)
             }
         finally:
             self.validation_in_progress = False
@@ -1134,7 +1149,7 @@ async def add_proxy_command(client, message: Message):
             await msg.edit(f"""<pre>❌ File Error</pre>
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: Failed to read file.
-⟐ <b>Error</b>: <code>{str(e)[:100]}</code>
+⟐ <b>Error</b>: <code>{safe_str(e)[:100]}</code>
 ━━━━━━━━━━━━━""")
             return
 
@@ -1228,7 +1243,7 @@ async def remove_proxy_command(client, message: Message):
             await msg.edit(f"""<pre>❌ File Error</pre>
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: Failed to read file.
-⟐ <b>Error</b>: <code>{str(e)[:100]}</code>
+⟐ <b>Error</b>: <code>{safe_str(e)[:100]}</code>
 ━━━━━━━━━━━━━""")
             return
 
@@ -1376,7 +1391,7 @@ async def validate_proxy_command(client, message: Message):
             await msg.edit(f"""<pre>❌ File Error</pre>
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: Failed to read file.
-⟐ <b>Error</b>: <code>{str(e)[:100]}</code>
+⟐ <b>Error</b>: <code>{safe_str(e)[:100]}</code>
 ━━━━━━━━━━━━━""")
             return
     else:
@@ -1548,7 +1563,7 @@ async def proxy_stats_handler(client, message: Message):
             rt_float = float(rt)
             rt_str = f"{rt_float:.2f}"
         except (ValueError, TypeError):
-            rt_str = str(rt)
+            rt_str = safe_str(rt)
 
         response += f"{i}. {status} <code>{proxy}</code>\n"
         response += f"   → {rate:.1f}% | {rt_str}s | {site} | {success}✅ {fails}❌\n"
