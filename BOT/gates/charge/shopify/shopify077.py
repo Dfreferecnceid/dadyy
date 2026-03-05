@@ -45,6 +45,35 @@ except ImportError:
     def get_bin_details(bin_number):
         return {}
 
+# Import filter.py for smart card parsing
+try:
+    from BOT.helper.filter import extract_cards
+    FILTER_AVAILABLE = True
+    print("✅ Filter module imported successfully for shopify077")
+except ImportError as e:
+    print(f"❌ Filter module import error in shopify077: {e}")
+    FILTER_AVAILABLE = False
+    # Fallback simple parser if filter not available
+    def extract_cards(text):
+        all_cards = []
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            # Simple fallback parser
+            parts = line.replace('|', ' ').split()
+            if len(parts) >= 4:
+                cc = re.sub(r'\D', '', parts[0])
+                mm = re.sub(r'\D', '', parts[1])
+                yy = re.sub(r'\D', '', parts[2])
+                cvv = re.sub(r'\D', '', parts[3])
+                if cc and mm and yy and cvv:
+                    if len(yy) == 4:
+                        yy = yy[-2:]
+                    card = f"{cc}|{mm.zfill(2)}|{yy}|{cvv}"
+                    all_cards.append(card)
+        return all_cards, list(set(all_cards))
+
 # Import proxy system functions
 try:
     from BOT.tools.proxy import (
@@ -469,6 +498,41 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
     return result
 
 
+# ========== CARD PARSING FUNCTION USING FILTER.PY ==========
+def parse_card_input(card_input):
+    """
+    Parse card input using the smart parser from filter.py
+    Returns (cc, mm, yy, cvv) tuple or (None, None, None, None) if invalid
+    """
+    try:
+        # Use the extract_cards function from filter.py
+        all_cards, unique_cards = extract_cards(card_input)
+        
+        if not unique_cards:
+            return None, None, None, None
+        
+        # Take the first valid card
+        first_card = unique_cards[0]
+        parts = first_card.split('|')
+        
+        if len(parts) >= 4:
+            cc = parts[0].strip()
+            mm = parts[1].strip().zfill(2)
+            yy = parts[2].strip()
+            cvv = parts[3].strip()
+            
+            # Ensure 2-digit year
+            if len(yy) == 4:
+                yy = yy[-2:]
+                
+            return cc, mm, yy, cvv
+            
+    except Exception as e:
+        print(f"❌ Card parsing error: {str(e)}")
+    
+    return None, None, None, None
+
+
 # ========== SHOPIFY MIDDLE EASTERN CHECKOUT CLASS ==========
 class ShopifyMiddleEasternCheckout:
     def __init__(self, user_id=None):
@@ -620,7 +684,7 @@ class ShopifyMiddleEasternCheckout:
         self.step(1, "GET PRODUCT PAGE", f"Loading El Mordjene Vanille product page")
         
         try:
-            resp = await self.client.get(self.product_url, headers=self.headers, timeout=25, follow_redirects=True)  # Increased to 25 seconds
+            resp = await self.client.get(self.product_url, headers=self.headers, timeout=25, follow_redirects=True)
             
             if resp.status_code != 200:
                 self.logger.error_log("PRODUCT_PAGE", f"Failed: {resp.status_code}")
@@ -666,7 +730,7 @@ class ShopifyMiddleEasternCheckout:
                 f"{self.base_url}/cart/add.js",
                 headers=cart_headers,
                 data=cart_data,
-                timeout=25,  # Increased to 25 seconds
+                timeout=25,
                 follow_redirects=True
             )
             
@@ -704,7 +768,7 @@ class ShopifyMiddleEasternCheckout:
                 f"{self.base_url}/cart",
                 headers=checkout_headers,
                 follow_redirects=True,
-                timeout=25  # Increased to 25 seconds
+                timeout=25
             )
             
             # Now proceed to checkout
@@ -714,7 +778,7 @@ class ShopifyMiddleEasternCheckout:
                 checkout_url,
                 headers=checkout_headers,
                 follow_redirects=True,
-                timeout=25  # Increased to 25 seconds
+                timeout=25
             )
             
             # Get final URL from redirects which contains the checkout token
@@ -767,7 +831,7 @@ class ShopifyMiddleEasternCheckout:
             resp = await self.client.get(
                 checkout_page_url,
                 headers=checkout_headers,
-                timeout=25,  # Increased to 25 seconds
+                timeout=25,
                 follow_redirects=True
             )
             
@@ -950,7 +1014,7 @@ class ShopifyMiddleEasternCheckout:
                 graphql_url + "?operationName=Proposal",
                 headers=graphql_headers,
                 json=payload,
-                timeout=25  # Increased to 25 seconds
+                timeout=25
             )
             
             if resp.status_code != 200:
@@ -1157,7 +1221,7 @@ class ShopifyMiddleEasternCheckout:
                 graphql_url + "?operationName=Proposal",
                 headers=graphql_headers,
                 json=payload,
-                timeout=25  # Increased to 25 seconds
+                timeout=25
             )
             
             if resp.status_code != 200:
@@ -1244,12 +1308,12 @@ class ShopifyMiddleEasternCheckout:
         
         try:
             # Use separate client for PCI
-            async with httpx.AsyncClient(proxy=self.proxy_url, timeout=25) as pci_client:  # Increased to 25 seconds
+            async with httpx.AsyncClient(proxy=self.proxy_url, timeout=25) as pci_client:
                 resp = await pci_client.post(
                     'https://checkout.pci.shopifyinc.com/sessions',
                     headers=pci_headers,
                     json=pci_payload,
-                    timeout=25  # Increased to 25 seconds
+                    timeout=25
                 )
                 
                 if resp.status_code != 200:
@@ -1473,7 +1537,7 @@ class ShopifyMiddleEasternCheckout:
                 graphql_url + "?operationName=Proposal",
                 headers=graphql_headers,
                 json=payload,
-                timeout=25  # Increased to 25 seconds
+                timeout=25
             )
             
             if resp.status_code != 200:
@@ -1708,7 +1772,7 @@ class ShopifyMiddleEasternCheckout:
                 graphql_url + "?operationName=SubmitForCompletion",
                 headers=graphql_headers,
                 json=payload,
-                timeout=25  # Increased to 25 seconds
+                timeout=25
             )
             
             if resp.status_code != 200:
@@ -1795,7 +1859,7 @@ class ShopifyMiddleEasternCheckout:
                     graphql_url,
                     headers={**headers, 'accept': 'application/json'},
                     params=poll_params,
-                    timeout=25  # Increased to 25 seconds
+                    timeout=25
                 )
                 
                 if resp.status_code != 200:
@@ -1812,7 +1876,7 @@ class ShopifyMiddleEasternCheckout:
                         graphql_url + "?operationName=PollForReceipt",
                         headers=headers,
                         json=poll_payload,
-                        timeout=25  # Increased to 25 seconds
+                        timeout=25
                     )
                 
                 if resp.status_code != 200:
@@ -1890,13 +1954,13 @@ class ShopifyMiddleEasternCheckout:
                     self.logger.error_log("NO_PROXY", "No working proxies available")
                     return False, "NO_PROXY_AVAILABLE"
                 
-                self.client = httpx.AsyncClient(proxy=self.proxy_url, timeout=25, follow_redirects=True)  # Increased to 25 seconds
+                self.client = httpx.AsyncClient(proxy=self.proxy_url, timeout=25, follow_redirects=True)
                 self.proxy_status = "Live ⚡️"
                 self.proxy_used = True
                 self.logger.data_extracted("Proxy", f"{self.proxy_url[:30]}...", "Proxy System")
             else:
                 self.proxy_status = "No Proxy"
-                self.client = httpx.AsyncClient(timeout=25, follow_redirects=True)  # Increased to 25 seconds
+                self.client = httpx.AsyncClient(timeout=25, follow_redirects=True)
             
             # Step 1: Get product page
             success, result = await self.get_product_page()
@@ -1974,30 +2038,24 @@ class ShopifyMiddleEasternChecker:
         self.logger.start_check(card_details)
 
         try:
-            cc_parts = card_details.split('|')
-            if len(cc_parts) < 4:
+            # Parse card using filter.py
+            cc, mes, ano, cvv = parse_card_input(card_details)
+            
+            if not cc or not mes or not ano or not cvv:
                 elapsed_time = time.time() - start_time
+                self.logger.error_log("INVALID_FORMAT", f"Could not parse card: {card_details[:50]}...")
                 return format_shopify_response("", "", "", "", "Invalid card format", elapsed_time, username, user_data, self.proxy_status)
 
-            cc = cc_parts[0].strip().replace(" ", "")
-            mes = cc_parts[1].strip()
-            ano = cc_parts[2].strip()
-            cvv = cc_parts[3].strip()
-
-            # Basic validation
-            if not cc.isdigit() or len(cc) < 15:
+            # Additional validation
+            if len(cc) < 15:
                 elapsed_time = time.time() - start_time
                 return format_shopify_response(cc, mes, ano, cvv, "Invalid card number", elapsed_time, username, user_data, self.proxy_status)
 
-            if not mes.isdigit() or len(mes) not in [1, 2] or not (1 <= int(mes) <= 12):
+            if not (1 <= int(mes) <= 12):
                 elapsed_time = time.time() - start_time
                 return format_shopify_response(cc, mes, ano, cvv, "Invalid month", elapsed_time, username, user_data, self.proxy_status)
 
-            if not ano.isdigit() or len(ano) not in [2, 4]:
-                elapsed_time = time.time() - start_time
-                return format_shopify_response(cc, mes, ano, cvv, "Invalid year", elapsed_time, username, user_data, self.proxy_status)
-
-            if not cvv.isdigit() or len(cvv) not in [3, 4]:
+            if len(cvv) not in [3, 4]:
                 elapsed_time = time.time() - start_time
                 return format_shopify_response(cc, mes, ano, cvv, "Invalid CVV", elapsed_time, username, user_data, self.proxy_status)
 
@@ -2023,10 +2081,12 @@ class ShopifyMiddleEasternChecker:
             elapsed_time = time.time() - start_time
             self.logger.error_log("UNKNOWN", str(e))
             try:
-                cc = cc_parts[0]
-                mes = cc_parts[1]
-                ano = cc_parts[2]
-                cvv = cc_parts[3]
+                # Try to parse card for response
+                parsed_cc, parsed_mes, parsed_ano, parsed_cvv = parse_card_input(card_details)
+                if parsed_cc:
+                    cc, mes, ano, cvv = parsed_cc, parsed_mes, parsed_ano, parsed_cvv
+                else:
+                    cc = mes = ano = cvv = ""
             except:
                 cc = mes = ano = cvv = ""
             error_msg = str(e)
@@ -2095,20 +2155,19 @@ async def handle_shopify_middle_eastern(client: Client, message: Message):
 
         card_details = args[1].strip()
 
-        cc_parts = card_details.split('|')
-        if len(cc_parts) < 4:
+        # Validate that we can parse the card using filter.py
+        cc, mes, ano, cvv = parse_card_input(card_details)
+        if not cc or not mes or not ano or not cvv:
             await message.reply("""<pre>❌ Invalid Format</pre>
 ━━━━━━━━━━━━━
-🠪 <b>Message</b>: Invalid card format.
-🠪 <b>Correct Format</b>: <code>cc|mm|yy|cvv</code>
-🠪 <b>Example</b>: <code>4111111111111111|12|2030|123</code>
+🠪 <b>Message</b>: Invalid card format. Please provide a valid credit card.
+🠪 <b>Supported formats:</b>
+   • cc|mm|yy|cvv
+   • cc mm yy cvv
+   • cc,mm,yy,cvv
+   • CSV format with headers
 ━━━━━━━━━━━━━""")
             return
-
-        cc = cc_parts[0]
-        mes = cc_parts[1]
-        ano = cc_parts[2]
-        cvv = cc_parts[3]
 
         processing_msg = await message.reply(
             f"""
