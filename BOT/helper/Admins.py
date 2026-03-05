@@ -342,7 +342,7 @@ def get_all_commands():
     """Get list of all valid commands in the bot"""
     valid_commands = set()
 
-    # UPDATED: Added new proxy commands and removed old ones
+    # UPDATED: Added all new Shopify and Mass commands
     gate_commands = [
         "au", "chk", "bu", "sq", "sx", "xc", "sk", "gen", "fake", "bin",
         "gates", "gate", "start", "help", "info", "register",
@@ -352,6 +352,10 @@ def get_all_commands():
         "gc", "id",
         "xx", "xo", "xs", "xc", "xp", "bt", "sh", "slf",  # Charge commands
         "mau", "mchk", "mxc", "mxp", "mxx",  # Mass commands
+        # NEW SHOPIFY COMMANDS - Added
+        "so", "sp", "si", "sf", "sy",  # Shopify charge commands
+        # NEW MASS COMMANDS - Added mstr
+        "mstr",  # Mass Stripe Charge Auto
         # NEW PROXY COMMANDS - Added
         "addpx", "rmvpx", "rmvall", "vpx", "pxstats",
     ]
@@ -595,9 +599,9 @@ async def resett_command(client: Client, message: Message):
 
 @Client.on_message(filters.command(["gc", ".gc"]))
 @owner_required
-@auth_and_free_restricted  # Use the new combined decorator
+@auth_and_free_restricted
 async def gc_command(client: Client, message: Message):
-    """Generate gift codes - OWNER ONLY - WITH JSON FORMAT"""
+    """Generate gift codes - OWNER ONLY - WITH UPDATED FORMAT"""
     args = message.text.split()
     if len(args) < 3:
         await message.reply("""<pre>#WAYNE ─[GENERATE CODE]─</pre>
@@ -650,36 +654,26 @@ async def gc_command(client: Client, message: Message):
         return
 
     codes = generate_redeem_code(days, num_codes)
+    hours_total = days * 24
 
-    response = "<pre>✅ Redeem Codes Generated (JSON Format)</pre>\n"
+    # Build response with exact requested format
+    response = "<pre>✅ Redeem Codes Generated</pre>\n"
     response += "━━━━━━━━━━━━━\n"
 
     for code, expiration_date in codes:
-        response += f"⟐ <b>Code</b>: <code>{code}</code>\n"
-
-    hours_total = days * 24
-    response += f"\n⟐ <b>Expiration</b>: <code>{expiration_date}</code>\n"
-    response += f"⟐ <b>Valid For</b>: <code>{hours_total} hours ({days} days)</code>\n"
-    response += f"⟐ <b>Total Codes</b>: <code>{num_codes} codes generated</code>\n"
-    response += f"⟐ <b>Format</b>: <code>Saved in gift_codes.json</code>\n"
-    response += "━━━━━━━━━━━━━\n"
-    response += "<b>~ NEW User Rules:</b>\n"
-    response += "1. <code>One gift code per user only</code>\n"
-    response += "2. <code>Premium users cannot redeem codes</code>\n"
-    response += "3. <code>Codes expire on specified date</code>\n"
-    response += "4. <code>Plus plan only (temporary)</code>\n"
-    response += "━━━━━━━━━━━━━\n"
-    response += "<b>~ How to Redeem Your Code:</b>\n"
-    response += "1. User uses <code>/redeem &lt;your_code&gt;</code>\n"
-    response += f"2. Each code valid for <code>{hours_total} hours</code>\n"
-    response += "3. System tracks user redemptions\n"
-    response += "4. User cannot redeem another code\n"
-    response += "5. Premium users blocked from redeeming\n"
-    response += "━━━━━━━━━━━━━\n"
-    response += "<b>~ Admin Tools:</b>\n"
-    response += "• <code>/notused</code> - Check unused codes\n"
-    response += "• <code>/allcodes</code> - View all codes (Owner)\n"
-    response += "• <code>/checkcode CODE</code> - Check specific code\n"
+        response += f"⟐ Code: <code>{code}</code>\n"
+        response += "\n"
+        response += f"⟐ Expiration: <code>{expiration_date}</code>\n"
+        response += f"⟐ Valid For: <code>{hours_total} hours ({days} days)</code>\n"
+        response += f"⟐ Total Codes: <code>{num_codes} codes generated</code>\n"
+        response += "━━━━━━━━━━━━━\n"
+        response += "<b>~ How to Redeem Your Code:</b>\n"
+        response += f"# User uses /redeem &lt;your_code&gt;\n"
+        response += f"# Each code valid for <code>{hours_total} hours</code>\n"
+        response += "━━━━━━━━━━━━━\n"
+        response += "<b>~ Rules:</b>\n"
+        response += "! One gift code per user only\n"
+        response += "! Premium users cannot redeem codes\n"
 
     await message.reply(response)
 
@@ -1025,11 +1019,11 @@ async def off_command(client: Client, message: Message):
     result = disable_command(command)
 
     if result == "invalid_command":
-        # UPDATED: Added new proxy commands to the list
+        # UPDATED: Added all new Shopify and Mass commands to the list
         await message.reply(f"""<pre>❌ Invalid Command</pre>
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: Command <code>{command}</code> does not exist in this bot.
-⟐ <b>Valid Commands:</b> <code>au, chk, xx, xo, xs, xc, xp, bt, sh, slf, mau, mchk, mxc, mxp, mxx, gen, fake, bin, gates, gate, start, help, info, register, buy, plans, plan, plus, pro, elite, vip, ultimate, redeem, looser, broad, notused, off, on, resett, banbin, unbanbin, ban, unban, add, rmv, gc, id, addpx, rmvpx, rmvall, vpx, pxstats</code>
+⟐ <b>Valid Commands:</b> <code>au, chk, bu, sq, xx, xo, xs, xc, xp, bt, sh, slf, so, sp, si, sf, sy, mau, mchk, mxc, mxp, mxx, mstr, gen, fake, bin, gates, gate, start, help, info, register, buy, plans, plan, plus, pro, elite, vip, ultimate, redeem, looser, broad, notused, off, on, resett, banbin, unbanbin, ban, unban, add, rmv, gc, id, addpx, rmvpx, rmvall, vpx, pxstats</code>
 ━━━━━━━━━━━━━""")
     elif result == "already_disabled":
         await message.reply(f"""<pre>ℹ️ Already Disabled</pre>
@@ -1071,11 +1065,11 @@ async def on_command(client: Client, message: Message):
     result = enable_command(command)
 
     if result == "invalid_command":
-        # UPDATED: Added new proxy commands to the list
+        # UPDATED: Added all new Shopify and Mass commands to the list
         await message.reply(f"""<pre>❌ Invalid Command</pre>
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: Command <code>{command}</code> does not exist in this bot.
-⟐ <b>Valid Commands:</b> <code>au, chk, xx, xo, xs, xc, xp, bt, sh, slf, mau, mchk, mxc, mxp, mxx, gen, fake, bin, gates, gate, start, help, info, register, buy, plans, plan, plus, pro, elite, vip, ultimate, redeem, looser, broad, notused, off, on, resett, banbin, unbanbin, ban, unban, add, rmv, gc, id, addpx, rmvpx, rmvall, vpx, pxstats</code>
+⟐ <b>Valid Commands:</b> <code>au, chk, bu, sq, xx, xo, xs, xc, xp, bt, sh, slf, so, sp, si, sf, sy, mau, mchk, mxc, mxp, mxx, mstr, gen, fake, bin, gates, gate, start, help, info, register, buy, plans, plan, plus, pro, elite, vip, ultimate, redeem, looser, broad, notused, off, on, resett, banbin, unbanbin, ban, unban, add, rmv, gc, id, addpx, rmvpx, rmvall, vpx, pxstats</code>
 ━━━━━━━━━━━━━""")
     elif result == "not_disabled":
         await message.reply(f"""<pre>ℹ️ Not Disabled</pre>
