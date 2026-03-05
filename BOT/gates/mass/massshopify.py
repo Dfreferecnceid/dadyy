@@ -338,7 +338,11 @@ class MassShopifyAutoChecker:
             "billing update",
             "could not create checkout",
             "failed to initialize checkout",
-            "unable to load checkout"
+            "unable to load checkout",
+            "try again ♻️",
+            "try again",
+            "error❗️",
+            "error"
         ]
         
         for pattern in retry_patterns:
@@ -466,10 +470,11 @@ class MassShopifyAutoChecker:
         # Default to decline if we can't categorize (safer to count as decline than error)
         return "decline"
     
-    async def format_card_result(self, result_text, gate_info, card_details, username, user_data, retry_count=0):
+    async def format_card_result(self, result_text, gate_info, card_details, username, user_data):
         """
         Format individual card result for mass response
         Extracts relevant parts from the full Shopify result
+        (No retry indicator shown)
         """
         try:
             cc, mes, ano, cvv = self.parse_card_details(card_details)
@@ -499,13 +504,10 @@ class MassShopifyAutoChecker:
                 elif '<b>[+] Country</b>:' in line:
                     country_line = line.strip()
             
-            # Add retry indicator if this was a retry
-            retry_indicator = f" [Retry {retry_count}]" if retry_count > 0 else ""
-            
-            # Format the result
+            # Format the result (NO retry indicator)
             formatted = f"""
 <b>[•] Card-</b> <code>{cc}|{mes}|{ano[-2:]}|{cvv}</code>
-<b>[•] Gateway -</b> {gate_info['gateway_display']}{retry_indicator}
+<b>[•] Gateway -</b> {gate_info['gateway_display']}
 {status_line}
 {response_line}
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
@@ -528,10 +530,10 @@ class MassShopifyAutoChecker:
 <b>Gate ID:</b> {gate_info['id_display']}
 """
     
-    async def send_approved_card_immediately(self, client, message, result, card_number, total_cards, gate_info, card_details, username, user_data, retry_count=0):
+    async def send_approved_card_immediately(self, client, message, result, card_number, total_cards, gate_info, card_details, username, user_data):
         """Send approved card immediately without waiting for all cards to finish"""
         try:
-            formatted_result = await self.format_card_result(result, gate_info, card_details, username, user_data, retry_count)
+            formatted_result = await self.format_card_result(result, gate_info, card_details, username, user_data)
             await message.reply(formatted_result, disable_web_page_preview=True)
             await asyncio.sleep(0.5)
             return True
@@ -575,7 +577,7 @@ class MassShopifyAutoChecker:
         except Exception as e:
             print(f"Failed to send summary: {e}")
     
-    async def format_mass_response_collective(self, results, gate_infos, card_details_list, retry_counts, successful, declines, errors, retries, total_cards, username, elapsed_time, user_data):
+    async def format_mass_response_collective(self, results, gate_infos, card_details_list, successful, declines, errors, retries, total_cards, username, elapsed_time, user_data):
         """
         Format collective response when total cards <= 5
         """
@@ -600,13 +602,12 @@ class MassShopifyAutoChecker:
 
 """
         
-        # Add each card result
+        # Add each card result (NO retry indicators shown)
         for idx, result in enumerate(results):
             gate_info = gate_infos[idx] if idx < len(gate_infos) else {'gateway_display': 'Unknown', 'id_display': 'Unknown'}
             card_details = card_details_list[idx] if idx < len(card_details_list) else ""
-            retry_count = retry_counts[idx] if idx < len(retry_counts) else 0
             
-            formatted = await self.format_card_result(result, gate_info, card_details, username, user_data, retry_count)
+            formatted = await self.format_card_result(result, gate_info, card_details, username, user_data)
             response += formatted
             
             if idx < len(results) - 1:
@@ -669,7 +670,7 @@ class MassShopifyAutoChecker:
                     # Send immediately if it's a hit and we're in >5 cards mode
                     if final_category == "hit" and send_immediate and client and message:
                         await self.send_approved_card_immediately(
-                            client, message, result, None, card_count, gate, card_details, username, user_data, retry_count
+                            client, message, result, None, card_count, gate, card_details, username, user_data
                         )
                     break
                     
@@ -859,7 +860,6 @@ async def handle_mass_shopify_auto(client: Client, message: Message):
         results = []
         gate_infos = []
         card_details_list = []
-        retry_counts = []
         successful = 0
         declines = 0
         errors = 0
@@ -884,7 +884,6 @@ async def handle_mass_shopify_auto(client: Client, message: Message):
             results.append(result)
             gate_infos.append(gate)
             card_details_list.append(card_details)
-            retry_counts.append(retry_count)
             total_retries += retry_count
             
             # Update counters based on category
@@ -925,7 +924,7 @@ async def handle_mass_shopify_auto(client: Client, message: Message):
         else:
             # For <=5 cards: Send collective response with all cards
             final_response = await mass_checker.format_mass_response_collective(
-                results, gate_infos, card_details_list, retry_counts, 
+                results, gate_infos, card_details_list, 
                 successful, declines, errors, total_retries,
                 card_count, username, elapsed_time, user_data
             )
