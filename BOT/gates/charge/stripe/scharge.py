@@ -1151,14 +1151,11 @@ async def handle_stripe_charge(client: Client, message: Message):
             else:
                 await message.reply("""<pre>#WAYNE ━[STRIPE CHARGE]━━</pre>
 ━━━━━━━━━━━━━━━━━━━━━━
-🠪 <b>Command</b>: <code>/xc</code> or <code>.xc</code> or <code>$xc</code>
-🠪 <b>Usage</b>: <code>/xc cc|mm|yy|cvv</code> (or any format)
+🠪 <b>Command</b>: <code>/xc</code>
+🠪 <b>Usage</b>: <code>/xc cc|mm|yy|cvv</code>
 🠪 <b>Example</b>: <code>/xc 4111111111111111|12|2025|123</code>
-🠪 <b>Gate</b>: Stripe Charge 10$ ♻️
 ━━━━━━━━━━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Tests card with $10 charge via Stripe (Deducts 2 credits)</code>
-<b>~ Note:</b> <code>Credits are ONLY deducted when check actually runs and completes</code>
-<b>~ Note:</b> <code>If check fails to start, NO credits are deducted</code>""")
+<b>~ Note:</b> <code>Stripe Charge 10$</code>""")
             return
 
         # Get the full message text after the command
@@ -1176,10 +1173,8 @@ async def handle_stripe_charge(client: Client, message: Message):
         if not parsed:
             await message.reply("""<pre>❌ Invalid Format</pre>
 ━━━━━━━━━━━━━━━━━━━━━━
-🠪 <b>Message</b>: Could not extract card details. Please use format like:
+🠪 <b>Message</b>: Could not extract card details.
 🠪 <b>Format 1</b>: <code>cc|mm|yy|cvv</code>
-🠪 <b>Format 2</b>: <code>cc mm yy cvv</code>
-🠪 <b>Format 3</b>: <code>cc,mm,yyyy,cvv</code>
 ━━━━━━━━━━━━━━━━━━━━━━""")
             return
 
