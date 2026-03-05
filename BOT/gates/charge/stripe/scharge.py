@@ -1145,7 +1145,7 @@ async def handle_stripe_charge(client: Client, message: Message):
                 usage_msg = charge_processor.get_usage_message(
                     command_name="xc",
                     gateway_name="Stripe Charge 10$",
-                    example_card="4111111111111111|12|2025|123"
+                    example_card="4111111111111111|12|2030|123"
                 )
                 await message.reply(usage_msg)
             else:
@@ -1153,7 +1153,7 @@ async def handle_stripe_charge(client: Client, message: Message):
 ━━━━━━━━━━━━━━━━━━━━━━
 🠪 <b>Command</b>: <code>/xc</code>
 🠪 <b>Usage</b>: <code>/xc cc|mm|yy|cvv</code>
-🠪 <b>Example</b>: <code>/xc 4111111111111111|12|2025|123</code>
+🠪 <b>Example</b>: <code>/xc 4111111111111111|12|2030|123</code>
 ━━━━━━━━━━━━━━━━━━━━━━
 <b>~ Note:</b> <code>Stripe Charge 10$</code>""")
             return
