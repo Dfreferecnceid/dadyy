@@ -1907,8 +1907,8 @@ async def handle_shopify_route_charge(client: Client, message: Message):
         if len(args) < 2:
             await message.reply("""<pre>#WAYNE ━[SHOPIFY CHARGE]━━</pre>
 ━━━━━━━━━━━━━
-🠪 <b>Command</b>: <code>/sp</code> or <code>.sp</code> or <code>$sp</code>
-🠪 <b>Usage</b>: <code>/sp cc|mm|yy|cvv</code> (or any format)
+🠪 <b>Command</b>: <code>/sp</code>
+🠪 <b>Usage</b>: <code>/sp cc|mm|yy|cvv</code>
 🠪 <b>Example</b>: <code>/sp 4111111111111111|12|2030|123</code>
 ━━━━━━━━━━━━━
 <b>~ Note:</b> <code>Shopify Charge</code>""")
@@ -1931,8 +1931,6 @@ async def handle_shopify_route_charge(client: Client, message: Message):
 ━━━━━━━━━━━━━
 🠪 <b>Message</b>: Could not extract card details. Please use format like:
 🠪 <b>Format 1</b>: <code>cc|mm|yy|cvv</code>
-🠪 <b>Format 2</b>: <code>cc mm yy cvv</code>
-🠪 <b>Format 3</b>: <code>cc,mm,yyyy,cvv</code>
 ━━━━━━━━━━━━━""")
             return
 
@@ -2014,3 +2012,4 @@ async def handle_shopify_route_charge(client: Client, message: Message):
 🠪 <b>Error</b>: <code>{error_msg}</code>
 🠪 <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
 ━━━━━━━━━━━━━""")
+
