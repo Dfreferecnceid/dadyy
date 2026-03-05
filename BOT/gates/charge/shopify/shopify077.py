@@ -620,7 +620,7 @@ class ShopifyMiddleEasternCheckout:
         self.step(1, "GET PRODUCT PAGE", f"Loading El Mordjene Vanille product page")
         
         try:
-            resp = await self.client.get(self.product_url, headers=self.headers, timeout=15, follow_redirects=True)
+            resp = await self.client.get(self.product_url, headers=self.headers, timeout=25, follow_redirects=True)  # Increased to 25 seconds
             
             if resp.status_code != 200:
                 self.logger.error_log("PRODUCT_PAGE", f"Failed: {resp.status_code}")
@@ -637,7 +637,7 @@ class ShopifyMiddleEasternCheckout:
             self.proxy_status = "Dead 🚫"
             return False, "PROXY_DEAD"
         except httpx.TimeoutException as e:
-            self.logger.error_log("TIMEOUT", f"Timeout on product page: {str(e)}")
+            self.logger.error_log("TIMEOUT", f"Timeout on product page after 25s: {str(e)}")
             return False, "TIMEOUT"
         except Exception as e:
             self.logger.error_log("PRODUCT_PAGE", str(e))
@@ -666,7 +666,7 @@ class ShopifyMiddleEasternCheckout:
                 f"{self.base_url}/cart/add.js",
                 headers=cart_headers,
                 data=cart_data,
-                timeout=15,
+                timeout=25,  # Increased to 25 seconds
                 follow_redirects=True
             )
             
@@ -682,7 +682,7 @@ class ShopifyMiddleEasternCheckout:
             self.proxy_status = "Dead 🚫"
             return False, "PROXY_DEAD"
         except httpx.TimeoutException as e:
-            self.logger.error_log("TIMEOUT", f"Timeout on add to cart: {str(e)}")
+            self.logger.error_log("TIMEOUT", f"Timeout on add to cart after 25s: {str(e)}")
             return False, "TIMEOUT"
         except Exception as e:
             self.logger.error_log("ADD_TO_CART", str(e))
@@ -704,7 +704,7 @@ class ShopifyMiddleEasternCheckout:
                 f"{self.base_url}/cart",
                 headers=checkout_headers,
                 follow_redirects=True,
-                timeout=15
+                timeout=25  # Increased to 25 seconds
             )
             
             # Now proceed to checkout
@@ -714,7 +714,7 @@ class ShopifyMiddleEasternCheckout:
                 checkout_url,
                 headers=checkout_headers,
                 follow_redirects=True,
-                timeout=20
+                timeout=25  # Increased to 25 seconds
             )
             
             # Get final URL from redirects which contains the checkout token
@@ -745,7 +745,7 @@ class ShopifyMiddleEasternCheckout:
             self.proxy_status = "Dead 🚫"
             return False, "PROXY_DEAD"
         except httpx.TimeoutException as e:
-            self.logger.error_log("TIMEOUT", f"Timeout on checkout: {str(e)}")
+            self.logger.error_log("TIMEOUT", f"Timeout on checkout after 25s: {str(e)}")
             return False, "TIMEOUT"
         except Exception as e:
             self.logger.error_log("CHECKOUT_TOKEN", str(e))
@@ -767,7 +767,7 @@ class ShopifyMiddleEasternCheckout:
             resp = await self.client.get(
                 checkout_page_url,
                 headers=checkout_headers,
-                timeout=15,
+                timeout=25,  # Increased to 25 seconds
                 follow_redirects=True
             )
             
@@ -787,7 +787,7 @@ class ShopifyMiddleEasternCheckout:
             self.proxy_status = "Dead 🚫"
             return False, "PROXY_DEAD"
         except httpx.TimeoutException as e:
-            self.logger.error_log("TIMEOUT", f"Timeout on checkout page: {str(e)}")
+            self.logger.error_log("TIMEOUT", f"Timeout on checkout page after 25s: {str(e)}")
             return False, "TIMEOUT"
         except Exception as e:
             self.logger.error_log("SESSION_TOKEN", str(e))
@@ -950,7 +950,7 @@ class ShopifyMiddleEasternCheckout:
                 graphql_url + "?operationName=Proposal",
                 headers=graphql_headers,
                 json=payload,
-                timeout=15
+                timeout=25  # Increased to 25 seconds
             )
             
             if resp.status_code != 200:
@@ -1003,7 +1003,7 @@ class ShopifyMiddleEasternCheckout:
             self.proxy_status = "Dead 🚫"
             return False, "PROXY_DEAD"
         except httpx.TimeoutException as e:
-            self.logger.error_log("TIMEOUT", f"Timeout on proposal: {str(e)}")
+            self.logger.error_log("TIMEOUT", f"Timeout on proposal after 25s: {str(e)}")
             return False, "TIMEOUT"
         except Exception as e:
             self.logger.error_log("PROPOSAL_ERROR", str(e))
@@ -1157,7 +1157,7 @@ class ShopifyMiddleEasternCheckout:
                 graphql_url + "?operationName=Proposal",
                 headers=graphql_headers,
                 json=payload,
-                timeout=15
+                timeout=25  # Increased to 25 seconds
             )
             
             if resp.status_code != 200:
@@ -1180,6 +1180,9 @@ class ShopifyMiddleEasternCheckout:
         except httpx.ProxyError as e:
             self.logger.error_log("PROXY", f"Proxy error on pickup selection: {str(e)}")
             return False, "PROXY_DEAD"
+        except httpx.TimeoutException as e:
+            self.logger.error_log("TIMEOUT", f"Timeout on pickup selection after 25s: {str(e)}")
+            return False, "TIMEOUT"
         except Exception as e:
             self.logger.error_log("PICKUP_SELECTION", str(e))
             return False, f"Pickup selection error: {str(e)[:50]}"
@@ -1241,12 +1244,12 @@ class ShopifyMiddleEasternCheckout:
         
         try:
             # Use separate client for PCI
-            async with httpx.AsyncClient(proxy=self.proxy_url, timeout=15) as pci_client:
+            async with httpx.AsyncClient(proxy=self.proxy_url, timeout=25) as pci_client:  # Increased to 25 seconds
                 resp = await pci_client.post(
                     'https://checkout.pci.shopifyinc.com/sessions',
                     headers=pci_headers,
                     json=pci_payload,
-                    timeout=15
+                    timeout=25  # Increased to 25 seconds
                 )
                 
                 if resp.status_code != 200:
@@ -1270,7 +1273,7 @@ class ShopifyMiddleEasternCheckout:
             self.proxy_status = "Dead 🚫"
             return False, "PROXY_DEAD"
         except httpx.TimeoutException as e:
-            self.logger.error_log("TIMEOUT", f"Timeout on PCI: {str(e)}")
+            self.logger.error_log("TIMEOUT", f"Timeout on PCI after 25s: {str(e)}")
             return False, "TIMEOUT"
         except Exception as e:
             self.logger.error_log("PCI_ERROR", str(e))
@@ -1470,7 +1473,7 @@ class ShopifyMiddleEasternCheckout:
                 graphql_url + "?operationName=Proposal",
                 headers=graphql_headers,
                 json=payload,
-                timeout=15
+                timeout=25  # Increased to 25 seconds
             )
             
             if resp.status_code != 200:
@@ -1493,6 +1496,9 @@ class ShopifyMiddleEasternCheckout:
         except httpx.ProxyError as e:
             self.logger.error_log("PROXY", f"Proxy error on billing update: {str(e)}")
             return False, "PROXY_DEAD"
+        except httpx.TimeoutException as e:
+            self.logger.error_log("TIMEOUT", f"Timeout on billing update after 25s: {str(e)}")
+            return False, "TIMEOUT"
         except Exception as e:
             self.logger.error_log("BILLING_UPDATE", str(e))
             return False, f"Billing update error: {str(e)[:50]}"
@@ -1702,7 +1708,7 @@ class ShopifyMiddleEasternCheckout:
                 graphql_url + "?operationName=SubmitForCompletion",
                 headers=graphql_headers,
                 json=payload,
-                timeout=20
+                timeout=25  # Increased to 25 seconds
             )
             
             if resp.status_code != 200:
@@ -1757,7 +1763,7 @@ class ShopifyMiddleEasternCheckout:
             self.proxy_status = "Dead 🚫"
             return False, "PROXY_DEAD"
         except httpx.TimeoutException as e:
-            self.logger.error_log("TIMEOUT", f"Timeout on submit: {str(e)}")
+            self.logger.error_log("TIMEOUT", f"Timeout on submit after 25s: {str(e)}")
             return False, "TIMEOUT"
         except Exception as e:
             self.logger.error_log("SUBMIT_ERROR", str(e))
@@ -1789,7 +1795,7 @@ class ShopifyMiddleEasternCheckout:
                     graphql_url,
                     headers={**headers, 'accept': 'application/json'},
                     params=poll_params,
-                    timeout=25
+                    timeout=25  # Increased to 25 seconds
                 )
                 
                 if resp.status_code != 200:
@@ -1806,7 +1812,7 @@ class ShopifyMiddleEasternCheckout:
                         graphql_url + "?operationName=PollForReceipt",
                         headers=headers,
                         json=poll_payload,
-                        timeout=25
+                        timeout=25  # Increased to 25 seconds
                     )
                 
                 if resp.status_code != 200:
@@ -1884,13 +1890,13 @@ class ShopifyMiddleEasternCheckout:
                     self.logger.error_log("NO_PROXY", "No working proxies available")
                     return False, "NO_PROXY_AVAILABLE"
                 
-                self.client = httpx.AsyncClient(proxy=self.proxy_url, timeout=20, follow_redirects=True)
+                self.client = httpx.AsyncClient(proxy=self.proxy_url, timeout=25, follow_redirects=True)  # Increased to 25 seconds
                 self.proxy_status = "Live ⚡️"
                 self.proxy_used = True
                 self.logger.data_extracted("Proxy", f"{self.proxy_url[:30]}...", "Proxy System")
             else:
                 self.proxy_status = "No Proxy"
-                self.client = httpx.AsyncClient(timeout=20, follow_redirects=True)
+                self.client = httpx.AsyncClient(timeout=25, follow_redirects=True)  # Increased to 25 seconds
             
             # Step 1: Get product page
             success, result = await self.get_product_page()
