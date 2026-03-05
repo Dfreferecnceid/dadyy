@@ -586,12 +586,26 @@ class ProxyManager:
     def mark_proxy_failed(self, proxy: str):
         """Mark proxy as failed (temporarily dead) - NOW DIES AFTER 1 FAILURE"""
         with _proxy_lock:
-            if proxy in self.proxy_stats:
-                self.proxy_stats[proxy]['fails'] += 1
+            # Safely handle proxy stats
+            if proxy in self.proxy_stats and isinstance(self.proxy_stats[proxy], dict):
+                # Get current fails count safely
+                current_fails = self.proxy_stats[proxy].get('fails', 0)
+                # Ensure it's an integer
+                try:
+                    current_fails = int(current_fails)
+                except (ValueError, TypeError):
+                    current_fails = 0
+                
+                # Increment fails
+                self.proxy_stats[proxy]['fails'] = current_fails + 1
+                
                 # CHANGED: Now die immediately after 1 failure
                 if self.proxy_stats[proxy]['fails'] >= self.failure_threshold:
                     self.dead_proxies.add(proxy)
-                    print(f"⚠️ Marked proxy as dead after {self.failure_threshold} failure: {proxy[:50]}...")
+                    # Convert failure_threshold to string safely
+                    threshold_str = str(self.failure_threshold)
+                    print(f"⚠️ Marked proxy as dead after {threshold_str} failure: {proxy[:50]}...")
+                    
                     # If consistently failing, mark as permanently dead
                     if self.proxy_stats[proxy]['fails'] >= self.failure_threshold * 2:
                         self.perm_dead_proxies.add(proxy)
@@ -600,7 +614,7 @@ class ProxyManager:
                             self.valid_proxies.remove(proxy)
                         print(f"🗑️ Moved proxy to permanently dead: {proxy[:50]}...")
             else:
-                # If no stats, still mark as dead
+                # If no stats or invalid stats, still mark as dead
                 self.dead_proxies.add(proxy)
                 print(f"⚠️ Marked unknown proxy as dead: {proxy[:50]}...")
 
