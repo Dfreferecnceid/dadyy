@@ -307,6 +307,121 @@ class MassShopifyAutoChecker:
 👤 <b>User:</b> @{username}
 💎 <b>Plan:</b> {user_plan}"""
     
+    def categorize_result(self, result_text):
+        """
+        Categorize the result as hit, decline, or error
+        Returns: string "hit", "decline", or "error"
+        
+        - Hit: Charged/Approved messages only
+        - Decline: Payment attempted but declined OR any issue that prevents charge 
+                  (captcha, generic error, insufficient funds, etc.)
+        - Error: System/technical errors where payment process couldn't even start
+                (product page error, checkout errors, billing update errors, etc.)
+        """
+        result_lower = result_text.lower()
+        
+        # ===== HITS =====
+        if "charged ✅" in result_lower or "approved ❎" in result_lower:
+            return "hit"
+        
+        # ===== ERRORS (Payment process couldn't start - technical issues) =====
+        error_patterns = [
+            # Product page / checkout errors
+            "product page",
+            "checkout error",
+            "checkout not available",
+            "unable to load checkout",
+            "checkout unavailable",
+            "payment method not available",
+            "gateway error",
+            "connection error",
+            "timeout",
+            "failed to connect",
+            "network error",
+            "ssl error",
+            "billing update",
+            "billing error",
+            "update error",
+            
+            # Page load errors
+            "page not found",
+            "404",
+            "500",
+            "503",
+            "service unavailable",
+            "maintenance",
+            
+            # Checkout process errors
+            "could not create checkout",
+            "failed to initialize",
+            "checkout creation failed",
+            "unable to process payment",
+            "payment gateway error",
+            "processing error",
+            "system error",
+            "technical error",
+            "server error"
+        ]
+        
+        for pattern in error_patterns:
+            if pattern in result_lower:
+                return "error"
+        
+        # ===== DECLINES (Everything else - including captcha, generic declines, etc.) =====
+        decline_patterns = [
+            # Captcha related - NOW IN DECLINE
+            "captcha",
+            "recaptcha",
+            "cf-ray",
+            "cloudflare",
+            "security check",
+            
+            # Decline messages
+            "declined ❌",
+            "declined",
+            "generic error",
+            "insufficient funds",
+            "do not honor",
+            "transaction not permitted",
+            "pickup card",
+            "invalid card",
+            "invalid amount",
+            "invalid account",
+            "restricted card",
+            "security violation",
+            "lost card",
+            "stolen card",
+            "expired card",
+            "invalid cvv",
+            "invalid expiration",
+            "card declined",
+            "payment declined",
+            "transaction declined",
+            "authorization failed",
+            "bank declined",
+            "issuer declined",
+            "refer to issuer",
+            "insufficient balance",
+            "over limit",
+            "limit exceeded",
+            "suspected fraud",
+            "try again",
+            "temporary error",
+            "rejected",
+            "not approved",
+            "failed",
+            "unsuccessful",
+            "cannot process",
+            "not processed"
+        ]
+        
+        for pattern in decline_patterns:
+            if pattern in result_lower:
+                return "decline"
+        
+        # Default to decline if we can't categorize (safer to count as decline than error)
+        return "decline"
+    
     async def format_card_result(self, result_text, gate_info, card_details, username, user_data):
         """
         Format individual card result for mass response
@@ -377,7 +492,7 @@ class MassShopifyAutoChecker:
             print(f"Failed to send approved card immediately: {e}")
             return False
     
-    async def send_final_summary(self, client, message, successful, failed, total_cards, username, elapsed_time, user_data, processing_msg):
+    async def send_final_summary(self, client, message, successful, declines, errors, total_cards, username, elapsed_time, user_data, processing_msg):
         """Send final summary after all cards are processed"""
         user_id = user_data.get("user_id", "Unknown")
         first_name = html.escape(user_data.get("first_name", "User"))
@@ -398,7 +513,7 @@ class MassShopifyAutoChecker:
 <b>[•] Gateway -</b> Mass Shopify Auto
 <b>[•] Status -</b> <code>Complete ✅</code>
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
-<b>[+] Results:</b> ✅ {successful} | ❌ {failed}
+<b>[+] Results:</b> ✅ {successful} | ❌ {declines} | ⚠️ {errors}
 <b>[+] Total Cards:</b> <code>{total_cards}</code>
 <b>[+] Credits Used:</b> <code>5</code>
 ━━━━━━━━━━━━━━━
@@ -412,7 +527,7 @@ class MassShopifyAutoChecker:
         except Exception as e:
             print(f"Failed to send summary: {e}")
     
-    async def format_mass_response_collective(self, results, gate_infos, card_details_list, successful, failed, total_cards, username, elapsed_time, user_data):
+    async def format_mass_response_collective(self, results, gate_infos, card_details_list, successful, declines, errors, total_cards, username, elapsed_time, user_data):
         """
         Format collective response when total cards <= 5
         """
@@ -429,7 +544,7 @@ class MassShopifyAutoChecker:
 <b>[•] Gateway -</b> Mass Shopify Auto
 <b>[•] Status -</b> <code>Complete ✅</code>
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
-<b>[+] Results:</b> ✅ {successful} | ❌ {failed}
+<b>[+] Results:</b> ✅ {successful} | ❌ {declines} | ⚠️ {errors}
 <b>[+] Total Cards:</b> <code>{total_cards}</code>
 <b>[+] Credits Used:</b> <code>5</code> 
 ━━━━━━━━━━━━━━━
@@ -620,7 +735,7 @@ async def handle_mass_shopify_auto(client: Client, message: Message):
         gate_infos = []
         card_details_list = []
         successful = 0
-        failed = 0
+        declines = 0
         errors = 0
         
         # Process each card - Each card gets a fresh session with a random gate
@@ -649,8 +764,10 @@ async def handle_mass_shopify_auto(client: Client, message: Message):
                 gate_infos.append(gate)
                 card_details_list.append(card_details)
                 
-                # Count based on result content
-                if "Charged ✅" in result or "Approved ❎" in result or "Charged 💎" in result:
+                # Categorize the result properly
+                category = mass_checker.categorize_result(result)
+                
+                if category == "hit":
                     successful += 1
                     # For >5 cards, send approved cards immediately
                     if card_count > 5:
@@ -658,9 +775,9 @@ async def handle_mass_shopify_auto(client: Client, message: Message):
                             client, message, result, i+1, card_count, gate, card_details, username, user_data
                         )
                         approved_sent += 1
-                elif "DECLINED" in result or "Declined ❌" in result:
-                    failed += 1
-                else:
+                elif category == "decline":
+                    declines += 1
+                else:  # error
                     errors += 1
                     
             except Exception as e:
@@ -686,7 +803,7 @@ async def handle_mass_shopify_auto(client: Client, message: Message):
                 try:
                     await processing_msg.edit_text(
                         mass_checker.get_processing_message_dynamic(
-                            card_count, checked, successful, failed, errors, username, plan_name
+                            card_count, checked, successful, declines, errors, username, plan_name
                         )
                     )
                 except:
@@ -703,13 +820,13 @@ async def handle_mass_shopify_auto(client: Client, message: Message):
             # For >5 cards: We've already sent approved cards immediately
             # Now just send the final summary
             await mass_checker.send_final_summary(
-                client, message, successful, failed + errors, 
+                client, message, successful, declines, errors, 
                 card_count, username, elapsed_time, user_data, processing_msg
             )
         else:
             # For <=5 cards: Send collective response with all cards
             final_response = await mass_checker.format_mass_response_collective(
-                results, gate_infos, card_details_list, successful, failed + errors, 
+                results, gate_infos, card_details_list, successful, declines, errors, 
                 card_count, username, elapsed_time, user_data
             )
             
@@ -753,5 +870,4 @@ async def handle_mass_shopify_auto(client: Client, message: Message):
             try:
                 os.remove(file_path)
             except:
-
                 pass
