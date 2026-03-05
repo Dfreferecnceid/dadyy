@@ -2015,7 +2015,7 @@ async def handle_shopify_charge(client: Client, message: Message):
 🠪 <b>Command</b>: <code>/so</code> 
 🠪 <b>Usage</b>: <code>/so [card details]</code>
 🠪 <b>Examples</b>:
-   • <code>/so 4160811500282783|03|2027|084</code>
+   • <code>/so 4111111111111112|12|2030|123</code>
 ━━━━━━━━━━━━━
 <b>~ Note:</b> <code>Shopify Charge 0.60$</code>""")
             return
@@ -2028,7 +2028,7 @@ async def handle_shopify_charge(client: Client, message: Message):
             await message.reply("""<pre>❌ Invalid Format</pre>
 ━━━━━━━━━━━━━
 🠪 <b>Message</b>: Could not extract valid card information.
-🠪 <b>Example:</b> <code>/so 4160811500282783 03 2027 084</code>
+🠪 <b>Example:</b> <code>/so 4111111111111112|12|2030|123</code>
 ━━━━━━━━━━━━━""")
             return
 
