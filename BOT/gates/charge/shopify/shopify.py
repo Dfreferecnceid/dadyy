@@ -6,14 +6,14 @@ import re
 import time
 import random
 import string
-import httpx  # CHANGED: Replaced requests with httpx
+import httpx
 import urllib.parse
 from datetime import datetime
 from pyrogram import Client, filters
 from pyrogram.types import Message
 import html
 import os
-import unicodedata  # ADDED: For Unicode normalization
+import unicodedata
 
 # Import from helper modules
 try:
@@ -726,9 +726,9 @@ class ShopifyHTTPCheckout:
         self.email = f"{self.first_name.lower()}{self.last_name.lower()}{random.randint(10,99)}@gmail.com"
         self.phone = f"215{random.randint(100, 999)}{random.randint(1000, 9999)}"
 
-    async def random_delay(self, min_sec=0.5, max_sec=2.0):  # CHANGED: Made async
+    async def random_delay(self, min_sec=0.5, max_sec=2.0):
         """Random delay between requests"""
-        await asyncio.sleep(random.uniform(min_sec, max_sec))  # CHANGED: Using asyncio.sleep
+        await asyncio.sleep(random.uniform(min_sec, max_sec))
 
     def step(self, num, name, action, details=None, status="PROCESSING"):
         return self.logger.step(num, name, action, details, status)
@@ -868,7 +868,7 @@ class ShopifyHTTPCheckout:
         except:
             return None
 
-    async def get_checkout_page_with_token(self, max_retries=3):  # CHANGED: Made async
+    async def get_checkout_page_with_token(self, max_retries=3):
         """Get checkout page and extract session token with retry logic"""
         for attempt in range(max_retries):
             try:
@@ -890,14 +890,14 @@ class ShopifyHTTPCheckout:
                     'sec-fetch-site': 'cross-site'
                 }
 
-                # CHANGED: Using httpx client instead of requests session
+                # Using httpx client instead of requests session
                 resp = await self.client.get(checkout_url, headers=checkout_headers, params=checkout_params, 
-                                            timeout=30, follow_redirects=True)  # CHANGED: follow_redirects=True for 302
+                                            timeout=30, follow_redirects=True)
 
                 if resp.status_code != 200:
                     self.logger.error_log("CHECKOUT_PAGE", f"Status: {resp.status_code}", f"Attempt {attempt + 1}")
                     if attempt < max_retries - 1:
-                        await self.random_delay(2, 4)  # CHANGED: await
+                        await self.random_delay(2, 4)
                         continue
                     return False, f"Failed to load checkout: {resp.status_code}"
 
@@ -921,10 +921,10 @@ class ShopifyHTTPCheckout:
 
                 if attempt < max_retries - 1:
                     self.logger.error_log("TOKEN_RETRY", f"Missing session token, retrying...", f"Attempt {attempt + 1}")
-                    await self.random_delay(2, 4)  # CHANGED: await
+                    await self.random_delay(2, 4)
                     continue
 
-            except httpx.ProxyError as e:  # CHANGED: httpx.ProxyError instead of requests.exceptions.ProxyError
+            except httpx.ProxyError as e:
                 self.logger.error_log("PROXY", f"Proxy error: {str(e)}", f"Attempt {attempt + 1}")
                 mark_proxy_failed(self.proxy_url)
                 self.proxy_status = "Dead 🚫"
@@ -933,12 +933,12 @@ class ShopifyHTTPCheckout:
                     self.proxy_url = get_proxy_for_user(self.user_id, "random")
                     if not self.proxy_url:
                         return False, "NO_PROXY_AVAILABLE"
-                    # CHANGED: Update client with new proxy
+                    # Update client with new proxy
                     self.client = httpx.AsyncClient(proxy=self.proxy_url, timeout=30)
-                    await self.random_delay(2, 4)  # CHANGED: await
+                    await self.random_delay(2, 4)
                     continue
                 return False, "PROXY_DEAD"
-            except httpx.ConnectTimeout as e:  # CHANGED: httpx.ConnectTimeout instead of requests.exceptions.ConnectTimeout
+            except httpx.ConnectTimeout as e:
                 self.logger.error_log("TIMEOUT", f"Connection timeout: {str(e)}", f"Attempt {attempt + 1}")
                 mark_proxy_failed(self.proxy_url)
                 self.proxy_status = "Dead 🚫"
@@ -947,23 +947,23 @@ class ShopifyHTTPCheckout:
                     if not self.proxy_url:
                         return False, "NO_PROXY_AVAILABLE"
                     self.client = httpx.AsyncClient(proxy=self.proxy_url, timeout=30)
-                    await self.random_delay(2, 4)  # CHANGED: await
+                    await self.random_delay(2, 4)
                     continue
                 return False, "PROXY_DEAD"
             except Exception as e:
                 self.logger.error_log("CHECKOUT_ERROR", str(e), f"Attempt {attempt + 1}")
                 if attempt < max_retries - 1:
-                    await self.random_delay(2, 4)  # CHANGED: await
+                    await self.random_delay(2, 4)
                     continue
                 return False, f"Checkout page error: {str(e)}"
 
         error_msg = "Could not extract session token from checkout page"
         return False, error_msg
 
-    async def execute_checkout(self, cc, mes, ano, cvv):  # CHANGED: Made async
+    async def execute_checkout(self, cc, mes, ano, cvv):
         """Execute checkout using HTTP requests with proxy"""
         try:
-            # Step 0: Get proxy for user (MOST IMPORTANT - START WITH PROXY)
+            # Step 0: Get proxy for user (LIKE SHOPIFY054.PY - NO TESTING)
             self.step(0, "GET PROXY", "Getting random proxy for user", f"User ID: {self.user_id}")
             
             if PROXY_SYSTEM_AVAILABLE:
@@ -972,38 +972,17 @@ class ShopifyHTTPCheckout:
                     self.logger.error_log("NO_PROXY", "No working proxies available in system")
                     return False, "NO_PROXY_AVAILABLE"
                 
-                # CHANGED: Initialize httpx.AsyncClient with proxy
-                self.client = httpx.AsyncClient(proxy=self.proxy_url, timeout=30)
+                # Initialize httpx.AsyncClient with proxy - NO TESTING
+                self.client = httpx.AsyncClient(proxy=self.proxy_url, timeout=30, follow_redirects=True)
                 
-                # Test the proxy quickly
-                start_test = time.time()
-                try:
-                    # CHANGED: Using httpx for proxy test
-                    test_resp = await self.client.get("https://ipinfo.io/json", timeout=5)
-                    self.proxy_response_time = time.time() - start_test
-                    
-                    if test_resp.status_code == 200:
-                        self.proxy_status = "Live ⚡️"
-                        self.proxy_used = True
-                        # FIX: Convert float to string for logging
-                        response_time_str = f"{self.proxy_response_time:.2f}"
-                        self.logger.data_extracted("Proxy Info", f"{self.proxy_url[:50]}... | Response: {response_time_str}s", "Proxy System")
-                        
-                        # Mark proxy as successful initially
-                        mark_proxy_success(self.proxy_url, self.proxy_response_time)
-                    else:
-                        self.proxy_status = "Dead 🚫"
-                        mark_proxy_failed(self.proxy_url)
-                        await self.client.aclose()  # CHANGED: Close client
-                        self.logger.error_log("PROXY", f"Proxy test failed with status: {test_resp.status_code}")
-                        return False, "PROXY_DEAD"
-                        
-                except Exception as e:
-                    self.proxy_status = "Dead 🚫"
-                    mark_proxy_failed(self.proxy_url)
-                    await self.client.aclose()  # CHANGED: Close client
-                    self.logger.error_log("PROXY", f"Proxy test error: {str(e)[:50]}")
-                    return False, "PROXY_DEAD"
+                # Set proxy status as Live immediately (proxy manager already validated it)
+                self.proxy_status = "Live ⚡️"
+                self.proxy_used = True
+                self.logger.data_extracted("Proxy Info", f"{self.proxy_url[:50]}...", "Proxy System")
+                
+                # DON'T test the proxy here - let the actual requests test it
+                # mark_proxy_success will be called after successful requests
+                
             else:
                 self.logger.error_log("PROXY", "Proxy system not available")
                 return False, "PROXY_SYSTEM_UNAVAILABLE"
@@ -1020,13 +999,13 @@ class ShopifyHTTPCheckout:
                 'cart_currency': 'USD'
             }
 
-            # CHANGED: Set cookies in httpx client
+            # Set cookies in httpx client
             self.client.cookies.update(initial_cookies)
 
             # First request with proxy
             start_time = time.time()
             try:
-                resp = await self.client.get(self.base_url, headers=self.headers, timeout=30)  # CHANGED: await
+                resp = await self.client.get(self.base_url, headers=self.headers, timeout=30)
                 request_time = time.time() - start_time
                 
                 if resp.status_code != 200:
@@ -1038,12 +1017,12 @@ class ShopifyHTTPCheckout:
                 # Update proxy success with actual response time
                 mark_proxy_success(self.proxy_url, request_time)
                 
-            except httpx.ProxyError as e:  # CHANGED: httpx.ProxyError
+            except httpx.ProxyError as e:
                 self.logger.error_log("PROXY", f"Proxy error on homepage: {str(e)}")
                 mark_proxy_failed(self.proxy_url)
                 self.proxy_status = "Dead 🚫"
                 return False, "PROXY_DEAD"
-            except httpx.ConnectTimeout as e:  # CHANGED: httpx.ConnectTimeout
+            except httpx.ConnectTimeout as e:
                 self.logger.error_log("TIMEOUT", f"Connection timeout on homepage: {str(e)}")
                 mark_proxy_failed(self.proxy_url)
                 self.proxy_status = "Dead 🚫"
@@ -1054,7 +1033,7 @@ class ShopifyHTTPCheckout:
                 self.proxy_status = "Dead 🚫"
                 return False, f"Connection error: {str(e)[:50]}"
 
-            await self.random_delay(1, 2)  # CHANGED: await
+            await self.random_delay(1, 2)
 
             # Step 2: Add to cart WITH PROXY
             self.step(2, "ADD TO CART", "Adding product to cart with proxy", f"Variant: {self.variant_id}")
@@ -1112,10 +1091,10 @@ class ShopifyHTTPCheckout:
             cart_payload = '\r\n'.join(payload_lines)
 
             try:
-                resp = await self.client.post(  # CHANGED: await
+                resp = await self.client.post(
                     f"{self.base_url}/cart/add",
                     headers=cart_headers,
-                    content=cart_payload,  # CHANGED: content instead of data for httpx
+                    content=cart_payload,
                     timeout=30
                 )
 
@@ -1130,7 +1109,7 @@ class ShopifyHTTPCheckout:
                 except:
                     pass
 
-            except httpx.ProxyError as e:  # CHANGED: httpx.ProxyError
+            except httpx.ProxyError as e:
                 self.logger.error_log("PROXY", f"Proxy error on cart add: {str(e)}")
                 mark_proxy_failed(self.proxy_url)
                 self.proxy_status = "Dead 🚫"
@@ -1139,7 +1118,7 @@ class ShopifyHTTPCheckout:
                 self.logger.error_log("CART_ERROR", f"Cart add error: {str(e)}")
                 return False, f"Cart add error: {str(e)[:50]}"
 
-            await self.random_delay(1, 2)  # CHANGED: await
+            await self.random_delay(1, 2)
 
             # Step 3: Get cart page WITH PROXY
             self.step(3, "GET CART", "Loading cart page with proxy")
@@ -1151,14 +1130,14 @@ class ShopifyHTTPCheckout:
             }
 
             try:
-                resp = await self.client.get(f"{self.base_url}/cart", headers=cart_page_headers, timeout=30)  # CHANGED: await
-            except httpx.ProxyError as e:  # CHANGED: httpx.ProxyError
+                resp = await self.client.get(f"{self.base_url}/cart", headers=cart_page_headers, timeout=30)
+            except httpx.ProxyError as e:
                 self.logger.error_log("PROXY", f"Proxy error on cart page: {str(e)}")
                 mark_proxy_failed(self.proxy_url)
                 self.proxy_status = "Dead 🚫"
                 return False, "PROXY_DEAD"
 
-            await self.random_delay(1, 2)  # CHANGED: await
+            await self.random_delay(1, 2)
 
             # Step 4: Start checkout WITH PROXY
             self.step(4, "START CHECKOUT", "Initiating checkout process with proxy")
@@ -1172,15 +1151,15 @@ class ShopifyHTTPCheckout:
             }
 
             try:
-                resp = await self.client.post(  # CHANGED: await
+                resp = await self.client.post(
                     f"{self.base_url}/cart",
                     headers=checkout_start_headers,
-                    data={'checkout': ''},  # CHANGED: data for form data
-                    follow_redirects=True,  # CHANGED: follow_redirects=True
+                    data={'checkout': ''},
+                    follow_redirects=True,
                     timeout=30
                 )
 
-                current_url = str(resp.url)  # CHANGED: resp.url is URL object in httpx
+                current_url = str(resp.url)
                 self.checkout_token = self.extract_checkout_token(current_url)
 
                 if not self.checkout_token:
@@ -1193,7 +1172,7 @@ class ShopifyHTTPCheckout:
 
                 self.logger.data_extracted("Checkout Token", self.checkout_token[:20] + "...", "URL")
 
-            except httpx.ProxyError as e:  # CHANGED: httpx.ProxyError
+            except httpx.ProxyError as e:
                 self.logger.error_log("PROXY", f"Proxy error on checkout start: {str(e)}")
                 mark_proxy_failed(self.proxy_url)
                 self.proxy_status = "Dead 🚫"
@@ -1202,10 +1181,10 @@ class ShopifyHTTPCheckout:
                 self.logger.error_log("CHECKOUT_START", f"Checkout start error: {str(e)}")
                 return False, f"Checkout start error: {str(e)[:50]}"
 
-            await self.random_delay(2, 3)  # CHANGED: await
+            await self.random_delay(2, 3)
 
             # Step 5: Get checkout page with session token extraction WITH PROXY
-            success, page_content = await self.get_checkout_page_with_token(max_retries=3)  # CHANGED: await
+            success, page_content = await self.get_checkout_page_with_token(max_retries=3)
 
             if not success:
                 return False, page_content
@@ -1229,7 +1208,7 @@ class ShopifyHTTPCheckout:
             else:
                 self.submit_id = "d32830e07b8dcb881c73c771b679bcb141b0483bd561eced170c4feecc988a59"
 
-            await self.random_delay(2, 3)  # CHANGED: await
+            await self.random_delay(2, 3)
 
             # Step 6: Submit Proposal mutation WITH PROXY
             self.step(6, "SUBMIT PROPOSAL", "Submitting checkout proposal with proxy", self.email)
@@ -1418,7 +1397,7 @@ class ShopifyHTTPCheckout:
             self.logger.data_extracted("Proposal Variables", json.dumps(proposal_variables, indent=2)[:200] + "...", "Constructed")
 
             try:
-                resp = await self.client.post(  # CHANGED: await
+                resp = await self.client.post(
                     graphql_url,
                     headers=proposal_headers,
                     json=proposal_payload,
@@ -1439,7 +1418,7 @@ class ShopifyHTTPCheckout:
                 except Exception as e:
                     return False, f"Failed to parse Proposal response: {str(e)[:50]}"
 
-            except httpx.ProxyError as e:  # CHANGED: httpx.ProxyError
+            except httpx.ProxyError as e:
                 self.logger.error_log("PROXY", f"Proxy error on proposal: {str(e)}")
                 mark_proxy_failed(self.proxy_url)
                 self.proxy_status = "Dead 🚫"
@@ -1448,7 +1427,7 @@ class ShopifyHTTPCheckout:
                 self.logger.error_log("PROPOSAL_ERROR", f"Proposal error: {str(e)}")
                 return False, f"Proposal error: {str(e)[:50]}"
 
-            await self.random_delay(1, 2)  # CHANGED: await
+            await self.random_delay(1, 2)
 
             # Step 7: Create payment session with PCI WITH PROXY
             self.step(7, "CREATE PAYMENT", "Creating payment session with PCI and proxy")
@@ -1490,10 +1469,10 @@ class ShopifyHTTPCheckout:
             }
 
             try:
-                # CHANGED: PCI request using separate httpx client
+                # PCI request using separate httpx client
                 pci_client = httpx.AsyncClient(proxy=self.proxy_url, timeout=30)
                 
-                resp = await pci_client.post(  # CHANGED: await
+                resp = await pci_client.post(
                     'https://checkout.pci.shopifyinc.com/sessions',
                     headers=pci_headers,
                     json=pci_payload,
@@ -1501,7 +1480,7 @@ class ShopifyHTTPCheckout:
                 )
 
                 if resp.status_code != 200:
-                    await pci_client.aclose()  # CHANGED: Close client
+                    await pci_client.aclose()
                     return False, f"PCI session creation failed: {resp.status_code}"
 
                 try:
@@ -1509,16 +1488,16 @@ class ShopifyHTTPCheckout:
                     payment_session_id = pci_resp.get('id')
                     payment_method_identifier = pci_resp.get('payment_method_identifier')
                     if not payment_session_id:
-                        await pci_client.aclose()  # CHANGED: Close client
+                        await pci_client.aclose()
                         return False, "No payment session ID returned"
                     self.logger.data_extracted("Payment Session ID", payment_session_id, "PCI")
                 except Exception as e:
-                    await pci_client.aclose()  # CHANGED: Close client
+                    await pci_client.aclose()
                     return False, f"Failed to parse PCI response: {str(e)[:50]}"
                 
-                await pci_client.aclose()  # CHANGED: Close client after use
+                await pci_client.aclose()
 
-            except httpx.ProxyError as e:  # CHANGED: httpx.ProxyError
+            except httpx.ProxyError as e:
                 self.logger.error_log("PROXY", f"Proxy error on PCI: {str(e)}")
                 mark_proxy_failed(self.proxy_url)
                 self.proxy_status = "Dead 🚫"
@@ -1527,17 +1506,15 @@ class ShopifyHTTPCheckout:
                 self.logger.error_log("PCI_ERROR", f"PCI error: {str(e)}")
                 return False, f"PCI error: {str(e)[:50]}"
 
-            await self.random_delay(1, 2)  # CHANGED: await
+            await self.random_delay(1, 2)
 
             # Step 8: Submit for completion WITH PROXY
             self.step(8, "SUBMIT PAYMENT", "Submitting payment for processing with proxy")
 
-            # FIXED: Generate attemptToken in correct format: checkout_token-randomstring
+            # Generate attemptToken in correct format: checkout_token-randomstring
             attempt_token = f"{self.checkout_token}-{self.generate_random_string(12)}"
 
-            # FIXED: Correct structure based on working request
-            # sessionInput is inside input object
-            # attemptToken, analytics, metafields are at variables level, not inside input
+            # Correct structure based on working request
             submit_variables = {
                 "input": {
                     "sessionInput": {
@@ -1726,7 +1703,6 @@ class ShopifyHTTPCheckout:
                     },
                     "cartMetafields": []
                 },
-                # FIXED: These are at variables level, not inside input
                 "attemptToken": attempt_token,
                 "metafields": [],
                 "analytics": {
@@ -1744,7 +1720,7 @@ class ShopifyHTTPCheckout:
             self.logger.data_extracted("Submit Variables", json.dumps(submit_variables, indent=2)[:200] + "...", "Constructed")
 
             try:
-                resp = await self.client.post(  # CHANGED: await
+                resp = await self.client.post(
                     graphql_url,
                     headers=proposal_headers,
                     json=submit_payload,
@@ -1778,16 +1754,16 @@ class ShopifyHTTPCheckout:
 
                         self.step(9, "POLL RECEIPT", f"Waiting {poll_delay}s then polling for result")
 
-                        await asyncio.sleep(poll_delay)  # CHANGED: await asyncio.sleep
+                        await asyncio.sleep(poll_delay)
 
-                        return await self.poll_receipt(proposal_headers)  # CHANGED: await
+                        return await self.poll_receipt(proposal_headers)
                     else:
                         return False, f"Unexpected receipt type: {receipt.get('__typename')}"
 
                 except Exception as e:
                     return False, f"Failed to parse submit response: {str(e)[:50]}"
 
-            except httpx.ProxyError as e:  # CHANGED: httpx.ProxyError
+            except httpx.ProxyError as e:
                 self.logger.error_log("PROXY", f"Proxy error on submit: {str(e)}")
                 mark_proxy_failed(self.proxy_url)
                 self.proxy_status = "Dead 🚫"
@@ -1796,26 +1772,24 @@ class ShopifyHTTPCheckout:
                 self.logger.error_log("SUBMIT_ERROR", f"Submit error: {str(e)}")
                 return False, f"Submit error: {str(e)[:50]}"
 
-        except httpx.RequestError as e:  # CHANGED: httpx.RequestError
+        except httpx.RequestError as e:
             self.logger.error_log("NETWORK", f"Network error: {str(e)}")
-            # CHANGED: Check for Connection error and PCI error to return PROXY_DEAD
             error_str = str(e).lower()
             if "connection error" in error_str or "pci error" in error_str:
                 return False, "PROXY_DEAD"
             return False, f"Network error: {str(e)[:50]}"
         except Exception as e:
             self.logger.error_log("UNKNOWN", f"Checkout error: {str(e)}")
-            # CHANGED: Check for Connection error and PCI error to return PROXY_DEAD
             error_str = str(e).lower()
             if "connection error" in error_str or "pci error" in error_str:
                 return False, "PROXY_DEAD"
             return False, f"Checkout error: {str(e)[:50]}"
         finally:
-            # CHANGED: Ensure client is closed
+            # Ensure client is closed
             if self.client:
                 await self.client.aclose()
 
-    async def poll_receipt(self, headers):  # CHANGED: Made async
+    async def poll_receipt(self, headers):
         """Poll for receipt status WITH PROXY"""
         try:
             graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
@@ -1827,7 +1801,7 @@ class ShopifyHTTPCheckout:
             }
 
             try:
-                resp = await self.client.get(  # CHANGED: await
+                resp = await self.client.get(
                     graphql_url,
                     headers={**headers, 'accept': 'application/json'},
                     params=poll_params,
@@ -1843,7 +1817,7 @@ class ShopifyHTTPCheckout:
                         },
                         "id": "8d6301ed4a2c3f2cb34599828e84a6346a9243ddc8e54a772b1515aced846c71"
                     }
-                    resp = await self.client.post(graphql_url, headers=headers, json=poll_payload, timeout=30)  # CHANGED: await
+                    resp = await self.client.post(graphql_url, headers=headers, json=poll_payload, timeout=30)
 
                 if resp.status_code != 200:
                     return False, f"Poll failed: {resp.status_code}"
@@ -1868,8 +1842,8 @@ class ShopifyHTTPCheckout:
                         return True, "ORDER_PLACED"
 
                     elif receipt_type == 'ProcessingReceipt':
-                        await asyncio.sleep(0.5)  # CHANGED: await asyncio.sleep
-                        return await self.poll_receipt(headers)  # CHANGED: await
+                        await asyncio.sleep(0.5)
+                        return await self.poll_receipt(headers)
 
                     else:
                         return False, f"Unknown receipt status: {receipt_type}"
@@ -1877,7 +1851,7 @@ class ShopifyHTTPCheckout:
                 except Exception as e:
                     return False, f"Failed to parse poll response: {str(e)[:50]}"
 
-            except httpx.ProxyError as e:  # CHANGED: httpx.ProxyError
+            except httpx.ProxyError as e:
                 self.logger.error_log("PROXY", f"Proxy error on poll: {str(e)}")
                 mark_proxy_failed(self.proxy_url)
                 self.proxy_status = "Dead 🚫"
@@ -1929,7 +1903,7 @@ class ShopifyChargeCheckerHTTP:
 
             # Create checker instance with proxy integration
             checker = ShopifyHTTPCheckout(self.user_id)
-            success, result = await checker.execute_checkout(cc, mes, ano, cvv)  # CHANGED: await
+            success, result = await checker.execute_checkout(cc, mes, ano, cvv)
             
             # Update proxy status from checker
             self.proxy_status = checker.proxy_status
