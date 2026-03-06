@@ -108,11 +108,7 @@ class EmojiLogger:
         print(f"👤 {message}", flush=True)
 
     def proxy(self, message):
-        # FIX: Convert any float values to string before logging
-        if isinstance(message, str):
-            print(f"🔗 {message}", flush=True)
-        else:
-            print(f"🔗 {str(message)}", flush=True)
+        print(f"🔗 {message}", flush=True)
 
 # Create global logger instance
 logger = EmojiLogger()
@@ -1377,9 +1373,8 @@ class StripeCharge3Checker:
                 if test_resp.status_code == 200:
                     self.proxy_status = "Live ⚡️"
                     self.proxy_used = True
-                    # FIX: Convert float to string for logging
-                    response_time_str = f"{self.proxy_response_time:.2f}"
-                    logger.proxy(f"Proxy working: {self.proxy_url[:50]}... | Response: {response_time_str}s")
+                    # FIX: Convert float to string properly
+                    logger.proxy(f"Proxy working: {self.proxy_url[:50]}... | Response: {self.proxy_response_time:.2f}s")
                     mark_proxy_success(self.proxy_url, self.proxy_response_time)
                     proxy_working = True
                     break
