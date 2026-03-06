@@ -83,6 +83,22 @@ except ImportError as e:
     def test_proxy(proxy_str: str):
         return False
 
+# ========== SAFE ERROR CONVERTER ==========
+def safe_str_error(e):
+    """Safely convert exception to string to avoid concatenation errors"""
+    try:
+        if e is None:
+            return "Unknown error"
+        # Try to get the string representation
+        error_str = str(e)
+        # Ensure it's a string
+        if not isinstance(error_str, str):
+            error_str = str(error_str)
+        return error_str
+    except Exception:
+        # If even str() fails, return a generic message
+        return "Error during exception conversion"
+
 # ========== DETAILED LOGGER ==========
 class ShopifyLogger:
     def __init__(self, user_id=None):
@@ -847,7 +863,8 @@ class ShopifyHTTPCheckout:
 
             return extracted
         except Exception as e:
-            self.logger.error_log("EXTRACTION", f"Failed to extract bootstrap: {str(e)}")
+            error_str = safe_str_error(e)
+            self.logger.error_log("EXTRACTION", f"Failed to extract bootstrap: {error_str}")
             return {}
 
     def extract_delivery_strategy(self, html_content):
@@ -925,7 +942,8 @@ class ShopifyHTTPCheckout:
                     continue
 
             except httpx.ProxyError as e:
-                self.logger.error_log("PROXY", f"Proxy error: {str(e)}", f"Attempt {attempt + 1}")
+                error_str = safe_str_error(e)
+                self.logger.error_log("PROXY", f"Proxy error: {error_str}", f"Attempt {attempt + 1}")
                 mark_proxy_failed(self.proxy_url)
                 self.proxy_status = "Dead 🚫"
                 if attempt < max_retries - 1:
@@ -939,7 +957,8 @@ class ShopifyHTTPCheckout:
                     continue
                 return False, "PROXY_DEAD"
             except httpx.ConnectTimeout as e:
-                self.logger.error_log("TIMEOUT", f"Connection timeout: {str(e)}", f"Attempt {attempt + 1}")
+                error_str = safe_str_error(e)
+                self.logger.error_log("TIMEOUT", f"Connection timeout: {error_str}", f"Attempt {attempt + 1}")
                 mark_proxy_failed(self.proxy_url)
                 self.proxy_status = "Dead 🚫"
                 if attempt < max_retries - 1:
@@ -951,11 +970,12 @@ class ShopifyHTTPCheckout:
                     continue
                 return False, "PROXY_DEAD"
             except Exception as e:
-                self.logger.error_log("CHECKOUT_ERROR", str(e), f"Attempt {attempt + 1}")
+                error_str = safe_str_error(e)
+                self.logger.error_log("CHECKOUT_ERROR", error_str, f"Attempt {attempt + 1}")
                 if attempt < max_retries - 1:
                     await self.random_delay(2, 4)
                     continue
-                return False, f"Checkout page error: {str(e)}"
+                return False, f"Checkout page error: {error_str}"
 
         error_msg = "Could not extract session token from checkout page"
         return False, error_msg
@@ -973,7 +993,7 @@ class ShopifyHTTPCheckout:
                     return False, "NO_PROXY_AVAILABLE"
                 
                 # Initialize httpx.AsyncClient with proxy - NO TESTING
-                self.client = httpx.AsyncClient(proxy=self.proxy_url, timeout=30, follow_redirects=True)
+                self.client = httpx.AsyncClient(proxy=self.proxy_url, timeout=30)
                 
                 # Set proxy status as Live immediately (proxy manager already validated it)
                 self.proxy_status = "Live ⚡️"
@@ -1018,20 +1038,23 @@ class ShopifyHTTPCheckout:
                 mark_proxy_success(self.proxy_url, request_time)
                 
             except httpx.ProxyError as e:
-                self.logger.error_log("PROXY", f"Proxy error on homepage: {str(e)}")
+                error_str = safe_str_error(e)
+                self.logger.error_log("PROXY", f"Proxy error on homepage: {error_str}")
                 mark_proxy_failed(self.proxy_url)
                 self.proxy_status = "Dead 🚫"
                 return False, "PROXY_DEAD"
             except httpx.ConnectTimeout as e:
-                self.logger.error_log("TIMEOUT", f"Connection timeout on homepage: {str(e)}")
+                error_str = safe_str_error(e)
+                self.logger.error_log("TIMEOUT", f"Connection timeout on homepage: {error_str}")
                 mark_proxy_failed(self.proxy_url)
                 self.proxy_status = "Dead 🚫"
                 return False, "PROXY_DEAD"
             except Exception as e:
-                self.logger.error_log("CONNECTION", f"Homepage error: {str(e)}")
+                error_str = safe_str_error(e)
+                self.logger.error_log("CONNECTION", f"Homepage error: {error_str}")
                 mark_proxy_failed(self.proxy_url)
                 self.proxy_status = "Dead 🚫"
-                return False, f"Connection error: {str(e)[:50]}"
+                return False, f"Connection error: {error_str[:50]}"
 
             await self.random_delay(1, 2)
 
@@ -1110,13 +1133,15 @@ class ShopifyHTTPCheckout:
                     pass
 
             except httpx.ProxyError as e:
-                self.logger.error_log("PROXY", f"Proxy error on cart add: {str(e)}")
+                error_str = safe_str_error(e)
+                self.logger.error_log("PROXY", f"Proxy error on cart add: {error_str}")
                 mark_proxy_failed(self.proxy_url)
                 self.proxy_status = "Dead 🚫"
                 return False, "PROXY_DEAD"
             except Exception as e:
-                self.logger.error_log("CART_ERROR", f"Cart add error: {str(e)}")
-                return False, f"Cart add error: {str(e)[:50]}"
+                error_str = safe_str_error(e)
+                self.logger.error_log("CART_ERROR", f"Cart add error: {error_str}")
+                return False, f"Cart add error: {error_str[:50]}"
 
             await self.random_delay(1, 2)
 
@@ -1132,7 +1157,8 @@ class ShopifyHTTPCheckout:
             try:
                 resp = await self.client.get(f"{self.base_url}/cart", headers=cart_page_headers, timeout=30)
             except httpx.ProxyError as e:
-                self.logger.error_log("PROXY", f"Proxy error on cart page: {str(e)}")
+                error_str = safe_str_error(e)
+                self.logger.error_log("PROXY", f"Proxy error on cart page: {error_str}")
                 mark_proxy_failed(self.proxy_url)
                 self.proxy_status = "Dead 🚫"
                 return False, "PROXY_DEAD"
@@ -1173,13 +1199,15 @@ class ShopifyHTTPCheckout:
                 self.logger.data_extracted("Checkout Token", self.checkout_token[:20] + "...", "URL")
 
             except httpx.ProxyError as e:
-                self.logger.error_log("PROXY", f"Proxy error on checkout start: {str(e)}")
+                error_str = safe_str_error(e)
+                self.logger.error_log("PROXY", f"Proxy error on checkout start: {error_str}")
                 mark_proxy_failed(self.proxy_url)
                 self.proxy_status = "Dead 🚫"
                 return False, "PROXY_DEAD"
             except Exception as e:
-                self.logger.error_log("CHECKOUT_START", f"Checkout start error: {str(e)}")
-                return False, f"Checkout start error: {str(e)[:50]}"
+                error_str = safe_str_error(e)
+                self.logger.error_log("CHECKOUT_START", f"Checkout start error: {error_str}")
+                return False, f"Checkout start error: {error_str[:50]}"
 
             await self.random_delay(2, 3)
 
@@ -1416,16 +1444,19 @@ class ShopifyHTTPCheckout:
                             error_msg = error_msg.split(":")[0].strip()
                         return False, f"Proposal error: {error_msg}"
                 except Exception as e:
-                    return False, f"Failed to parse Proposal response: {str(e)[:50]}"
+                    error_str = safe_str_error(e)
+                    return False, f"Failed to parse Proposal response: {error_str[:50]}"
 
             except httpx.ProxyError as e:
-                self.logger.error_log("PROXY", f"Proxy error on proposal: {str(e)}")
+                error_str = safe_str_error(e)
+                self.logger.error_log("PROXY", f"Proxy error on proposal: {error_str}")
                 mark_proxy_failed(self.proxy_url)
                 self.proxy_status = "Dead 🚫"
                 return False, "PROXY_DEAD"
             except Exception as e:
-                self.logger.error_log("PROPOSAL_ERROR", f"Proposal error: {str(e)}")
-                return False, f"Proposal error: {str(e)[:50]}"
+                error_str = safe_str_error(e)
+                self.logger.error_log("PROPOSAL_ERROR", f"Proposal error: {error_str}")
+                return False, f"Proposal error: {error_str[:50]}"
 
             await self.random_delay(1, 2)
 
@@ -1492,19 +1523,22 @@ class ShopifyHTTPCheckout:
                         return False, "No payment session ID returned"
                     self.logger.data_extracted("Payment Session ID", payment_session_id, "PCI")
                 except Exception as e:
+                    error_str = safe_str_error(e)
                     await pci_client.aclose()
-                    return False, f"Failed to parse PCI response: {str(e)[:50]}"
+                    return False, f"Failed to parse PCI response: {error_str[:50]}"
                 
                 await pci_client.aclose()
 
             except httpx.ProxyError as e:
-                self.logger.error_log("PROXY", f"Proxy error on PCI: {str(e)}")
+                error_str = safe_str_error(e)
+                self.logger.error_log("PROXY", f"Proxy error on PCI: {error_str}")
                 mark_proxy_failed(self.proxy_url)
                 self.proxy_status = "Dead 🚫"
                 return False, "PROXY_DEAD"
             except Exception as e:
-                self.logger.error_log("PCI_ERROR", f"PCI error: {str(e)}")
-                return False, f"PCI error: {str(e)[:50]}"
+                error_str = safe_str_error(e)
+                self.logger.error_log("PCI_ERROR", f"PCI error: {error_str}")
+                return False, f"PCI error: {error_str[:50]}"
 
             await self.random_delay(1, 2)
 
@@ -1761,29 +1795,34 @@ class ShopifyHTTPCheckout:
                         return False, f"Unexpected receipt type: {receipt.get('__typename')}"
 
                 except Exception as e:
-                    return False, f"Failed to parse submit response: {str(e)[:50]}"
+                    error_str = safe_str_error(e)
+                    return False, f"Failed to parse submit response: {error_str[:50]}"
 
             except httpx.ProxyError as e:
-                self.logger.error_log("PROXY", f"Proxy error on submit: {str(e)}")
+                error_str = safe_str_error(e)
+                self.logger.error_log("PROXY", f"Proxy error on submit: {error_str}")
                 mark_proxy_failed(self.proxy_url)
                 self.proxy_status = "Dead 🚫"
                 return False, "PROXY_DEAD"
             except Exception as e:
-                self.logger.error_log("SUBMIT_ERROR", f"Submit error: {str(e)}")
-                return False, f"Submit error: {str(e)[:50]}"
+                error_str = safe_str_error(e)
+                self.logger.error_log("SUBMIT_ERROR", f"Submit error: {error_str}")
+                return False, f"Submit error: {error_str[:50]}"
 
         except httpx.RequestError as e:
-            self.logger.error_log("NETWORK", f"Network error: {str(e)}")
-            error_str = str(e).lower()
-            if "connection error" in error_str or "pci error" in error_str:
+            error_str = safe_str_error(e)
+            self.logger.error_log("NETWORK", f"Network error: {error_str}")
+            error_str_lower = error_str.lower()
+            if "connection error" in error_str_lower or "pci error" in error_str_lower:
                 return False, "PROXY_DEAD"
-            return False, f"Network error: {str(e)[:50]}"
+            return False, f"Network error: {error_str[:50]}"
         except Exception as e:
-            self.logger.error_log("UNKNOWN", f"Checkout error: {str(e)}")
-            error_str = str(e).lower()
-            if "connection error" in error_str or "pci error" in error_str:
+            error_str = safe_str_error(e)
+            self.logger.error_log("UNKNOWN", f"Checkout error: {error_str}")
+            error_str_lower = error_str.lower()
+            if "connection error" in error_str_lower or "pci error" in error_str_lower:
                 return False, "PROXY_DEAD"
-            return False, f"Checkout error: {str(e)[:50]}"
+            return False, f"Checkout error: {error_str[:50]}"
         finally:
             # Ensure client is closed
             if self.client:
@@ -1849,18 +1888,22 @@ class ShopifyHTTPCheckout:
                         return False, f"Unknown receipt status: {receipt_type}"
 
                 except Exception as e:
-                    return False, f"Failed to parse poll response: {str(e)[:50]}"
+                    error_str = safe_str_error(e)
+                    return False, f"Failed to parse poll response: {error_str[:50]}"
 
             except httpx.ProxyError as e:
-                self.logger.error_log("PROXY", f"Proxy error on poll: {str(e)}")
+                error_str = safe_str_error(e)
+                self.logger.error_log("PROXY", f"Proxy error on poll: {error_str}")
                 mark_proxy_failed(self.proxy_url)
                 self.proxy_status = "Dead 🚫"
                 return False, "PROXY_DEAD"
             except Exception as e:
-                return False, f"Poll error: {str(e)[:50]}"
+                error_str = safe_str_error(e)
+                return False, f"Poll error: {error_str[:50]}"
 
         except Exception as e:
-            return False, f"Poll error: {str(e)[:50]}"
+            error_str = safe_str_error(e)
+            return False, f"Poll error: {error_str[:50]}"
 
 
 # ========== MAIN CHECKER CLASS ==========
@@ -1919,8 +1962,9 @@ class ShopifyChargeCheckerHTTP:
 
         except Exception as e:
             elapsed_time = time.time() - start_time
-            self.logger.error_log("UNKNOWN", str(e))
-            self.logger.complete_result(False, "UNKNOWN_ERROR", str(e), elapsed_time)
+            error_str = safe_str_error(e)
+            self.logger.error_log("UNKNOWN", error_str)
+            self.logger.complete_result(False, "UNKNOWN_ERROR", error_str, elapsed_time)
             try:
                 # Try to parse card for response
                 parsed_cc, parsed_mes, parsed_ano, parsed_cvv = parse_card_input(card_details)
@@ -1931,10 +1975,11 @@ class ShopifyChargeCheckerHTTP:
             except:
                 cc = mes = ano = cvv = ""
             # Extract clean error message
-            error_msg = str(e)
-            if ":" in error_msg:
-                error_msg = error_msg.split(":")[0].strip()
-            return format_shopify_response(cc, mes, ano, cvv, f"UNKNOWN_ERROR: {error_msg[:30]}", elapsed_time, username, user_data, self.proxy_status)
+            if ":" in error_str:
+                error_msg = error_str.split(":")[0].strip()
+            else:
+                error_msg = error_str[:30]
+            return format_shopify_response(cc, mes, ano, cvv, f"UNKNOWN_ERROR: {error_msg}", elapsed_time, username, user_data, self.proxy_status)
 
 
 # ========== COMMAND HANDLER ==========
@@ -2059,16 +2104,18 @@ async def handle_shopify_charge(client: Client, message: Message):
                     await processing_msg.edit_text(result_text, disable_web_page_preview=True)
 
             except Exception as e:
-                print(f"❌ Charge processor error: {str(e)}")
+                error_str = safe_str_error(e)
+                print(f"❌ Charge processor error: {error_str}")
                 try:
                     result_text = await checker.check_card(card_details, username, user_data)
                     await processing_msg.edit_text(result_text, disable_web_page_preview=True)
                 except Exception as inner_e:
+                    inner_error = safe_str_error(inner_e)
                     await processing_msg.edit_text(
                         f"""<pre>❌ Processing Error</pre>
 ━━━━━━━━━━━━━
 🠪 <b>Message</b>: Error processing Shopify charge.
-🠪 <b>Error</b>: <code>{str(inner_e)[:100]}</code>
+🠪 <b>Error</b>: <code>{inner_error[:100]}</code>
 🠪 <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
 ━━━━━━━━━━━━━"""
                     )
@@ -2077,17 +2124,18 @@ async def handle_shopify_charge(client: Client, message: Message):
                 result_text = await checker.check_card(card_details, username, user_data)
                 await processing_msg.edit_text(result_text, disable_web_page_preview=True)
             except Exception as e:
+                error_str = safe_str_error(e)
                 await processing_msg.edit_text(
                     f"""<pre>❌ Processing Error</pre>
 ━━━━━━━━━━━━━
 🠪 <b>Message</b>: Error processing Shopify charge.
-🠪 <b>Error</b>: <code>{str(e)[:100]}</code>
+🠪 <b>Error</b>: <code>{error_str[:100]}</code>
 🠪 <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
 ━━━━━━━━━━━━━"""
                 )
 
     except Exception as e:
-        error_msg = str(e)[:150]
+        error_msg = safe_str_error(e)[:150]
         await message.reply(f"""<pre>❌ Command Error</pre>
 ━━━━━━━━━━━━━
 🠪 <b>Message</b>: An error occurred while processing your request.
