@@ -1373,7 +1373,7 @@ class StripeCharge3Checker:
                 if test_resp.status_code == 200:
                     self.proxy_status = "Live ⚡️"
                     self.proxy_used = True
-                    # FIX: Convert float to string properly
+                    # FIX: Convert float to string properly using f-string formatting
                     logger.proxy(f"Proxy working: {self.proxy_url[:50]}... | Response: {self.proxy_response_time:.2f}s")
                     mark_proxy_success(self.proxy_url, self.proxy_response_time)
                     proxy_working = True
@@ -1387,6 +1387,7 @@ class StripeCharge3Checker:
                         raise Exception(f"Proxy test failed with status {test_resp.status_code}")
                         
             except Exception as e:
+                # FIX: Properly format the error message with string conversion
                 logger.warning(f"Proxy test attempt {test_attempt + 1} failed: {str(e)}")
                 if test_attempt == 0:
                     await asyncio.sleep(1.5)
