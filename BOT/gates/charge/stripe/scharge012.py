@@ -692,9 +692,8 @@ class StripeCharge012Checker:
         first_name = html.escape(str(user_data.get("first_name", "User")))
         badge = user_data.get("plan", {}).get("badge", "🧿")
 
-        # Trim the message for display - FIX: Convert message to string safely
-        message_str = str(message) if message is not None else ""
-        trimmed_message = self.trim_error_message(message_str)
+        # Trim the message for display
+        trimmed_message = self.trim_error_message(str(message)) if message else ""
 
         if any(pattern in trimmed_message.lower() for pattern in ["3d secure", "authentication required", "3ds", "requires_confirmation", "requires_action"]):
             status_emoji = "❌"
@@ -715,12 +714,6 @@ class StripeCharge012Checker:
         
         bank_info = safe_bin_info['bank'].upper() if safe_bin_info['bank'] != 'N/A' else 'N/A'
 
-        # FIX: Format elapsed_time safely
-        try:
-            time_str = f"{float(elapsed_time):.2f}"
-        except (ValueError, TypeError):
-            time_str = str(elapsed_time)
-
         response = f"""<b>「$cmd → /xx」| <b>WAYNE</b> </b>
 ━━━━━━━━━━━━━━━
 <b>[•] Card-</b> <code>{cc}|{mes}|{ano}|{cvv}</code>
@@ -736,7 +729,7 @@ class StripeCharge012Checker:
 <b>[ﾒ] Checked By:</b> {user_display}
 <b>[ϟ] Dev ➺</b> <b><i>DADYY</i></b>
 ━━━━━━━━━━━━━━━
-<b>[ﾒ] T/t:</b> <code>{time_str} 𝐬</code> |<b>P/x:</b> <code>{self.proxy_status}</code></b>"""
+<b>[ﾒ] T/t:</b> <code>{elapsed_time:.2f} 𝐬</code> |<b>P/x:</b> <code>{self.proxy_status}</code></b>"""
 
         return response
 
@@ -1378,9 +1371,7 @@ class StripeCharge012Checker:
                         raise Exception(f"Proxy test failed with status {test_resp.status_code}")
                         
             except Exception as e:
-                # FIX: Convert the exception to string properly to avoid float concatenation
-                error_str = str(e)
-                logger.warning(f"Proxy test attempt {test_attempt + 1} failed: {error_str}")
+                logger.warning(f"Proxy test attempt {test_attempt + 1} failed: {str(e)}")
                 if test_attempt == 0:
                     await asyncio.sleep(1.5)
                     continue
@@ -1388,7 +1379,7 @@ class StripeCharge012Checker:
                     self.proxy_status = "Dead 🚫"
                     mark_proxy_failed(self.proxy_url)
                     await self.client.aclose()
-                    return await self.format_response("", "", "", "", "ERROR", f"Proxy test failed: {error_str}", username, time.time()-start_time, user_data)
+                    return await self.format_response("", "", "", "", "ERROR", f"Proxy test failed: {str(e)}", username, time.time()-start_time, user_data)
         
         if not proxy_working:
             self.proxy_status = "Dead 🚫"
@@ -1488,10 +1479,8 @@ class StripeCharge012Checker:
             self.proxy_status = "Dead 🚫"
             return await self.format_response(cc, mes, ano, cvv, "ERROR", "Connection failed", username, time.time()-start_time, user_data, bin_info)
         except Exception as e:
-            # FIX: Convert the exception to string properly
-            error_str = str(e)
-            logger.error(f"Unexpected error: {error_str}")
-            return await self.format_response(cc, mes, ano, cvv, "ERROR", f"System error: {error_str[:80]}", username, time.time()-start_time, user_data, bin_info)
+            logger.error(f"Unexpected error: {str(e)}")
+            return await self.format_response(cc, mes, ano, cvv, "ERROR", f"System error: {str(e)[:80]}", username, time.time()-start_time, user_data, bin_info)
         finally:
             # Ensure client is closed
             if self.client:
@@ -1500,150 +1489,4 @@ class StripeCharge012Checker:
                 except:
                     pass
 
-# Command handler - FIXED: Only match exact /xx command, not /mxx
-@Client.on_message(filters.command(["xx", ".xx", "$xx"]) & ~filters.command(["mxx", ".mxx", "$mxx"]))
-@auth_and_free_restricted
-async def handle_stripe_charge_012(client: Client, message: Message):
-    try:
-        user_id = message.from_user.id
-        username = message.from_user.username or str(user_id)
-
-        # CHECK: First check if command is disabled
-        command_text = message.text.split()[0]
-        command_name = command_text.lstrip('/.$')
-
-        if is_command_disabled(command_name):
-            await message.reply(get_command_offline_message(command_text))
-            return
-
-        # Check if user is banned
-        if is_user_banned(user_id):
-            await message.reply("""<pre>⛔ User Banned</pre>
-━━━━━━━━━━━━━
-⟐ <b>Message</b>: You have been banned from using this bot.
-⟐ <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
-━━━━━━━━━━━━━""")
-            return
-
-        # Load user data
-        users = load_users()
-        user_id_str = str(user_id)
-        if user_id_str not in users:
-            await message.reply("""<pre>🔒 Registration Required</pre>
-━━━━━━━━━━━━━
-⟐ <b>Message</b>: You need to register first with /register
-⟐ <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
-━━━━━━━━━━━━━""")
-            return
-
-        user_data = users[user_id_str]
-        user_plan = user_data.get("plan", {})
-        plan_name = user_plan.get("plan", "Free")
-
-        # Check cooldown (owner is automatically skipped in check_cooldown function)
-        can_use, wait_time = check_cooldown(user_id, "xx")
-        if not can_use:
-            await message.reply(f"""<pre>⏳ Cooldown Active</pre>
-━━━━━━━━━━━━━
-⟐ <b>Message</b>: Please wait {wait_time:.1f} seconds before using this command again.
-⟐ <b>Your Plan:</b> <code>{plan_name}</code>
-⟐ <b>Anti-Spam:</b> <code>{user_plan.get('antispam', 15)}s</code>
-━━━━━━━━━━━━━""")
-            return
-
-        args = message.text.split()
-        if len(args) < 2:
-            if charge_processor:
-                await message.reply(charge_processor.get_usage_message(
-                    "xx", 
-                    "Stripe Charge €0.12",
-                    "4111111111111111|12|2030|123"
-                ))
-            else:
-                await message.reply("""<pre>#WAYNE ─[STRIPE CHARGE €0.12]─</pre>
-━━━━━━━━━━━━━
-⟐ <b>Command</b>: <code>/xx</code>
-⟐ <b>Usage</b>: <code>/xx cc|mm|yy|cvv</code>
-⟐ <b>Example</b>: <code>/xx 4111111111111111|12|2030|123</code>
-━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Stripe Charges €0.12</code>""")
-            return
-
-        # Get the full message text after the command
-        full_text = message.text
-        # Remove the command part
-        command_parts = full_text.split(maxsplit=1)
-        if len(command_parts) < 2:
-            await message.reply("Please provide card details")
-            return
-        
-        card_input = command_parts[1].strip()
-
-        # Parse using the intelligent parser
-        parsed = parse_card_input(card_input)
-        if not parsed:
-            await message.reply("""<pre>❌ Invalid Format</pre>
-━━━━━━━━━━━━━
-⟐ <b>Message</b>: Could not extract card details.
-⟐ <b>Format 1</b>: <code>cc|mm|yy|cvv</code>
-━━━━━━━━━━━━━""")
-            return
-
-        cc, mes, ano, cvv = parsed
-
-        # Check if proxy system is available
-        if not PROXY_SYSTEM_AVAILABLE:
-            await message.reply("""<pre>❌ Proxy System Unavailable</pre>
-━━━━━━━━━━━━━
-⟐ <b>Message</b>: Proxy system is not available.
-⟐ <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
-━━━━━━━━━━━━━""")
-            return
-
-        # Show processing message
-        processing_msg = await message.reply(
-            charge_processor.get_processing_message(
-                cc, mes, ano, cvv, username, plan_name, 
-                "Stripe Charge €0.12", "xx"
-            ) if charge_processor else f"""<b>「$cmd → /xx」| <b>WAYNE</b> </b>
-━━━━━━━━━━━━━━━
-<b>[•] Card-</b> <code>{cc}|{mes}|{ano}|{cvv}</code>
-<b>[•] Gateway -</b> Stripe Charge €0.12
-<b>[•] Status-</b> Processing... ⏳
-━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
-<b>[+] Plan:</b> {plan_name}
-<b>[+] User:</b> @{username}
-━━━━━━━━━━━━━━━
-<b>Checking card... Please wait.</b>"""
-        )
-
-        # Create checker instance
-        checker = StripeCharge012Checker(user_id=user_id)
-
-        # Process command through universal charge processor
-        if charge_processor:
-            success, result, credits_deducted = await charge_processor.execute_charge_command(
-                user_id,                    # positional
-                checker.check_card,         # positional
-                card_input,                  # check_args[0]
-                username,                   # check_args[1]
-                user_data,                  # check_args[2]
-                credits_needed=2,           # keyword
-                command_name="xx",          # keyword
-                gateway_name="Stripe Charge €0.12"  # keyword
-            )
-
-            await processing_msg.edit_text(result, disable_web_page_preview=True)
-        else:
-            # Fallback to old method if charge_processor not available
-            result = await checker.check_card(card_input, username, user_data)
-            await processing_msg.edit_text(result, disable_web_page_preview=True)
-
-    except Exception as e:
-        error_msg = str(e)[:150]
-        await message.reply(f"""<pre>❌ Command Error</pre>
-━━━━━━━━━━━━━
-⟐ <b>Message</b>: An error occurred while processing your request.
-⟐ <b>Error</b>: <code>{error_msg}</code>
-⟐ <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
-━━━━━━━━━━━━━""")
+# Command handler - FIXED: Only match exact /xx command, not 
