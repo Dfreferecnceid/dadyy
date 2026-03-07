@@ -127,7 +127,7 @@ class ShopifyLogger:
         print()
         return log_msg
 
-    def proxy_log(self, proxy, response_time=None, status="USING"):
+    def proxy_log(self, proxy, response_time=None, status="USING", error=None):
         status_icons = {"USING": "🌐", "SUCCESS": "✅", "FAILED": "❌", "ROTATING": "🔄"}
         status_icon = status_icons.get(status, "🌐")
         
@@ -135,6 +135,8 @@ class ShopifyLogger:
         log_msg = f"{status_icon} PROXY: {proxy_display}"
         if response_time:
             log_msg += f" | Response: {response_time:.2f}s"
+        if error:
+            log_msg += f" | Error: {error}"
         if status == "FAILED":
             log_msg += " | Marked as DEAD"
         
@@ -175,7 +177,7 @@ class ShopifyLogger:
         error_icons = {
             "CAPTCHA": "🛡️", "DECLINED": "💳", "FRAUD": "🚫",
             "TIMEOUT": "⏰", "CONNECTION": "🔌", "UNKNOWN": "❓",
-            "NO_PROXY": "🚫", "PROXY_ERROR": "🌐"
+            "NO_PROXY": "🚫", "PROXY_ERROR": "🌐", "PROXY_AUTH": "🔑"
         }
         error_icon = error_icons.get(error_type, "⚠️")
         log_msg = f"{error_icon} ERROR [{error_type}]: {message}"
@@ -749,7 +751,7 @@ class ShopifyHTTPCheckout:
             self.logger.error_log("PROXY_ERROR", f"Failed to parse proxy: {self.proxy[:50]}...")
             return False
 
-    async def mark_proxy_result(self, success, response_time=None):
+    async def mark_proxy_result(self, success, response_time=None, error=None):
         """Mark proxy as success or failed"""
         if self.proxy and PROXY_AVAILABLE:
             if success:
@@ -759,7 +761,7 @@ class ShopifyHTTPCheckout:
                 self.logger.proxy_log(self.proxy, response_time, status="SUCCESS")
             else:
                 mark_proxy_failed(self.proxy)
-                self.logger.proxy_log(self.proxy, status="FAILED")
+                self.logger.proxy_log(self.proxy, status="FAILED", error=error)
 
     async def random_delay(self, min_sec=0.5, max_sec=2.0):
         """Random delay between requests"""
@@ -984,7 +986,7 @@ class ShopifyHTTPCheckout:
             proxy_setup_success = await self.setup_proxy()
             if not proxy_setup_success and PROXY_AVAILABLE:
                 self.logger.error_log("NO_PROXY", "Failed to get proxy, cannot proceed")
-                await self.mark_proxy_result(False)
+                await self.mark_proxy_result(False, error="No proxy available")
                 return False, "NO_PROXY_AVAILABLE"
             
             # Step 2: Initialize session with proxy
@@ -997,9 +999,12 @@ class ShopifyHTTPCheckout:
             }
             
             if self.proxy_url:
-                client_kwargs['proxy'] = self.proxy_url  # FIXED: Changed from 'proxies' to 'proxy'
+                # For httpx, we need to pass the proxy as a string or dict
+                # Format: "http://user:pass@host:port" or {"http://": "http://proxy:8080", "https://": "http://proxy:8080"}
+                client_kwargs['proxy'] = self.proxy_url
                 self.logger.data_extracted("Proxy Configured", self.proxy_url[:50] + "...", "httpx client")
             
+            # Create client with timeout and proxy
             self.client = httpx.AsyncClient(**client_kwargs)
 
             shopify_y, shopify_s = self.generate_tracking_ids()
@@ -1014,25 +1019,46 @@ class ShopifyHTTPCheckout:
             # Set cookies in httpx client
             self.client.cookies.update(initial_cookies)
 
-            # First request
+            # First request - test proxy connectivity
             start_time = time.time()
             try:
+                self.logger.step(2.1, "TEST PROXY", "Testing proxy connectivity", f"URL: {self.base_url}")
+                
                 resp = await self.client.get(self.base_url, headers=self.headers, timeout=30)
                 request_time = time.time() - start_time
                 
                 if resp.status_code != 200:
-                    self.logger.error_log("HOMEPAGE", f"Failed to load homepage: {resp.status_code}")
-                    await self.mark_proxy_result(False)
-                    return False, f"Failed to load homepage: {resp.status_code}"
+                    error_msg = f"Failed to load homepage: {resp.status_code}"
+                    self.logger.error_log("CONNECTION", error_msg)
+                    await self.mark_proxy_result(False, error=error_msg)
+                    return False, error_msg
+                
+                # If we get here, proxy is working
+                self.logger.proxy_log(self.proxy, request_time, status="SUCCESS")
+                
+            except httpx.ProxyError as e:
+                error_msg = f"Proxy error: {str(e)}"
+                self.logger.error_log("PROXY_ERROR", error_msg)
+                await self.mark_proxy_result(False, error="Proxy connection failed")
+                return False, "PROXY_CONNECTION_FAILED"
                 
             except httpx.ConnectTimeout as e:
-                self.logger.error_log("TIMEOUT", f"Connection timeout on homepage: {str(e)}")
-                await self.mark_proxy_result(False)
+                error_msg = f"Connection timeout on homepage: {str(e)}"
+                self.logger.error_log("TIMEOUT", error_msg)
+                await self.mark_proxy_result(False, error="Connection timeout")
                 return False, "CONNECTION_TIMEOUT"
+                
+            except httpx.HTTPStatusError as e:
+                error_msg = f"HTTP error: {e.response.status_code}"
+                self.logger.error_log("CONNECTION", error_msg)
+                await self.mark_proxy_result(False, error=error_msg)
+                return False, error_msg
+                
             except Exception as e:
-                self.logger.error_log("CONNECTION", f"Homepage error: {str(e)}")
-                await self.mark_proxy_result(False)
-                return False, f"Connection error: {str(e)[:50]}"
+                error_msg = f"Homepage error: {str(e)}"
+                self.logger.error_log("CONNECTION", error_msg)
+                await self.mark_proxy_result(False, error=error_msg)
+                return False, error_msg
 
             await self.random_delay(1, 2)
 
@@ -1100,9 +1126,10 @@ class ShopifyHTTPCheckout:
                 )
 
                 if resp.status_code != 200:
-                    self.logger.error_log("CART_ADD", f"Failed to add to cart: {resp.status_code}")
-                    await self.mark_proxy_result(False)
-                    return False, f"Failed to add to cart: {resp.status_code}"
+                    error_msg = f"Failed to add to cart: {resp.status_code}"
+                    self.logger.error_log("CART_ADD", error_msg)
+                    await self.mark_proxy_result(False, error=error_msg)
+                    return False, error_msg
 
                 try:
                     cart_data = resp.json()
@@ -1112,9 +1139,10 @@ class ShopifyHTTPCheckout:
                     pass
 
             except Exception as e:
-                self.logger.error_log("CART_ERROR", f"Cart add error: {str(e)}")
-                await self.mark_proxy_result(False)
-                return False, f"Cart add error: {str(e)[:50]}"
+                error_msg = f"Cart add error: {str(e)[:50]}"
+                self.logger.error_log("CART_ERROR", error_msg)
+                await self.mark_proxy_result(False, error=error_msg)
+                return False, error_msg
 
             await self.random_delay(1, 2)
 
@@ -1130,9 +1158,10 @@ class ShopifyHTTPCheckout:
             try:
                 resp = await self.client.get(f"{self.base_url}/cart", headers=cart_page_headers, timeout=30)
             except Exception as e:
-                self.logger.error_log("CART_ERROR", f"Cart page error: {str(e)}")
-                await self.mark_proxy_result(False)
-                return False, f"Cart page error: {str(e)[:50]}"
+                error_msg = f"Cart page error: {str(e)[:50]}"
+                self.logger.error_log("CART_ERROR", error_msg)
+                await self.mark_proxy_result(False, error=error_msg)
+                return False, error_msg
 
             await self.random_delay(1, 2)
 
@@ -1165,15 +1194,16 @@ class ShopifyHTTPCheckout:
                         self.checkout_token = match.group(1)
 
                 if not self.checkout_token:
-                    await self.mark_proxy_result(False)
+                    await self.mark_proxy_result(False, error="Could not extract checkout token")
                     return False, "Could not extract checkout token"
 
                 self.logger.data_extracted("Checkout Token", self.checkout_token[:20] + "...", "URL")
 
             except Exception as e:
-                self.logger.error_log("CHECKOUT_START", f"Checkout start error: {str(e)}")
-                await self.mark_proxy_result(False)
-                return False, f"Checkout start error: {str(e)[:50]}"
+                error_msg = f"Checkout start error: {str(e)[:50]}"
+                self.logger.error_log("CHECKOUT_START", error_msg)
+                await self.mark_proxy_result(False, error=error_msg)
+                return False, error_msg
 
             await self.random_delay(2, 3)
 
@@ -1181,7 +1211,7 @@ class ShopifyHTTPCheckout:
             success, page_content = await self.get_checkout_page_with_token(max_retries=3)
 
             if not success:
-                await self.mark_proxy_result(False)
+                await self.mark_proxy_result(False, error=page_content)
                 return False, page_content
 
             bootstrap_data = self.extract_bootstrap_data(page_content)
@@ -1399,7 +1429,7 @@ class ShopifyHTTPCheckout:
                 )
 
                 if resp.status_code != 200:
-                    await self.mark_proxy_result(False)
+                    await self.mark_proxy_result(False, error=f"Proposal failed: {resp.status_code}")
                     return False, f"Proposal failed: {resp.status_code}"
 
                 try:
@@ -1408,15 +1438,15 @@ class ShopifyHTTPCheckout:
                         error_msg = proposal_resp['errors'][0].get('message', 'Unknown error')
                         if ":" in error_msg:
                             error_msg = error_msg.split(":")[0].strip()
-                        await self.mark_proxy_result(False)
+                        await self.mark_proxy_result(False, error=error_msg)
                         return False, f"Proposal error: {error_msg}"
                 except Exception as e:
-                    await self.mark_proxy_result(False)
+                    await self.mark_proxy_result(False, error=f"Failed to parse Proposal response: {str(e)[:50]}")
                     return False, f"Failed to parse Proposal response: {str(e)[:50]}"
 
             except Exception as e:
                 self.logger.error_log("PROPOSAL_ERROR", f"Proposal error: {str(e)}")
-                await self.mark_proxy_result(False)
+                await self.mark_proxy_result(False, error=f"Proposal error: {str(e)[:50]}")
                 return False, f"Proposal error: {str(e)[:50]}"
 
             await self.random_delay(1, 2)
@@ -1477,7 +1507,7 @@ class ShopifyHTTPCheckout:
 
                 if resp.status_code != 200:
                     await pci_client.aclose()
-                    await self.mark_proxy_result(False)
+                    await self.mark_proxy_result(False, error=f"PCI session creation failed: {resp.status_code}")
                     return False, f"PCI session creation failed: {resp.status_code}"
 
                 try:
@@ -1486,19 +1516,19 @@ class ShopifyHTTPCheckout:
                     payment_method_identifier = pci_resp.get('payment_method_identifier')
                     if not payment_session_id:
                         await pci_client.aclose()
-                        await self.mark_proxy_result(False)
+                        await self.mark_proxy_result(False, error="No payment session ID returned")
                         return False, "No payment session ID returned"
                     self.logger.data_extracted("Payment Session ID", payment_session_id, "PCI")
                 except Exception as e:
                     await pci_client.aclose()
-                    await self.mark_proxy_result(False)
+                    await self.mark_proxy_result(False, error=f"Failed to parse PCI response: {str(e)[:50]}")
                     return False, f"Failed to parse PCI response: {str(e)[:50]}"
                 
                 await pci_client.aclose()
 
             except Exception as e:
                 self.logger.error_log("PCI_ERROR", f"PCI error: {str(e)}")
-                await self.mark_proxy_result(False)
+                await self.mark_proxy_result(False, error=f"PCI error: {str(e)[:50]}")
                 return False, f"PCI error: {str(e)[:50]}"
 
             await self.random_delay(1, 2)
@@ -1721,7 +1751,7 @@ class ShopifyHTTPCheckout:
                 )
 
                 if resp.status_code != 200:
-                    await self.mark_proxy_result(False)
+                    await self.mark_proxy_result(False, error=f"Submit failed: {resp.status_code}")
                     return False, f"Submit failed: {resp.status_code}"
 
                 try:
@@ -1731,7 +1761,7 @@ class ShopifyHTTPCheckout:
                         error_msg = submit_resp['errors'][0].get('message', 'Unknown error')
                         if ":" in error_msg:
                             error_msg = error_msg.split(":")[0].strip()
-                        await self.mark_proxy_result(False)
+                        await self.mark_proxy_result(False, error=error_msg)
                         return False, f"Submit error: {error_msg}"
 
                     data = submit_resp.get('data', {}).get('submitForCompletion', {})
@@ -1739,7 +1769,7 @@ class ShopifyHTTPCheckout:
                     self.receipt_id = receipt.get('id')
 
                     if not self.receipt_id:
-                        await self.mark_proxy_result(False)
+                        await self.mark_proxy_result(False, error="DECLINED - No receipt ID in submit response")
                         return False, "DECLINED - No receipt ID in submit response"
 
                     self.logger.data_extracted("Receipt ID", self.receipt_id, "Submit")
@@ -1758,21 +1788,21 @@ class ShopifyHTTPCheckout:
                         return poll_result
                     else:
                         overall_success = False
-                        await self.mark_proxy_result(False)
+                        await self.mark_proxy_result(False, error=f"Unexpected receipt type: {receipt.get('__typename')}")
                         return False, f"Unexpected receipt type: {receipt.get('__typename')}"
 
                 except Exception as e:
-                    await self.mark_proxy_result(False)
+                    await self.mark_proxy_result(False, error=f"Failed to parse submit response: {str(e)[:50]}")
                     return False, f"Failed to parse submit response: {str(e)[:50]}"
 
             except Exception as e:
                 self.logger.error_log("SUBMIT_ERROR", f"Submit error: {str(e)}")
-                await self.mark_proxy_result(False)
+                await self.mark_proxy_result(False, error=f"Submit error: {str(e)[:50]}")
                 return False, f"Submit error: {str(e)[:50]}"
 
         except Exception as e:
             self.logger.error_log("UNKNOWN", f"Checkout error: {str(e)}")
-            await self.mark_proxy_result(False)
+            await self.mark_proxy_result(False, error=f"Checkout error: {str(e)[:50]}")
             return False, f"Checkout error: {str(e)[:50]}"
         finally:
             if self.client:
