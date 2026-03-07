@@ -1023,7 +1023,53 @@ def scan_website_enhanced(url):
                     html_text = response.text
                     initial_gateways = find_payment_gateways_comprehensive(response.text, final_url)
                     all_detected_gateways.update(initial_gateways)
-                    server_info = response.headers.get('server', 'Unknown')
+                    
+                    # Enhanced server info detection
+                    server_info = "Unknown"
+                    if 'server' in response.headers:
+                        server_header = response.headers.get('server', '').lower()
+                        if 'apache' in server_header:
+                            server_info = "Apache"
+                        elif 'nginx' in server_header:
+                            server_info = "nginx"
+                        elif 'cloudflare' in server_header:
+                            server_info = "Cloudflare"
+                        elif 'iis' in server_header or 'microsoft-iis' in server_header:
+                            server_info = "IIS"
+                        elif 'openresty' in server_header:
+                            server_info = "OpenResty"
+                        elif 'caddy' in server_header:
+                            server_info = "Caddy"
+                        elif 'lite speed' in server_header or 'litespeed' in server_header:
+                            server_info = "LiteSpeed"
+                        elif 'tomcat' in server_header:
+                            server_info = "Tomcat"
+                        elif 'jetty' in server_header:
+                            server_info = "Jetty"
+                        elif 'gunicorn' in server_header:
+                            server_info = "Gunicorn"
+                        elif 'node.js' in server_header or 'nodejs' in server_header:
+                            server_info = "Node.js"
+                        else:
+                            server_info = response.headers.get('server', 'Unknown')
+                    
+                    # Try to get more info from headers if server is still unknown
+                    if server_info == "Unknown":
+                        if 'x-powered-by' in response.headers:
+                            x_powered = response.headers.get('x-powered-by', '').lower()
+                            if 'php' in x_powered:
+                                server_info = "PHP"
+                            elif 'asp.net' in x_powered:
+                                server_info = "ASP.NET"
+                            elif 'nodejs' in x_powered:
+                                server_info = "Node.js"
+                            elif 'python' in x_powered:
+                                server_info = "Python"
+                            elif 'ruby' in x_powered:
+                                server_info = "Ruby"
+                            elif 'java' in x_powered:
+                                server_info = "Java"
+                    
                     break
                 elif response.status_code in [403, 429, 503]:
                     continue
@@ -1036,19 +1082,278 @@ def scan_website_enhanced(url):
         if not html_text:
             return None, None, None, None, None, None, None, None, "Site is blocking our requests or requires advanced JavaScript", status_code, ip_address
 
-        # Process results
+        # Process results for platform detection
         text_lower = html_text.lower()
         platform = "Unknown"
+        
+        # Comprehensive platform patterns
         platform_patterns = {
-            "WordPress": [r'wp-content', r'wordpress', r'wp-json'],
-            "Shopify": [r'shopify', r'cdn\.shopify\.com'],
-            "WooCommerce": [r'woocommerce', r'wc-'],
+            "WordPress": [
+                r'wp-content', r'wordpress', r'wp-json', r'wp-includes',
+                r'wp-admin', r'wp-login', r'xmlrpc\.php', r'wp-cron\.php',
+                r'wp-emoji-release', r'wp-embed', r'wp-theme', r'wp-plugin',
+                r'elementor', r'divi', r'astra', r'woocommerce'
+            ],
+            "Shopify": [
+                r'shopify', r'cdn\.shopify\.com', r'shopify\.com',
+                r'shopify\.js', r'shopify\.min\.js', r'shopify-checkout',
+                r'myshopify\.com', r'powered_by_shopify', r'Shopify\.theme'
+            ],
+            "WooCommerce": [
+                r'woocommerce', r'wc-', r'woocommerce-payment',
+                r'woocommerce-gateway', r'data-woocommerce', r'wc-block',
+                r'wc-cart', r'wc-checkout', r'wc-product'
+            ],
+            "Magento": [
+                r'magento', r'magento-payment', r'magento-checkout',
+                r'magento-gateway', r'data-magento', r'mage\/',
+                r'js\/magento', r'skin\/frontend', r'requirejs\/magento'
+            ],
+            "PrestaShop": [
+                r'prestashop', r'presta', r'prestashop\.com',
+                r'prestashop\.js', r'prestashop-theme', r'ps_shoppingcart',
+                r'ps_currencyselector', r'ps_languageselector'
+            ],
+            "OpenCart": [
+                r'opencart', r'oc-\d+', r'route=checkout', r'catalog\/view',
+                r'opencart\.js', r'ocmod', r'opencart-theme'
+            ],
+            "Drupal": [
+                r'drupal', r'drupal\.js', r'drupal\.org',
+                r'sites\/default', r'misc\/drupal', r'drupal-settings',
+                r'core\/modules', r'core\/themes'
+            ],
+            "Joomla": [
+                r'joomla', r'joomla\.org', r'media\/system\/js',
+                r'media\/jui', r'com_content', r'com_contact',
+                r'com_users', r'com_phocagallery'
+            ],
+            "BigCommerce": [
+                r'bigcommerce', r'bigc\.io', r'bigcommerce\.com',
+                r'cdn\.bigcommerce', r'bc-sdk', r'bigcommerce-chat'
+            ],
+            "Squarespace": [
+                r'squarespace', r'squarespace\.com', r'static1\.squarespace',
+                r'assets\.squarespace', r'squarespace-cdn'
+            ],
+            "Wix": [
+                r'wix', r'wix\.com', r'static\.wixstatic', r'wix-ui',
+                r'wix-js', r'wix-react', r'wix-code'
+            ],
+            "Weebly": [
+                r'weebly', r'weebly\.com', r'weebly\.js',
+                r'cdn\.weebly', r'weebly-files'
+            ],
+            "Ghost": [
+                r'ghost', r'ghost\.org', r'ghost\.io',
+                r'ghost\.js', r'ghost-theme', r'ghost-head'
+            ],
+            "Webflow": [
+                r'webflow', r'webflow\.com', r'webflow\.js',
+                r'webflow-cdn', r'webflow-design'
+            ],
+            "Jimdo": [
+                r'jimdo', r'jimdo\.com', r'jimdo\.js',
+                r'jimdo-cdn', r'jimdo-payment'
+            ],
+            "Tumblr": [
+                r'tumblr', r'tumblr\.com', r'tumblr_',
+                r'tumblr-theme', r'tumblr-controls'
+            ],
+            "Ecwid": [
+                r'ecwid', r'ecwid\.com', r'ecwid\.js',
+                r'ecwid-cdn', r'ecwid-store'
+            ],
+            "Sellfy": [
+                r'sellfy', r'sellfy\.com', r'sellfy\.js',
+                r'sellfy-cdn', r'sellfy-payment'
+            ],
+            "Gumroad": [
+                r'gumroad', r'gumroad\.com', r'gumroad\.js',
+                r'gumroad-cdn', r'gumroad-overlay'
+            ],
+            "Podia": [
+                r'podia', r'podia\.com', r'podia\.js',
+                r'podia-cdn', r'podia-checkout'
+            ],
+            "Thinkific": [
+                r'thinkific', r'thinkific\.com', r'thinkific\.js',
+                r'thinkific-cdn', r'thinkific-course'
+            ],
+            "Teachable": [
+                r'teachable', r'teachable\.com', r'teachable\.js',
+                r'teachable-cdn', r'teachable-checkout'
+            ],
+            "Kajabi": [
+                r'kajabi', r'kajabi\.com', r'kajabi\.js',
+                r'kajabi-cdn', r'kajabi-checkout'
+            ],
+            "ClickFunnels": [
+                r'clickfunnels', r'clickfunnels\.com', r'cf-page',
+                r'cf-assets', r'cf-checkout', r'clickfunnels-js'
+            ],
+            "Leadpages": [
+                r'leadpages', r'leadpages\.com', r'leadpages\.js',
+                r'leadpages-cdn', r'leadpages-checkout'
+            ],
+            "Unbounce": [
+                r'unbounce', r'unbounce\.com', r'unbounce\.js',
+                r'unbounce-cdn', r'unbounce-page'
+            ],
+            "Instapage": [
+                r'instapage', r'instapage\.com', r'instapage\.js',
+                r'instapage-cdn', r'instapage-checkout'
+            ],
+            "Webnode": [
+                r'webnode', r'webnode\.com', r'webnode\.js',
+                r'webnode-cdn', r'webnode-store'
+            ],
+            "Strikingly": [
+                r'strikingly', r'strikingly\.com', r'strikingly\.js',
+                r'strikingly-cdn', r'strikingly-checkout'
+            ],
+            "Carrd": [
+                r'carrd', r'carrd\.co', r'carrd\.js',
+                r'carrd-cdn', r'carrd-checkout'
+            ],
+            "Tilda": [
+                r'tilda', r'tilda\.cc', r'tilda\.js',
+                r'tilda-cdn', r'tilda-payment'
+            ],
+            "Ucraft": [
+                r'ucraft', r'ucraft\.com', r'ucraft\.js',
+                r'ucraft-cdn', r'ucraft-store'
+            ],
+            "Duda": [
+                r'duda', r'duda\.co', r'duda\.js',
+                r'duda-cdn', r'duda-checkout'
+            ],
+            "IMCreator": [
+                r'imcreator', r'imcreator\.com', r'imcreator\.js',
+                r'imcreator-cdn', r'imcreator-store'
+            ],
+            "Voog": [
+                r'voog', r'voog\.com', r'voog\.js',
+                r'voog-cdn', r'voog-checkout'
+            ],
+            "SiteBuilder": [
+                r'sitebuilder', r'sitebuilder\.com', r'sitebuilder\.js',
+                r'sitebuilder-cdn', r'sitebuilder-store'
+            ],
+            "Zoho": [
+                r'zoho', r'zoho\.com', r'zoho\.js',
+                r'zoho-cdn', r'zoho-checkout', r'zoho-payment'
+            ],
+            "Salesforce": [
+                r'salesforce', r'salesforce\.com', r'salesforce\.js',
+                r'salesforce-cdn', r'salesforce-checkout', r'sfdc'
+            ],
+            "HubSpot": [
+                r'hubspot', r'hubspot\.com', r'hubspot\.js',
+                r'hubspot-cdn', r'hubspot-checkout', r'hs-analytics'
+            ],
+            "Mailchimp": [
+                r'mailchimp', r'mailchimp\.com', r'mailchimp\.js',
+                r'mailchimp-cdn', r'mailchimp-checkout', r'mc-embed'
+            ],
+            "Stripe": [
+                r'stripe', r'js\.stripe\.com', r'stripe\.com',
+                r'stripe-payment', r'stripe-checkout'
+            ],
+            "PayPal": [
+                r'paypal', r'paypal\.com', r'paypalobjects\.com',
+                r'paypal-payment', r'paypal-checkout'
+            ],
+            "Braintree": [
+                r'braintree', r'braintreegateway\.com', r'braintree-payment',
+                r'braintree-checkout'
+            ],
+            "Klarna": [
+                r'klarna', r'klarna\.com', r'klarna-payment',
+                r'klarna-checkout'
+            ],
+            "Square": [
+                r'square', r'squareup\.com', r'square-payment',
+                r'square-checkout'
+            ],
+            "Authorize.Net": [
+                r'authorize\.net', r'authorizenet', r'accept\.js',
+                r'authorize-payment'
+            ],
+            "2Checkout": [
+                r'2checkout', r'2co\.com', r'2checkout-payment',
+                r'2checkout-checkout'
+            ],
+            "Adyen": [
+                r'adyen', r'adyen\.com', r'adyen-payment',
+                r'adyen-checkout'
+            ],
+            "Worldpay": [
+                r'worldpay', r'worldpay\.com', r'worldpay-payment',
+                r'worldpay-checkout'
+            ],
+            "SagePay": [
+                r'sagepay', r'sagepay\.com', r'sagepay-payment',
+                r'sagepay-checkout'
+            ],
+            "Amazon Pay": [
+                r'amazon pay', r'pay\.amazon\.com', r'amazon-pay',
+                r'amazon-checkout'
+            ],
+            "Apple Pay": [
+                r'apple pay', r'apple-pay', r'applepay',
+                r'apple-payment'
+            ],
+            "Google Pay": [
+                r'google pay', r'google-pay', r'googlepay',
+                r'google-payment'
+            ],
+            "Venmo": [
+                r'venmo', r'venmo\.com', r'venmo-payment',
+                r'venmo-checkout'
+            ],
+            "Chase": [
+                r'chase', r'chase\.com', r'chase-payment',
+                r'chase-checkout'
+            ]
         }
 
+        # Detect platform by checking patterns
         for platform_name, patterns in platform_patterns.items():
             if any(re.search(pattern, html_text, re.IGNORECASE) for pattern in patterns):
                 platform = platform_name
                 break
+
+        # If platform still Unknown, try meta tags and other indicators
+        if platform == "Unknown":
+            # Check for generator meta tag
+            generator_match = re.search(r'<meta name="generator" content="([^"]+)"', html_text, re.IGNORECASE)
+            if generator_match:
+                generator = generator_match.group(1)
+                if 'wordpress' in generator.lower():
+                    platform = "WordPress"
+                elif 'shopify' in generator.lower():
+                    platform = "Shopify"
+                elif 'magento' in generator.lower():
+                    platform = "Magento"
+                elif 'prestashop' in generator.lower():
+                    platform = "PrestaShop"
+                elif 'drupal' in generator.lower():
+                    platform = "Drupal"
+                elif 'joomla' in generator.lower():
+                    platform = "Joomla"
+                elif 'wix' in generator.lower():
+                    platform = "Wix"
+                elif 'squarespace' in generator.lower():
+                    platform = "Squarespace"
+                elif 'weebly' in generator.lower():
+                    platform = "Weebly"
+                elif 'ghost' in generator.lower():
+                    platform = "Ghost"
+                elif 'webflow' in generator.lower():
+                    platform = "Webflow"
+                else:
+                    platform = generator
 
         # Captcha detection
         captcha = False
@@ -1056,6 +1361,18 @@ def scan_website_enhanced(url):
         if re.search(r'recaptcha|g-recaptcha|grecaptcha', html_text, re.IGNORECASE):
             captcha = True
             captcha_type = "reCAPTCHA"
+        elif re.search(r'hcaptcha|h-captcha', html_text, re.IGNORECASE):
+            captcha = True
+            captcha_type = "hCaptcha"
+        elif re.search(r'funcaptcha', html_text, re.IGNORECASE):
+            captcha = True
+            captcha_type = "FunCaptcha"
+        elif re.search(r'geetest', html_text, re.IGNORECASE):
+            captcha = True
+            captcha_type = "Geetest"
+        elif re.search(r'captcha', html_text, re.IGNORECASE):
+            captcha = True
+            captcha_type = "Generic CAPTCHA"
 
         # Cloudflare detection
         cloudflare = False
