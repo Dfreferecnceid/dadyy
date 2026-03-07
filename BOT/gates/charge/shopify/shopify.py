@@ -133,7 +133,8 @@ class ShopifyLogger:
         
         proxy_display = proxy[:50] + "..." if len(proxy) > 50 else proxy
         log_msg = f"{status_icon} PROXY: {proxy_display}"
-        if response_time:
+        if response_time is not None:
+            # FIX: Use f-string formatting with :.2f for float
             log_msg += f" | Response: {response_time:.2f}s"
         if error:
             log_msg += f" | Error: {error}"
@@ -755,7 +756,7 @@ class ShopifyHTTPCheckout:
         """Mark proxy as success or failed"""
         if self.proxy and PROXY_AVAILABLE:
             if success:
-                if not response_time:
+                if response_time is None:
                     response_time = time.time() - self.proxy_start_time if self.proxy_start_time else 1.0
                 mark_proxy_success(self.proxy, response_time)
                 self.logger.proxy_log(self.proxy, response_time, status="SUCCESS")
@@ -2052,7 +2053,7 @@ async def handle_shopify_charge(client: Client, message: Message):
                     success, result_text, credits_deducted = result
                     await processing_msg.edit_text(result_text, disable_web_page_preview=True)
                 elif isinstance(result, str):
-                    await processing_msg.edit_text(result_text, disable_web_page_preview=True)
+                    await processing_msg.edit_text(result, disable_web_page_preview=True)
                 else:
                     result_text = await checker.check_card(card_details, username, user_data)
                     await processing_msg.edit_text(result_text, disable_web_page_preview=True)
