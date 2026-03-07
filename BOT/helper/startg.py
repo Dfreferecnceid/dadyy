@@ -315,8 +315,7 @@ def get_auth_submenu():
 ⟐ <b>Square Auth</b> - <code>Authentication via Square</code>
 
 ━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Click on a gateway to see available commands</code>
-<b>~ Note:</b> <code>Disabled commands show ❌ status</code>"""
+<b>~ Note:</b> <code>Click on a gateway to see available commands</code>"""
 
     buttons = InlineKeyboardMarkup([
         [
