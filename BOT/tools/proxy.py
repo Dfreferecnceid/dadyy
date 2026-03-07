@@ -637,21 +637,12 @@ class ProxyManager:
                     fails = stats.get('fails', 0)
                     total = success + fails
                     rate = (success / total * 100) if total > 0 else 0
-                    
-                    # Ensure response_time is float
-                    response_time = stats.get('response_time', 0)
-                    if isinstance(response_time, str):
-                        try:
-                            response_time = float(response_time)
-                        except (ValueError, TypeError):
-                            response_time = 0.0
-                    
                     proxy_performance.append({
                         'proxy': proxy,  # Show complete proxy
                         'success': success,
                         'fails': fails,
                         'rate': rate,
-                        'response_time': response_time,
+                        'response_time': stats.get('response_time', 0),
                         'site': stats.get('site', 'Unknown'),
                         'status': '✅'
                     })
@@ -1182,14 +1173,7 @@ async def proxy_stats_handler(client, message: Message):
         success = proxy_data['success']
         fails = proxy_data['fails']
         rate = proxy_data['rate']
-        
-        # CRITICAL FIX: Convert response_time to float right before using it
-        rt_raw = proxy_data['response_time']
-        try:
-            rt = float(rt_raw) if rt_raw is not None else 0.0
-        except (ValueError, TypeError):
-            rt = 0.0
-                
+        rt = proxy_data['response_time']
         site = proxy_data.get('site', 'Unknown')
         status = proxy_data['status']
 
