@@ -1476,4 +1476,179 @@ class StripeCharge3Checker:
 
             # Step 8: If payment requires confirmation, handle it
             if result.get('requires_confirmation') and result.get('client_secret'):
-                confirm_result = await self.confirm_p
+                confirm_result = await self.confirm_payment_intent(payment_result['payment_method_id'], result['client_secret'])
+                result = confirm_result
+
+            elapsed_time = time.time() - start_time
+            logger.success(f"Card check completed in {elapsed_time:.2f}s - Status: {result['status']} - Message: {result['message']}")
+
+            return await self.format_response(cc, mes, ano, cvv, result['status'], result['message'], username, elapsed_time, user_data, bin_info)
+
+        except httpx.TimeoutException:
+            logger.error("Request timeout")
+            mark_proxy_failed(self.proxy_url)
+            self.proxy_status = "Dead 🚫"
+            return await self.format_response(cc, mes, ano, cvv, "ERROR", "Request timeout", username, time.time()-start_time, user_data, bin_info)
+        except httpx.ConnectError as e:
+            logger.error(f"Connection error: {str(e)}")
+            mark_proxy_failed(self.proxy_url)
+            self.proxy_status = "Dead 🚫"
+            return await self.format_response(cc, mes, ano, cvv, "ERROR", "Connection failed", username, time.time()-start_time, user_data, bin_info)
+        except Exception as e:
+            logger.error(f"Unexpected error: {str(e)}")
+            return await self.format_response(cc, mes, ano, cvv, "ERROR", f"System error: {str(e)[:80]}", username, time.time()-start_time, user_data, bin_info)
+        finally:
+            # Ensure client is closed
+            if self.client:
+                try:
+                    await self.client.aclose()
+                except:
+                    pass
+
+# Command handler
+@Client.on_message(filters.command(["xs", ".xs", "$xs"]))
+@auth_and_free_restricted
+async def handle_stripe_charge_3(client: Client, message: Message):
+    try:
+        user_id = message.from_user.id
+        username = message.from_user.username or str(user_id)
+
+        # Check if command is disabled
+        command_text = message.text.split()[0]
+        command_name = command_text.lstrip('/.$')
+
+        if is_command_disabled(command_name):
+            await message.reply(get_command_offline_message(command_text))
+            return
+
+        # Check if user is banned
+        if is_user_banned(user_id):
+            await message.reply("""<pre>⛔ User Banned</pre>
+━━━━━━━━━━━━━
+⟐ <b>Message</b>: You have been banned from using this bot.
+⟐ <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
+━━━━━━━━━━━━━""")
+            return
+
+        # Load user data
+        users = load_users()
+        user_id_str = str(user_id)
+        if user_id_str not in users:
+            await message.reply("""<pre>🔒 Registration Required</pre>
+━━━━━━━━━━━━━
+⟐ <b>Message</b>: You need to register first with /register
+⟐ <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
+━━━━━━━━━━━━━""")
+            return
+
+        user_data = users[user_id_str]
+        user_plan = user_data.get("plan", {})
+        plan_name = user_plan.get("plan", "Free")
+
+        # Check cooldown
+        can_use, wait_time = check_cooldown(user_id, "xs")
+        if not can_use:
+            await message.reply(f"""<pre>⏳ Cooldown Active</pre>
+━━━━━━━━━━━━━
+⟐ <b>Message</b>: Please wait {wait_time:.1f} seconds before using this command again.
+⟐ <b>Your Plan:</b> <code>{plan_name}</code>
+⟐ <b>Anti-Spam:</b> <code>{user_plan.get('antispam', 15)}s</code>
+━━━━━━━━━━━━━""")
+            return
+
+        args = message.text.split()
+        if len(args) < 2:
+            if charge_processor:
+                await message.reply(charge_processor.get_usage_message(
+                    "xs", 
+                    "Stripe Charge $3.50",
+                    "4111111111111111|12|2030|123"
+                ))
+            else:
+                await message.reply("""<pre>#WAYNE ─[STRIPE CHARGE $3.50]─</pre>
+━━━━━━━━━━━━━
+⟐ <b>Command</b>: <code>/xs</code>
+⟐ <b>Usage</b>: <code>/xs cc|mm|yy|cvv</code>
+⟐ <b>Example</b>: <code>/xs 4111111111111111|12|2030|123</code>
+━━━━━━━━━━━━━
+<b>~ Note:</b> <code>Stripe Charge 3.50$</code>""")
+            return
+
+        # Get the full message text after the command
+        full_text = message.text
+        # Remove the command part
+        command_parts = full_text.split(maxsplit=1)
+        if len(command_parts) < 2:
+            await message.reply("Please provide card details")
+            return
+        
+        card_input = command_parts[1].strip()
+
+        # Parse using the intelligent parser
+        parsed = parse_card_input(card_input)
+        if not parsed:
+            await message.reply("""<pre>❌ Invalid Format</pre>
+━━━━━━━━━━━━━
+⟐ <b>Message</b>: Could not extract card details.
+⟐ <b>Format 1</b>: <code>cc|mm|yy|cvv</code>
+━━━━━━━━━━━━━""")
+            return
+
+        cc, mes, ano, cvv = parsed
+
+        # Check if proxy system is available
+        if not PROXY_SYSTEM_AVAILABLE:
+            await message.reply("""<pre>❌ Proxy System Unavailable</pre>
+━━━━━━━━━━━━━
+⟐ <b>Message</b>: Proxy system is not available.
+⟐ <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
+━━━━━━━━━━━━━""")
+            return
+
+        # Show processing message
+        processing_msg = await message.reply(
+            charge_processor.get_processing_message(
+                cc, mes, ano, cvv, username, plan_name, 
+                "Stripe Charge $3.50", "xs"
+            ) if charge_processor else f"""<b>「$cmd → /xs」| <b>WAYNE</b> </b>
+━━━━━━━━━━━━━━━
+<b>[•] Card-</b> <code>{cc}|{mes}|{ano}|{cvv}</code>
+<b>[•] Gateway -</b> Stripe Charge $3.50
+<b>[•] Status-</b> Processing... ⏳
+━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
+<b>[+] Plan:</b> {plan_name}
+<b>[+] User:</b> @{username}
+━━━━━━━━━━━━━━━
+<b>Checking card... Please wait.</b>"""
+        )
+
+        # Create checker instance
+        checker = StripeCharge3Checker(user_id=user_id)
+
+        # Process command through universal charge processor
+        if charge_processor:
+            success, result, credits_deducted = await charge_processor.execute_charge_command(
+                user_id,
+                checker.check_card,
+                card_input,  # Pass the full input, not just card_details
+                username,
+                user_data,
+                credits_needed=2,
+                command_name="xs",
+                gateway_name="Stripe Charge $3.50"
+            )
+
+            await processing_msg.edit_text(result, disable_web_page_preview=True)
+        else:
+            # Fallback
+            result = await checker.check_card(card_input, username, user_data)
+            await processing_msg.edit_text(result, disable_web_page_preview=True)
+
+    except Exception as e:
+        error_msg = str(e)[:150]
+        await message.reply(f"""<pre>❌ Command Error</pre>
+━━━━━━━━━━━━━
+⟐ <b>Message</b>: An error occurred while processing your request.
+⟐ <b>Error</b>: <code>{error_msg}</code>
+⟐ <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
+━━━━━━━━━━━━━""")
