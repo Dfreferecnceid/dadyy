@@ -766,16 +766,183 @@ async def sk_command(client, message):
 
 # Website scanning functions
 def find_payment_gateways_comprehensive(response_text, url):
-    """ENHANCED payment gateway detection"""
+    """ENHANCED payment gateway detection with comprehensive patterns"""
     detected_gateways = set()
     text_lower = response_text.lower()
 
     gateway_patterns = {
-        "Stripe": [r'js\.stripe\.com', r'api\.stripe\.com', r'stripe\.com/v3/', r'Stripe\([^)]'],
-        "PayPal": [r'www\.paypal\.com', r'paypalobjects\.com', r'paypal\.com/sdk/js'],
-        "Braintree": [r'braintreegateway\.com', r'braintree\.js', r'braintree-client\.js'],
-        "Shopify": [r'shopify', r'cdn\.shopify\.com', r'shopify\.com'],
-        "WooCommerce": [r'woocommerce', r'wc-', r'woocommerce/assets'],
+        "PayPal": [
+            r'paypal', r'www\.paypal\.com', r'paypalobjects\.com',
+            r'paypal\.js', r'paypal\.min\.js', r'paypal\.com/sdk/js',
+            r'paypal\.com/checkoutnow', r'paypal\.com/webapps/hermes',
+            r'paypal\.com/buttons', r'paypal\.com/digital',
+            r'braintree\.paypal', r'paypal\.com/checkout',
+            r'data-paypal', r'paypal-button', r'paypal-checkout'
+        ],
+        "Stripe": [
+            r'stripe', r'js\.stripe\.com', r'api\.stripe\.com',
+            r'stripe\.js', r'stripe\.min\.js', r'stripe\.com/v3/',
+            r'Stripe\(', r'stripePaymentIntent', r'stripe\.com/elements',
+            r'stripe\.com/checkout', r'stripe\.com/payments',
+            r'stripe\.com/connect', r'stripe\.com/terminal',
+            r'data-stripe', r'data-stripe-key', r'stripe-key',
+            r'stripeToken', r'stripeSource', r'stripeCustomerId'
+        ],
+        "Braintree": [
+            r'braintree', r'braintreegateway\.com', r'braintree\.js',
+            r'braintree-client\.js', r'braintree-data-collector\.js',
+            r'braintree\.min\.js', r'Braintree\.Client',
+            r'braintree\.com/web', r'braintree\.com/api', r'braintree\.com/sdk',
+            r'braintree\.com/visa', r'braintree\.paypal',
+            r'data-braintree', r'braintree-hosted-fields'
+        ],
+        "Klarna": [
+            r'klarna', r'klarnapayments\.com', r'klarna\.js',
+            r'klarna\.min\.js', r'klarna\.com', r'klarna-widget',
+            r'klarna\.payments', r'klarna\.checkout', r'klarna\.api',
+            r'data-klarna', r'klarna-payment'
+        ],
+        "Square": [
+            r'square', r'squareup\.com', r'square\.js',
+            r'sq-payment-form', r'square\.min\.js',
+            r'square\.com/payments', r'SqPaymentForm', r'square\.com/sdk/js', r'square\.com/online',
+            r'square\.com/checkout', r'square\.com/pos',
+            r'data-square', r'square-payment', r'square-wallet'
+        ],
+        "Authorize.Net": [
+            r'authorize\.net', r'authorizenet', r'accept\.js',
+            r'authorize\.min\.js', r'authorize\.net/Accept\.js',
+            r'authorize\.net/v1/Accept\.js', r'Accept\.dispatch',
+            r'authorize\.net/api', r'authorize\.net/xml',
+            r'data-authorize', r'authorize-net', r'acceptjs'
+        ],
+        "2Checkout": [
+            r'2checkout', r'2co\.com', r'2checkout\.com',
+            r'2co\.js', r'2checkout\.min\.js',
+            r'2checkout\.com/checkout/api', r'2checkout\.com/inline', r'2checkout\.com/payment',
+            r'data-2checkout', r'twocheckout', r'2co-button'
+        ],
+        "Adyen": [
+            r'adyen', r'adyen\.com', r'adyen\.js',
+            r'adyen\.min\.js', r'adyen-component', r'adyen-checkout',
+            r'data-adyen', r'adyen-payment'
+        ],
+        "Worldpay": [
+            r'worldpay', r'worldpay\.com', r'worldpay\.js',
+            r'worldpay\.min\.js', r'worldpay-form', r'worldpay-payment',
+            r'data-worldpay', r'worldpay-button'
+        ],
+        "SagePay": [
+            r'sagepay', r'sagepay\.com', r'sagepay\.js',
+            r'sagepay\.min\.js', r'sagepay-form', r'sagepay-payment',
+            r'data-sagepay', r'sagepay-button'
+        ],
+        "Amazon Pay": [
+            r'amazon pay', r'pay\.amazon\.com', r'amazonpay\.js',
+            r'amazonpay\.min\.js', r'amazonpay\.com', r'amazon-addressbook',
+            r'amazon\.payments', r'amazon\.checkout',
+            r'amazon\.login', r'amazon\.payment',
+            r'data-amazon-pay', r'amazon-pay-button'
+        ],
+        "Apple Pay": [
+            r'apple pay', r'apple-pay', r'applepay\.js',
+            r'ApplePaySession', r'applepay\.min\.js', r'applepay\.com',
+            r'apple\.pay', r'apple\.payment', r'apple\.wallet',
+            r'data-apple-pay', r'apple-pay-button'
+        ],
+        "Google Pay": [
+            r'google pay', r'gpaysdk', r'googlepay\.js',
+            r'google\.pay', r'googlepay\.min\.js', r'pay\.google\.com',
+            r'google\.wallet', r'google\.payment', r'googlepay\.api',
+            r'data-google-pay', r'google-pay-button'
+        ],
+        "Venmo": [
+            r'venmo', r'venmo\.com', r'venmo-button',
+            r'venmo-payment', r'data-venmo'
+        ],
+        "Chase": [
+            r'chase', r'chase\.com', r'chasepay',
+            r'chase\.min\.js', r'chase\.com/payments',
+            r'chase\.com/checkout', r'chase\.pay', r'chase\.bank',
+            r'data-chase', r'chase-payment'
+        ],
+        "Cash on Delivery (COD)": [
+            r'cash on delivery', r'cod', r'payment_method_cod',
+            r'payment-method-cod', r'cod_payment', r'cod\.method',
+            r'cash\.delivery', r'pay\.on\.delivery',
+            r'data-cod', r'cod-button'
+        ],
+        "AWS": [
+            r'aws', r'amazon web services', r'aws\.payment',
+            r'aws\.billing', r'aws\.checkout', r'aws\.gateway',
+            r'data-aws', r'aws-payment'
+        ],
+        "NAB": [
+            r'nab', r'national australia bank', r'nab\.com\.au',
+            r'nabtransact', r'nab\.co\.nz', r'nab\.com',
+            r'nab\.payments', r'nab\.gateway', r'nab\.bank',
+            r'data-nab', r'nab-payment'
+        ],
+        "Epay": [
+            r'epay', r'e-pay', r'epay\.com',
+            r'epay\.payment', r'epay\.method', r'epay\.gateway',
+            r'data-epay', r'epay-button'
+        ],
+        "Afterpay": [
+            r'afterpay', r'afterpay\.com', r'afterpay\.js',
+            r'afterpay\.min\.js', r'afterpay-payment',
+            r'data-afterpay', r'afterpay-button'
+        ],
+        "ANZ": [
+            r'anz', r'australia and new zealand banking', r'anz\.com',
+            r'anz\.com\.au', r'anz-payment', r'anz-gateway',
+            r'data-anz', r'anz-bank'
+        ],
+        "CBA": [
+            r'cba', r'commonwealth bank', r'commbank',
+            r'commbank\.com\.au', r'cba-payment', r'cba-gateway',
+            r'data-cba', r'cba-bank'
+        ],
+        "Magento": [
+            r'magento', r'magento-payment', r'magento-checkout',
+            r'magento-gateway', r'data-magento'
+        ],
+        "WooCommerce": [
+            r'woocommerce', r'wc-', r'woocommerce-payment',
+            r'woocommerce-gateway', r'data-woocommerce'
+        ],
+        "Eway": [
+            r'eway', r'eway\.com\.au', r'eway-payment',
+            r'eway-gateway', r'data-eway'
+        ],
+        "Clover Payments": [
+            r'clover', r'clover\.com', r'clover-payment',
+            r'clover-gateway', r'data-clover'
+        ],
+        "FirstData": [
+            r'firstdata', r'firstdata\.com', r'firstdata-payment',
+            r'firstdata-gateway', r'data-firstdata'
+        ],
+        "CyberSource": [
+            r'cybersource', r'cybersource\.com', r'cybersource-payment',
+            r'cybersource-gateway', r'data-cybersource'
+        ],
+        "Invoice": [
+            r'invoice', r'invoice-payment', r'invoice-gateway',
+            r'data-invoice', r'pay-by-invoice'
+        ],
+        "ECard": [
+            r'ecard', r'e-card', r'ecard-payment',
+            r'ecard-gateway', r'data-ecard'
+        ],
+        "CPay": [
+            r'cpay', r'c-pay', r'cpay-payment',
+            r'cpay-gateway', r'data-cpay'
+        ],
+        "AVS": [
+            r'avs', r'address verification system', r'avs-check',
+            r'avs-verification', r'data-avs'
+        ]
     }
 
     for gateway_name, patterns in gateway_patterns.items():
@@ -1013,7 +1180,7 @@ async def gate_command(client, message):
 <b>𝙋𝙡𝙖𝙩𝙛𝙤𝙧𝙢</b>    : <code>{platform or 'Unknown'}</code>
 <b>𝙎𝙚𝙧𝙫𝙚𝙧 𝐈𝐧𝐟𝐨</b> : <code>{server_info or 'Unknown'}</code>
 
-<b>𝘼𝘶𝘵𝘩 𝙂𝘢𝘵𝙚</b>   : <b>{auth_gate_text}</b>
+<b>𝘼𝙪𝙩𝙝 𝙂𝘢𝙩𝙚</b>   : <b>{auth_gate_text}</b>
 <b>𝙑𝘽𝙑</b>         : <b>{vbv_text}</b>
 <pre>━━━━━━━━━━━━━━━━━━━━━</pre>
 <b>𝙏𝙞𝙢𝙚 𝙏𝙖𝙠𝙚𝙣</b>  : <code>{time_taken:.2f}</code> <b>𝙨𝙚𝙘𝙤𝙣𝙙𝙨</b>"""
