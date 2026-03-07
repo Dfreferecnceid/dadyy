@@ -341,6 +341,42 @@ class ProxyManager:
                     self.perm_dead_proxies = set(data.get('dead', []))
                     self.proxy_stats = data.get('stats', {})
                     self.user_added_proxies = data.get('user_added', {})
+                    
+                    # FIX: Convert string values to proper types for all proxies
+                    for proxy, stats in self.proxy_stats.items():
+                        # Convert response_time from string to float
+                        if 'response_time' in stats and isinstance(stats['response_time'], str):
+                            try:
+                                stats['response_time'] = float(stats['response_time'])
+                            except (ValueError, TypeError):
+                                stats['response_time'] = 5.0  # Default if conversion fails
+                        
+                        # Ensure success and fails are integers
+                        if 'success' in stats and isinstance(stats['success'], str):
+                            try:
+                                stats['success'] = int(stats['success'])
+                            except (ValueError, TypeError):
+                                stats['success'] = 0
+                        
+                        if 'fails' in stats and isinstance(stats['fails'], str):
+                            try:
+                                stats['fails'] = int(stats['fails'])
+                            except (ValueError, TypeError):
+                                stats['fails'] = 0
+                        
+                        # Ensure last_validated and last_used are floats
+                        if 'last_validated' in stats and isinstance(stats['last_validated'], str):
+                            try:
+                                stats['last_validated'] = float(stats['last_validated'])
+                            except (ValueError, TypeError):
+                                stats['last_validated'] = time.time()
+                        
+                        if 'last_used' in stats and isinstance(stats['last_used'], str):
+                            try:
+                                stats['last_used'] = float(stats['last_used'])
+                            except (ValueError, TypeError):
+                                stats['last_used'] = time.time()
+                    
                 print(f"📂 Loaded {safe_str(len(self.valid_proxies))} pre-validated proxies")
                 print(f"📂 Loaded {safe_str(len(self.perm_dead_proxies))} known dead proxies")
         except Exception as e:
@@ -582,15 +618,39 @@ class ProxyManager:
         """Mark proxy as successful"""
         with _proxy_lock:
             if proxy in self.proxy_stats:
+                # Ensure response_time is float
+                try:
+                    response_time = float(response_time)
+                except (ValueError, TypeError):
+                    response_time = 5.0
+                
                 self.proxy_stats[proxy]['success'] += 1
                 # Update average response time
                 old_time = self.proxy_stats[proxy].get('response_time', 5.0)
+                # Ensure old_time is float
+                try:
+                    old_time = float(old_time)
+                except (ValueError, TypeError):
+                    old_time = 5.0
+                    
                 new_time = (old_time + response_time) / 2
                 self.proxy_stats[proxy]['response_time'] = new_time
                 self.dead_proxies.discard(proxy)
                 # Reset fail count on success
                 self.proxy_stats[proxy]['fails'] = 0
                 self.proxy_stats[proxy]['last_validated'] = time.time()
+            else:
+                # If no stats, create them
+                self.proxy_stats[proxy] = {
+                    'success': 1,
+                    'fails': 0,
+                    'response_time': response_time,
+                    'ip': 'Unknown',
+                    'site': 'Shopify',
+                    'last_used': time.time(),
+                    'last_validated': time.time()
+                }
+                self.dead_proxies.discard(proxy)
 
     def mark_proxy_failed(self, proxy: str):
         """Mark proxy as failed (temporarily dead) - NOW DIES AFTER 1 FAILURE"""
