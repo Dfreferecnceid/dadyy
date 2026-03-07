@@ -1183,13 +1183,12 @@ async def proxy_stats_handler(client, message: Message):
         fails = proxy_data['fails']
         rate = proxy_data['rate']
         
-        # Ensure rt is float
-        rt = proxy_data['response_time']
-        if isinstance(rt, str):
-            try:
-                rt = float(rt)
-            except (ValueError, TypeError):
-                rt = 0.0
+        # CRITICAL FIX: Convert response_time to float right before using it
+        rt_raw = proxy_data['response_time']
+        try:
+            rt = float(rt_raw) if rt_raw is not None else 0.0
+        except (ValueError, TypeError):
+            rt = 0.0
                 
         site = proxy_data.get('site', 'Unknown')
         status = proxy_data['status']
