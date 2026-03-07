@@ -736,7 +736,7 @@ class ShopifyHTTPCheckout:
         # Parse proxy for httpx
         proxy_parts = parse_proxy(self.proxy)
         if proxy_parts:
-            # Construct proxy URL for httpx
+            # Construct proxy URL for httpx - IMPORTANT: httpx uses 'proxy' parameter, not 'proxies'
             if proxy_parts['username'] and proxy_parts['password']:
                 self.proxy_url = f"http://{proxy_parts['username']}:{proxy_parts['password']}@{proxy_parts['host']}:{proxy_parts['port']}"
             else:
@@ -990,14 +990,14 @@ class ShopifyHTTPCheckout:
             # Step 2: Initialize session with proxy
             self.step(2, "INIT SESSION", "Initializing HTTP session with proxy")
             
-            # Initialize httpx client with proxy
+            # Initialize httpx client with proxy - FIXED: use 'proxy' parameter, not 'proxies'
             client_kwargs = {
                 'timeout': 30,
                 'follow_redirects': True
             }
             
             if self.proxy_url:
-                client_kwargs['proxies'] = self.proxy_url
+                client_kwargs['proxy'] = self.proxy_url  # FIXED: Changed from 'proxies' to 'proxy'
                 self.logger.data_extracted("Proxy Configured", self.proxy_url[:50] + "...", "httpx client")
             
             self.client = httpx.AsyncClient(**client_kwargs)
@@ -1461,10 +1461,10 @@ class ShopifyHTTPCheckout:
             }
 
             try:
-                # PCI request using separate httpx client with the same proxy
+                # PCI request using separate httpx client with the same proxy - FIXED: use 'proxy' parameter
                 pci_client_kwargs = {'timeout': 30}
                 if self.proxy_url:
-                    pci_client_kwargs['proxies'] = self.proxy_url
+                    pci_client_kwargs['proxy'] = self.proxy_url  # FIXED: Changed from 'proxies' to 'proxy'
                 
                 pci_client = httpx.AsyncClient(**pci_client_kwargs)
                 
