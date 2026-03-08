@@ -128,7 +128,7 @@ class ShopifyLogger:
         timestamp = datetime.now().strftime('%H:%M:%S.%f')[:-3]
         self.logs.append(f"[{timestamp}] {message}")
 
-    def step(self, step_num, step_name, action, details=None, status="PROCESSING"):
+    def step(self, step_num, name, action, details=None, status="PROCESSING"):
         self.step_counter += 1
         elapsed = time.time() - self.start_time if self.start_time else 0
 
@@ -140,7 +140,7 @@ class ShopifyLogger:
         }
         status_icon = status_icons.get(status, "➡️")
 
-        log_msg = f"{status_icon} STEP {step_num:02d}: {step_name}"
+        log_msg = f"{status_icon} STEP {step_num:02d}: {name}"
         log_msg += f"\n   ├── Action: {action}"
         log_msg += f"\n   ├── Elapsed: {elapsed:.2f}s"
         log_msg += f"\n   ├── Time: {datetime.now().strftime('%H:%M:%S')}"
@@ -647,9 +647,15 @@ class ShopifyKauffmanCheckout:
         self.user_id = user_id
         self.base_url = "https://shop.kauffmancenter.org"
         self.product_handle = "kauffman-center-postcard"
+        self.variant_id = "46767629271319"  # Postcard variant ID from captured data
         
-        # Direct checkout URL with quantity=2 pre-added
-        self.direct_checkout_url = f"{self.base_url}/cart/{self.product_handle}:2"
+        # Multiple direct checkout URL formats to try
+        self.direct_checkout_urls = [
+            f"{self.base_url}/cart/{self.variant_id}:2",  # Using variant ID
+            f"{self.base_url}/cart/add?id={self.variant_id}&quantity=2",  # Add to cart URL
+            f"{self.base_url}/cart/{self.product_handle}:2",  # Using product handle
+            f"{self.base_url}/products/{self.product_handle}",  # Fallback to product page
+        ]
         
         # Proxy management
         self.proxy_url = None
@@ -682,7 +688,6 @@ class ShopifyKauffmanCheckout:
         self.session_token = None
         self.graphql_session_token = None
         self.receipt_id = None
-        self.variant_id = "46767629271319"  # Postcard variant ID from captured data
         self.product_id = "8667052441879"    # Product ID from captured data
         self.stable_id = None
         self.queue_token = None
@@ -790,53 +795,76 @@ class ShopifyKauffmanCheckout:
         return f"{self.checkout_token}-{timestamp}"
 
     async def direct_checkout_access(self):
-        """Step 1: Directly access checkout with product pre-added"""
-        self.step(1, "DIRECT CHECKOUT", f"Accessing checkout directly with 2 x Postcard")
+        """Step 1: Try multiple direct checkout URLs to access checkout with product pre-added"""
+        self.step(1, "DIRECT CHECKOUT", "Attempting direct checkout access with 2 x Postcard")
         
-        try:
-            resp = await self.client.get(self.direct_checkout_url, headers=self.headers, timeout=25, follow_redirects=True)
+        # Try each URL format until one works
+        for i, url in enumerate(self.direct_checkout_urls):
+            self.logger.data_extracted(f"Attempt {i+1}", url, "Trying URL")
             
-            if resp.status_code != 200:
-                self.logger.error_log("CHECKOUT_PAGE", f"Failed: {resp.status_code}")
-                return False, f"Failed to access checkout: {resp.status_code}"
+            try:
+                resp = await self.client.get(url, headers=self.headers, timeout=25, follow_redirects=True)
+                
+                if resp.status_code == 200:
+                    # Success! Get the final URL after redirects
+                    current_url = str(resp.url)
+                    self.checkout_token = self.extract_checkout_token(current_url)
+                    
+                    # Also check response body for token
+                    if not self.checkout_token and resp.text:
+                        body_token = self.extract_checkout_token(resp.text)
+                        if body_token:
+                            self.checkout_token = body_token
+                    
+                    if self.checkout_token:
+                        self.logger.data_extracted("Checkout Token", self.checkout_token[:15] + "...", f"URL {i+1}")
+                        
+                        # Construct GraphQL session token
+                        self.graphql_session_token = self.construct_graphql_session_token()
+                        self.logger.data_extracted("GraphQL Session Token", self.graphql_session_token, "Constructed")
+                        
+                        # Generate stable ID for merchandise line
+                        self.stable_id = self.generate_uuid()
+                        self.logger.data_extracted("Stable ID", self.stable_id, "Generated")
+                        
+                        return True, current_url
+                    else:
+                        # Found the page but no token - might need to proceed to checkout
+                        if "checkout" in current_url:
+                            # We're on a checkout page, try to extract token again
+                            self.checkout_token = self.extract_checkout_token(current_url)
+                            if self.checkout_token:
+                                self.logger.data_extracted("Checkout Token", self.checkout_token[:15] + "...", "Checkout URL")
+                                self.graphql_session_token = self.construct_graphql_session_token()
+                                self.stable_id = self.generate_uuid()
+                                return True, current_url
+                
+                # If this is the last attempt and still failing, continue to next
+                if i == len(self.direct_checkout_urls) - 1:
+                    self.logger.error_log("CHECKOUT_PAGE", f"All URL attempts failed. Last status: {resp.status_code}")
+                    return False, f"CHECKOUT_ACCESS_FAILED"
+                    
+            except httpx.ProxyError as e:
+                self.logger.error_log("PROXY", f"Proxy error on attempt {i+1}: {str(e)}")
+                if i == len(self.direct_checkout_urls) - 1:
+                    mark_proxy_failed(self.proxy_url)
+                    self.proxy_status = "Dead 🚫"
+                    return False, "PROXY_DEAD"
+                    
+            except httpx.TimeoutException as e:
+                self.logger.error_log("TIMEOUT", f"Timeout on attempt {i+1}: {str(e)}")
+                if i == len(self.direct_checkout_urls) - 1:
+                    return False, "TIMEOUT"
+                    
+            except Exception as e:
+                self.logger.error_log("DIRECT_CHECKOUT", f"Error on attempt {i+1}: {str(e)[:50]}")
+                if i == len(self.direct_checkout_urls) - 1:
+                    return False, f"DIRECT_CHECKOUT_ERROR"
             
-            # Get final URL from redirects
-            current_url = str(resp.url)
-            self.checkout_token = self.extract_checkout_token(current_url)
-            
-            # Also check response body for token
-            if not self.checkout_token and resp.text:
-                body_token = self.extract_checkout_token(resp.text)
-                if body_token:
-                    self.checkout_token = body_token
-            
-            if self.checkout_token:
-                self.logger.data_extracted("Checkout Token", self.checkout_token[:15] + "...", "Direct Checkout URL")
-                
-                # Construct GraphQL session token
-                self.graphql_session_token = self.construct_graphql_session_token()
-                self.logger.data_extracted("GraphQL Session Token", self.graphql_session_token, "Constructed")
-                
-                # Generate stable ID for merchandise line
-                self.stable_id = self.generate_uuid()
-                self.logger.data_extracted("Stable ID", self.stable_id, "Generated")
-                
-                return True, current_url
-            else:
-                self.logger.error_log("CHECKOUT_TOKEN", "No token found in response")
-                return False, "CHECKOUT_TOKEN_ERROR"
-                
-        except httpx.ProxyError as e:
-            self.logger.error_log("PROXY", f"Proxy error on direct checkout: {str(e)}")
-            mark_proxy_failed(self.proxy_url)
-            self.proxy_status = "Dead 🚫"
-            return False, "PROXY_DEAD"
-        except httpx.TimeoutException as e:
-            self.logger.error_log("TIMEOUT", f"Timeout on direct checkout: {str(e)}")
-            return False, "TIMEOUT"
-        except Exception as e:
-            self.logger.error_log("DIRECT_CHECKOUT", str(e))
-            return False, f"Direct checkout error: {str(e)[:50]}"
+            # Small delay between attempts
+            await asyncio.sleep(0.5)
+        
+        return False, "CHECKOUT_ACCESS_FAILED"
 
     async def get_session_token(self):
         """Step 2: Extract session token from checkout page"""
@@ -844,7 +872,7 @@ class ShopifyKauffmanCheckout:
         
         checkout_headers = {
             **self.headers,
-            'referer': self.direct_checkout_url,
+            'referer': self.direct_checkout_urls[0],
             'sec-fetch-site': 'same-origin'
         }
         
