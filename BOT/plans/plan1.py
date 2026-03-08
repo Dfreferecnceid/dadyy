@@ -23,6 +23,7 @@ def activate_plus_plan(user_id: str, expires_at: str = None):
     - If expires_at is provided: Temporary plan (gift code)"""
     
     try:
+        # Load users
         users = load_users()
         user_id_str = str(user_id)
         
@@ -33,11 +34,10 @@ def activate_plus_plan(user_id: str, expires_at: str = None):
         user = users[user_id_str]
         
         # Get current plan info
-        plan = user.get("plan", {})
-        if not plan:
-            plan = {}
-            user["plan"] = plan
+        if "plan" not in user:
+            user["plan"] = {}
             
+        plan = user["plan"]
         current_plan = plan.get("plan", "Free")
         current_expiry = plan.get("expires_at")
         current_role = user.get("role", "Free")
@@ -46,7 +46,7 @@ def activate_plus_plan(user_id: str, expires_at: str = None):
         print(f"[DEBUG] Current plan: {current_plan}, Role: {current_role}, Expiry: {current_expiry}")
         print(f"[DEBUG] New expiry: {expires_at}")
         
-        # CRITICAL CHECK: If user already has an ACTIVE plan (not Free) and it's not expired
+        # CRITICAL CHECK: If user already has an ACTIVE plan
         if current_plan != "Free" or current_role != "Free":
             
             # If this is a gift code redemption (expires_at is provided)
@@ -58,29 +58,30 @@ def activate_plus_plan(user_id: str, expires_at: str = None):
                     return "already_premium_permanent"
                 
                 # Check if user has active temporary plan
-                try:
-                    now = datetime.now()
-                    expiry_time = datetime.strptime(current_expiry, "%Y-%m-%d %H:%M:%S")
-                    
-                    if now < expiry_time:
-                        # Plan is still active
-                        print(f"[DEBUG] User has active temporary plan until {current_expiry}")
-                        return "already_active"
-                    else:
-                        # Plan has expired - allow redemption
-                        print(f"[DEBUG] User's plan expired on {current_expiry}, allowing redemption")
-                        # Continue with activation
+                if current_expiry:
+                    try:
+                        now = datetime.now()
+                        expiry_time = datetime.strptime(current_expiry, "%Y-%m-%d %H:%M:%S")
+                        
+                        if now < expiry_time:
+                            # Plan is still active
+                            print(f"[DEBUG] User has active temporary plan until {current_expiry}")
+                            return "already_active"
+                        else:
+                            # Plan has expired - allow redemption
+                            print(f"[DEBUG] User's plan expired on {current_expiry}, allowing redemption")
+                            # Continue with activation
+                            pass
+                    except Exception as e:
+                        print(f"[DEBUG] Error checking expiry: {e}")
+                        # If expiry date is invalid, treat as expired and allow redemption
                         pass
-                except Exception as e:
-                    print(f"[DEBUG] Error checking expiry: {e}")
-                    # If expiry date is invalid, treat as expired and allow redemption
-                    pass
         
         # If we get here, user can be upgraded
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        # Add credits
-        current_credits = user.get("plan", {}).get("credits", "0")
+        # Get current credits
+        current_credits = plan.get("credits", "0")
         if current_credits != "∞":
             try:
                 current_credits = int(current_credits)
@@ -90,17 +91,17 @@ def activate_plus_plan(user_id: str, expires_at: str = None):
         else:
             new_credits = "∞"
 
-        # Update user data - CRITICAL: This must save properly
-        user["plan"].update({
-            "plan": PLAN_NAME,
-            "activated_at": now,
-            "expires_at": expires_at,  # Could be None (permanent) or date (temporary)
-            "antispam": PLUS_ANTISPAM,
-            "badge": PLAN_BADGE,
-            "credits": str(new_credits),
-            "private": "on",
-            "mlimit": PLUS_MLIMIT
-        })
+        # CRITICAL: Update user data - THIS MUST SAVE PROPERLY
+        user["plan"]["plan"] = PLAN_NAME
+        user["plan"]["activated_at"] = now
+        user["plan"]["expires_at"] = expires_at  # Could be None (permanent) or date (temporary)
+        user["plan"]["antispam"] = PLUS_ANTISPAM
+        user["plan"]["badge"] = PLAN_BADGE
+        user["plan"]["credits"] = str(new_credits)
+        user["plan"]["private"] = "on"
+        user["plan"]["mlimit"] = PLUS_MLIMIT
+        
+        # CRITICAL: Update user role
         user["role"] = PLAN_NAME
         
         # Increment keyredeem count
@@ -110,16 +111,25 @@ def activate_plus_plan(user_id: str, expires_at: str = None):
         
         # CRITICAL: Save users immediately
         save_users(users)
+        print(f"[DEBUG] Users saved to {USERS_FILE}")
         
-        # Verify the save worked
+        # CRITICAL: Verify the save worked by reloading
         verification = load_users()
         if user_id_str in verification:
             saved_plan = verification[user_id_str].get("plan", {}).get("plan", "Unknown")
             saved_expiry = verification[user_id_str].get("plan", {}).get("expires_at")
-            print(f"[DEBUG] Verification - Saved plan: {saved_plan}, Expiry: {saved_expiry}")
-        
-        print(f"[DEBUG] Plus plan activated successfully for user {user_id_str}")
-        print(f"[DEBUG] New plan: {user['plan']['plan']}, Expiry: {user['plan']['expires_at']}")
+            saved_role = verification[user_id_str].get("role", "Unknown")
+            print(f"[DEBUG] VERIFICATION AFTER SAVE:")
+            print(f"[DEBUG]   - Plan: {saved_plan}")
+            print(f"[DEBUG]   - Expiry: {saved_expiry}")
+            print(f"[DEBUG]   - Role: {saved_role}")
+            
+            if saved_plan == PLAN_NAME:
+                print(f"[DEBUG] ✓ Plan saved successfully!")
+            else:
+                print(f"[DEBUG] ✗ Plan save FAILED! Expected {PLAN_NAME}, got {saved_plan}")
+        else:
+            print(f"[DEBUG] ✗ User {user_id_str} not found in verification!")
         
         return True
         
@@ -198,17 +208,16 @@ async def check_and_expire_plans(app: Client):
                         try:
                             expiry_time = datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S")
                             if now >= expiry_time:
+                                print(f"[DEBUG] Expiring plan for user {user_id}")
                                 # Revert to Free plan
-                                user["plan"].update({
-                                    "plan": "Free",
-                                    "activated_at": user.get("registered_at", plan.get("activated_at", now.strftime("%Y-%m-%d %H:%M:%S"))),
-                                    "expires_at": None,
-                                    "antispam": DEFAULT_ANTISPAM,
-                                    "mlimit": DEFAULT_MLIMIT,
-                                    "badge": DEFAULT_BADGE,
-                                    "credits": "100",
-                                    "private": "off"
-                                })
+                                user["plan"]["plan"] = "Free"
+                                user["plan"]["activated_at"] = user.get("registered_at", plan.get("activated_at", now.strftime("%Y-%m-%d %H:%M:%S")))
+                                user["plan"]["expires_at"] = None
+                                user["plan"]["antispam"] = DEFAULT_ANTISPAM
+                                user["plan"]["mlimit"] = DEFAULT_MLIMIT
+                                user["plan"]["badge"] = DEFAULT_BADGE
+                                user["plan"]["credits"] = "100"
+                                user["plan"]["private"] = "off"
                                 user["role"] = "Free"
                                 user["last_credit_reset"] = now.strftime("%Y-%m-%d %H:%M:%S")
                                 changed = True
@@ -233,6 +242,7 @@ async def check_and_expire_plans(app: Client):
 
             if changed:
                 save_users(users)
+                print(f"[DEBUG] Expired plans saved to {USERS_FILE}")
 
         except Exception as e:
             print(f"[ERROR] in check_and_expire_plans: {e}")
