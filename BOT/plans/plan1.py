@@ -87,62 +87,75 @@ def activate_plus_plan(user_id: str, expires_at: str = None):
         else:
             new_credits = "∞"
 
-        # CRITICAL: Create a completely new plan dictionary to avoid reference issues
-        new_plan = {
-            "plan": PLAN_NAME,
-            "activated_at": now,
-            "expires_at": expires_at,
-            "antispam": PLUS_ANTISPAM,
-            "badge": PLAN_BADGE,
-            "credits": str(new_credits),
-            "private": "on",
-            "mlimit": PLUS_MLIMIT
-        }
+        # Get current keyredeem count
+        current_keyredeem = user.get("plan", {}).get("keyredeem", 0)
         
-        # Copy existing keyredeem if it exists
-        if "keyredeem" in user.get("plan", {}):
-            new_plan["keyredeem"] = user["plan"]["keyredeem"] + 1
-        else:
-            new_plan["keyredeem"] = 1
+        # DIRECT FILE WRITING APPROACH - Read file again to ensure we have latest data
+        try:
+            with open(USERS_FILE, 'r') as f:
+                users_direct = json.load(f)
+        except:
+            users_direct = users
+        
+        if user_id_str not in users_direct:
+            users_direct[user_id_str] = user
+        
+        # Update the user data DIRECTLY in the dictionary
+        if "plan" not in users_direct[user_id_str]:
+            users_direct[user_id_str]["plan"] = {}
+        
+        # Set each field individually
+        users_direct[user_id_str]["plan"]["plan"] = PLAN_NAME
+        users_direct[user_id_str]["plan"]["activated_at"] = now
+        users_direct[user_id_str]["plan"]["expires_at"] = expires_at
+        users_direct[user_id_str]["plan"]["antispam"] = PLUS_ANTISPAM
+        users_direct[user_id_str]["plan"]["badge"] = PLAN_BADGE
+        users_direct[user_id_str]["plan"]["credits"] = str(new_credits)
+        users_direct[user_id_str]["plan"]["private"] = "on"
+        users_direct[user_id_str]["plan"]["mlimit"] = PLUS_MLIMIT
+        users_direct[user_id_str]["plan"]["keyredeem"] = current_keyredeem + 1
+        users_direct[user_id_str]["role"] = PLAN_NAME
+        
+        # Write DIRECTLY to file
+        try:
+            with open(USERS_FILE, 'w') as f:
+                json.dump(users_direct, f, indent=4)
+            print(f"[DEBUG] Successfully wrote to {USERS_FILE}")
+        except Exception as e:
+            print(f"[ERROR] Failed to write to {USERS_FILE}: {e}")
+            return False
+        
+        # Verify the write by reading back
+        try:
+            with open(USERS_FILE, 'r') as f:
+                verification = json.load(f)
             
-        # Copy other existing plan data if needed
-        if "mlimit" in user.get("plan", {}):
-            pass  # Already set above
-        
-        # Replace the entire plan dictionary
-        user["plan"] = new_plan
-        
-        # Update role
-        user["role"] = PLAN_NAME
-        
-        # CRITICAL: Save users immediately
-        save_users(users)
-        print(f"[DEBUG] Users saved to {USERS_FILE}")
-        
-        # CRITICAL: Verify the save worked by reloading
-        verification = load_users()
-        if user_id_str in verification:
-            saved_plan = verification[user_id_str].get("plan", {}).get("plan", "Unknown")
-            saved_expiry = verification[user_id_str].get("plan", {}).get("expires_at")
-            saved_role = verification[user_id_str].get("role", "Unknown")
-            saved_credits = verification[user_id_str].get("plan", {}).get("credits", "Unknown")
-            saved_keyredeem = verification[user_id_str].get("plan", {}).get("keyredeem", "Unknown")
-            
-            print(f"[DEBUG] VERIFICATION AFTER SAVE:")
-            print(f"[DEBUG]   - Plan: {saved_plan}")
-            print(f"[DEBUG]   - Expiry: {saved_expiry}")
-            print(f"[DEBUG]   - Role: {saved_role}")
-            print(f"[DEBUG]   - Credits: {saved_credits}")
-            print(f"[DEBUG]   - Key Redeemed: {saved_keyredeem}")
-            
-            if saved_plan == PLAN_NAME:
-                print(f"[DEBUG] ✓ Plan saved successfully!")
-                return True
+            if user_id_str in verification:
+                saved_plan = verification[user_id_str].get("plan", {}).get("plan", "Unknown")
+                saved_expiry = verification[user_id_str].get("plan", {}).get("expires_at")
+                saved_role = verification[user_id_str].get("role", "Unknown")
+                saved_credits = verification[user_id_str].get("plan", {}).get("credits", "Unknown")
+                saved_keyredeem = verification[user_id_str].get("plan", {}).get("keyredeem", "Unknown")
+                
+                print(f"[DEBUG] VERIFICATION AFTER DIRECT WRITE:")
+                print(f"[DEBUG]   - Plan: {saved_plan}")
+                print(f"[DEBUG]   - Expiry: {saved_expiry}")
+                print(f"[DEBUG]   - Role: {saved_role}")
+                print(f"[DEBUG]   - Credits: {saved_credits}")
+                print(f"[DEBUG]   - Key Redeemed: {saved_keyredeem}")
+                
+                if saved_plan == PLAN_NAME:
+                    print(f"[DEBUG] ✓ Plan saved successfully!")
+                    return True
+                else:
+                    print(f"[DEBUG] ✗ Plan save FAILED! Expected {PLAN_NAME}, got {saved_plan}")
+                    return False
             else:
-                print(f"[DEBUG] ✗ Plan save FAILED! Expected {PLAN_NAME}, got {saved_plan}")
+                print(f"[DEBUG] ✗ User {user_id_str} not found in verification!")
                 return False
-        else:
-            print(f"[DEBUG] ✗ User {user_id_str} not found in verification!")
+                
+        except Exception as e:
+            print(f"[ERROR] Verification failed: {e}")
             return False
         
     except Exception as e:
@@ -221,48 +234,53 @@ async def check_and_expire_plans(app: Client):
                             expiry_time = datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S")
                             if now >= expiry_time:
                                 print(f"[DEBUG] Expiring plan for user {user_id}")
-                                # Create new Free plan dictionary
-                                new_plan = {
-                                    "plan": "Free",
-                                    "activated_at": user.get("registered_at", plan.get("activated_at", now.strftime("%Y-%m-%d %H:%M:%S"))),
-                                    "expires_at": None,
-                                    "antispam": DEFAULT_ANTISPAM,
-                                    "mlimit": DEFAULT_MLIMIT,
-                                    "badge": DEFAULT_BADGE,
-                                    "credits": "100",
-                                    "private": "off"
-                                }
                                 
-                                # Copy keyredeem if it exists
-                                if "keyredeem" in plan:
-                                    new_plan["keyredeem"] = plan["keyredeem"]
-                                
-                                user["plan"] = new_plan
-                                user["role"] = "Free"
-                                user["last_credit_reset"] = now.strftime("%Y-%m-%d %H:%M:%S")
-                                changed = True
-
-                                # Notify the user
+                                # Read file directly to ensure latest data
                                 try:
-                                    await app.send_message(
-                                        int(user_id),
-                                        """<pre>Notification ❗️</pre>
+                                    with open(USERS_FILE, 'r') as f:
+                                        users_direct = json.load(f)
+                                except:
+                                    users_direct = users
+                                
+                                if user_id in users_direct:
+                                    # Update the user
+                                    if "plan" not in users_direct[user_id]:
+                                        users_direct[user_id]["plan"] = {}
+                                    
+                                    users_direct[user_id]["plan"]["plan"] = "Free"
+                                    users_direct[user_id]["plan"]["activated_at"] = user.get("registered_at", plan.get("activated_at", now.strftime("%Y-%m-%d %H:%M:%S")))
+                                    users_direct[user_id]["plan"]["expires_at"] = None
+                                    users_direct[user_id]["plan"]["antispam"] = DEFAULT_ANTISPAM
+                                    users_direct[user_id]["plan"]["mlimit"] = DEFAULT_MLIMIT
+                                    users_direct[user_id]["plan"]["badge"] = DEFAULT_BADGE
+                                    users_direct[user_id]["plan"]["credits"] = "100"
+                                    users_direct[user_id]["plan"]["private"] = "off"
+                                    users_direct[user_id]["role"] = "Free"
+                                    users_direct[user_id]["last_credit_reset"] = now.strftime("%Y-%m-%d %H:%M:%S")
+                                    
+                                    # Write back
+                                    with open(USERS_FILE, 'w') as f:
+                                        json.dump(users_direct, f, indent=4)
+                                    
+                                    changed = True
+
+                                    # Notify the user
+                                    try:
+                                        await app.send_message(
+                                            int(user_id),
+                                            """<pre>Notification ❗️</pre>
 ━━━━━━━━━━━━━━
 <b>~ Your Gift Code Plan Has Expired</b>
 <b>~ You are now back to Free plan</b>
 <b>~ You can now redeem another gift code</b>
 <b>~ Contact Owner for new codes</b>
 ━━━━━━━━━━━━━━"""
-                                    )
-                                except:
-                                    pass
+                                        )
+                                    except:
+                                        pass
 
                         except Exception as e:
                             print(f"Error checking expiry for user {user_id}: {e}")
-
-            if changed:
-                save_users(users)
-                print(f"[DEBUG] Expired plans saved to {USERS_FILE}")
 
         except Exception as e:
             print(f"[ERROR] in check_and_expire_plans: {e}")
