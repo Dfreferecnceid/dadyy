@@ -34,12 +34,8 @@ def activate_plus_plan(user_id: str, expires_at: str = None):
         user = users[user_id_str]
         
         # Get current plan info
-        if "plan" not in user:
-            user["plan"] = {}
-            
-        plan = user["plan"]
-        current_plan = plan.get("plan", "Free")
-        current_expiry = plan.get("expires_at")
+        current_plan = user.get("plan", {}).get("plan", "Free")
+        current_expiry = user.get("plan", {}).get("expires_at")
         current_role = user.get("role", "Free")
         
         print(f"[DEBUG] Activating Plus for user {user_id_str}")
@@ -81,7 +77,7 @@ def activate_plus_plan(user_id: str, expires_at: str = None):
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         # Get current credits
-        current_credits = plan.get("credits", "0")
+        current_credits = user.get("plan", {}).get("credits", "0")
         if current_credits != "∞":
             try:
                 current_credits = int(current_credits)
@@ -91,23 +87,33 @@ def activate_plus_plan(user_id: str, expires_at: str = None):
         else:
             new_credits = "∞"
 
-        # CRITICAL: Update user data - THIS MUST SAVE PROPERLY
-        user["plan"]["plan"] = PLAN_NAME
-        user["plan"]["activated_at"] = now
-        user["plan"]["expires_at"] = expires_at  # Could be None (permanent) or date (temporary)
-        user["plan"]["antispam"] = PLUS_ANTISPAM
-        user["plan"]["badge"] = PLAN_BADGE
-        user["plan"]["credits"] = str(new_credits)
-        user["plan"]["private"] = "on"
-        user["plan"]["mlimit"] = PLUS_MLIMIT
+        # CRITICAL: Create a completely new plan dictionary to avoid reference issues
+        new_plan = {
+            "plan": PLAN_NAME,
+            "activated_at": now,
+            "expires_at": expires_at,
+            "antispam": PLUS_ANTISPAM,
+            "badge": PLAN_BADGE,
+            "credits": str(new_credits),
+            "private": "on",
+            "mlimit": PLUS_MLIMIT
+        }
         
-        # CRITICAL: Update user role
+        # Copy existing keyredeem if it exists
+        if "keyredeem" in user.get("plan", {}):
+            new_plan["keyredeem"] = user["plan"]["keyredeem"] + 1
+        else:
+            new_plan["keyredeem"] = 1
+            
+        # Copy other existing plan data if needed
+        if "mlimit" in user.get("plan", {}):
+            pass  # Already set above
+        
+        # Replace the entire plan dictionary
+        user["plan"] = new_plan
+        
+        # Update role
         user["role"] = PLAN_NAME
-        
-        # Increment keyredeem count
-        if "keyredeem" not in user["plan"]:
-            user["plan"]["keyredeem"] = 0
-        user["plan"]["keyredeem"] = user["plan"].get("keyredeem", 0) + 1
         
         # CRITICAL: Save users immediately
         save_users(users)
@@ -119,19 +125,25 @@ def activate_plus_plan(user_id: str, expires_at: str = None):
             saved_plan = verification[user_id_str].get("plan", {}).get("plan", "Unknown")
             saved_expiry = verification[user_id_str].get("plan", {}).get("expires_at")
             saved_role = verification[user_id_str].get("role", "Unknown")
+            saved_credits = verification[user_id_str].get("plan", {}).get("credits", "Unknown")
+            saved_keyredeem = verification[user_id_str].get("plan", {}).get("keyredeem", "Unknown")
+            
             print(f"[DEBUG] VERIFICATION AFTER SAVE:")
             print(f"[DEBUG]   - Plan: {saved_plan}")
             print(f"[DEBUG]   - Expiry: {saved_expiry}")
             print(f"[DEBUG]   - Role: {saved_role}")
+            print(f"[DEBUG]   - Credits: {saved_credits}")
+            print(f"[DEBUG]   - Key Redeemed: {saved_keyredeem}")
             
             if saved_plan == PLAN_NAME:
                 print(f"[DEBUG] ✓ Plan saved successfully!")
+                return True
             else:
                 print(f"[DEBUG] ✗ Plan save FAILED! Expected {PLAN_NAME}, got {saved_plan}")
+                return False
         else:
             print(f"[DEBUG] ✗ User {user_id_str} not found in verification!")
-        
-        return True
+            return False
         
     except Exception as e:
         print(f"[ERROR] in activate_plus_plan: {e}")
@@ -209,15 +221,23 @@ async def check_and_expire_plans(app: Client):
                             expiry_time = datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S")
                             if now >= expiry_time:
                                 print(f"[DEBUG] Expiring plan for user {user_id}")
-                                # Revert to Free plan
-                                user["plan"]["plan"] = "Free"
-                                user["plan"]["activated_at"] = user.get("registered_at", plan.get("activated_at", now.strftime("%Y-%m-%d %H:%M:%S")))
-                                user["plan"]["expires_at"] = None
-                                user["plan"]["antispam"] = DEFAULT_ANTISPAM
-                                user["plan"]["mlimit"] = DEFAULT_MLIMIT
-                                user["plan"]["badge"] = DEFAULT_BADGE
-                                user["plan"]["credits"] = "100"
-                                user["plan"]["private"] = "off"
+                                # Create new Free plan dictionary
+                                new_plan = {
+                                    "plan": "Free",
+                                    "activated_at": user.get("registered_at", plan.get("activated_at", now.strftime("%Y-%m-%d %H:%M:%S"))),
+                                    "expires_at": None,
+                                    "antispam": DEFAULT_ANTISPAM,
+                                    "mlimit": DEFAULT_MLIMIT,
+                                    "badge": DEFAULT_BADGE,
+                                    "credits": "100",
+                                    "private": "off"
+                                }
+                                
+                                # Copy keyredeem if it exists
+                                if "keyredeem" in plan:
+                                    new_plan["keyredeem"] = plan["keyredeem"]
+                                
+                                user["plan"] = new_plan
                                 user["role"] = "Free"
                                 user["last_credit_reset"] = now.strftime("%Y-%m-%d %H:%M:%S")
                                 changed = True
