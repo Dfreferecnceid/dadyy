@@ -656,24 +656,27 @@ async def gc_command(client: Client, message: Message):
     codes = generate_redeem_code(days, num_codes)
     hours_total = days * 24
 
-    # Build response with exact requested format
+    # Build response with all codes listed first - FIXED FORMAT
     response = "<pre>✅ Redeem Codes Generated</pre>\n"
     response += "━━━━━━━━━━━━━\n"
-
-    for code, expiration_date in codes:
+    
+    # List all codes first
+    for code, _ in codes:
         response += f"⟐ Code: <code>{code}</code>\n"
-        response += "\n"
-        response += f"⟐ Expiration: <code>{expiration_date}</code>\n"
-        response += f"⟐ Valid For: <code>{hours_total} hours ({days} days)</code>\n"
-        response += f"⟐ Total Codes: <code>{num_codes} codes generated</code>\n"
-        response += "━━━━━━━━━━━━━\n"
-        response += "<b>~ How to Redeem Your Code:</b>\n"
-        response += f"# User uses /redeem &lt;your_code&gt;\n"
-        response += f"# Each code valid for <code>{hours_total} hours</code>\n"
-        response += "━━━━━━━━━━━━━\n"
-        response += "<b>~ Rules:</b>\n"
-        response += "! One gift code per user only\n"
-        response += "! Premium users cannot redeem codes\n"
+    
+    response += "\n"
+    # Add expiration info once
+    response += f"⟐ Expiration: <code>{codes[0][1]}</code>\n"
+    response += f"⟐ Valid For: <code>{hours_total} hours ({days} days)</code>\n"
+    response += f"⟐ Total Codes: <code>{num_codes} codes generated</code>\n"
+    response += "━━━━━━━━━━━━━\n"
+    response += "<b>~ How to Redeem Your Code:</b>\n"
+    response += f"# User uses /redeem &lt;your_code&gt;\n"
+    response += f"# Each code valid for <code>{hours_total} hours</code>\n"
+    response += "━━━━━━━━━━━━━\n"
+    response += "<b>~ Rules:</b>\n"
+    response += "! One gift code per user only\n"
+    response += "! Premium users cannot redeem codes\n"
 
     await message.reply(response)
 
