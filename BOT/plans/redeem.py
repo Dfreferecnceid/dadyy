@@ -6,7 +6,6 @@ import os
 from pyrogram import Client, filters
 from pyrogram.types import Message
 from BOT.helper.start import USERS_FILE, load_users, save_users, load_owner_id
-from BOT.plans.plan1 import activate_plus_plan
 from BOT.helper.Admins import (
     is_command_disabled, get_command_offline_message,
     is_user_restricted_for_command
@@ -14,25 +13,29 @@ from BOT.helper.Admins import (
 from BOT.helper.permissions import auth_and_free_restricted
 
 user_redeem_cooldowns = {}
-REDEEM_DELAY_SECONDS = 90  # 1 minute 30 seconds
-REDEEM_PLAN_NAME = "Plus"  # Gift codes give Plus plan
+REDEEM_DELAY_SECONDS = 90
+REDEEM_PLAN_NAME = "Plus"
 REDEEM_BADGE = "🎁"
 DEFAULT_BADGE = "🧿"
 DEFAULT_ANTISPAM = 15
 DEFAULT_MLIMIT = 5
 
+# Plan benefits
+PLUS_ANTISPAM = 13
+PLUS_CREDIT_BONUS = 200
+PLUS_MLIMIT = 10
+PLUS_BADGE = "💠"
+PLUS_PRIVATE = "on"
+
 OWNER_ID = load_owner_id()
-GC_FILE_TXT = "DATA/gift_codes.txt"  # Old txt format
-GC_FILE_JSON = "DATA/gift_codes.json"  # New JSON format
+GC_FILE_TXT = "DATA/gift_codes.txt"
+GC_FILE_JSON = "DATA/gift_codes.json"
 
 def load_gift_codes():
-    """Load gift codes from JSON file with proper structure"""
+    """Load gift codes from JSON file"""
     gift_codes = {}
-
-    # Ensure DATA directory exists
     os.makedirs("DATA", exist_ok=True)
 
-    # Try to load from JSON file first
     if os.path.exists(GC_FILE_JSON):
         try:
             with open(GC_FILE_JSON, 'r') as f:
@@ -40,10 +43,8 @@ def load_gift_codes():
             return gift_codes
         except Exception as e:
             print(f"Error loading JSON gift codes: {e}")
-            # If JSON is corrupted, try to convert from txt
             return convert_txt_to_json()
 
-    # If JSON doesn't exist, try to convert from txt
     return convert_txt_to_json()
 
 def convert_txt_to_json():
@@ -51,7 +52,6 @@ def convert_txt_to_json():
     gift_codes = {}
 
     if not os.path.exists(GC_FILE_TXT):
-        # Create empty JSON file
         save_gift_codes(gift_codes)
         return gift_codes
 
@@ -72,7 +72,6 @@ def convert_txt_to_json():
                     "plan": "Plus"
                 }
 
-        # Save as JSON and remove old txt file
         save_gift_codes(gift_codes)
         try:
             os.remove(GC_FILE_TXT)
@@ -86,20 +85,9 @@ def convert_txt_to_json():
 
 def save_gift_codes(gift_codes):
     """Save gift codes to JSON file"""
-    # Ensure DATA directory exists
     os.makedirs("DATA", exist_ok=True)
-
     with open(GC_FILE_JSON, 'w') as f:
         json.dump(gift_codes, f, indent=4)
-
-def user_has_redeemed_code(user_id: str) -> bool:
-    """Check if user has already redeemed any gift code"""
-    gift_codes = load_gift_codes()
-
-    for code, data in gift_codes.items():
-        if data.get("used_by") == user_id:
-            return True
-    return False
 
 def get_user_redeemed_codes(user_id: str):
     """Get all codes redeemed by a user"""
@@ -117,85 +105,31 @@ def get_user_redeemed_codes(user_id: str):
 
     return user_codes
 
-def is_user_premium(user_id: str) -> bool:
-    """Check if user already has premium plan (not Free)"""
-    users = load_users()
-    user = users.get(user_id)
-
-    if not user:
-        return False
-
-    user_plan = user.get("plan", {}).get("plan", "Free")
-    user_role = user.get("role", "Free")
-    
-    # Check if user has any non-Free plan
-    if user_plan != "Free" or user_role != "Free":
-        return True
-    
-    # Check if user has active temporary plan
-    expires_at = user.get("plan", {}).get("expires_at")
-    if expires_at:
-        try:
-            now = datetime.now()
-            expiry_dt = datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S")
-            if now <= expiry_dt:
-                return True  # Active temporary plan
-        except:
-            pass
-    
-    return False
-
-def is_user_free(user_id: str) -> bool:
-    """Check if user is currently on Free plan with no active plans"""
-    users = load_users()
-    user = users.get(user_id)
-
-    if not user:
-        return False
-
-    user_plan = user.get("plan", {}).get("plan", "Free")
-    user_role = user.get("role", "Free")
-    
-    # If plan is not Free, user is not free
-    if user_plan != "Free" or user_role != "Free":
-        return False
-    
-    # Check if user has active temporary plan
-    expires_at = user.get("plan", {}).get("expires_at")
-    if expires_at:
-        try:
-            now = datetime.now()
-            expiry_dt = datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S")
-            if now <= expiry_dt:
-                return False  # Has active temporary plan
-        except:
-            pass
-    
-    return True
-
 def has_active_plan(user_id: str) -> bool:
-    """Check if user has any active plan (permanent or temporary not expired)"""
-    users = load_users()
-    user = users.get(user_id)
+    """Check if user has any active plan"""
+    try:
+        with open(USERS_FILE, 'r') as f:
+            users = json.load(f)
+    except:
+        return False
 
+    user = users.get(str(user_id))
     if not user:
         return False
 
     user_plan = user.get("plan", {}).get("plan", "Free")
     user_role = user.get("role", "Free")
     
-    # If user has non-Free plan, they have active plan
     if user_plan != "Free" or user_role != "Free":
         return True
     
-    # Check if user has active temporary plan
     expires_at = user.get("plan", {}).get("expires_at")
     if expires_at:
         try:
             now = datetime.now()
             expiry_dt = datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S")
             if now <= expiry_dt:
-                return True  # Active temporary plan
+                return True
         except:
             pass
     
@@ -203,9 +137,13 @@ def has_active_plan(user_id: str) -> bool:
 
 def get_active_plan_info(user_id: str):
     """Get information about user's active plan"""
-    users = load_users()
-    user = users.get(user_id)
+    try:
+        with open(USERS_FILE, 'r') as f:
+            users = json.load(f)
+    except:
+        return None
     
+    user = users.get(str(user_id))
     if not user:
         return None
     
@@ -220,6 +158,76 @@ def get_active_plan_info(user_id: str):
         "role": role,
         "is_permanent": expires_at is None and plan != "Free"
     }
+
+def upgrade_user_direct(user_id: str, expires_at: str):
+    """Directly upgrade user to Plus plan by writing to file"""
+    try:
+        # Read users file directly
+        with open(USERS_FILE, 'r') as f:
+            users = json.load(f)
+        
+        user_id_str = str(user_id)
+        if user_id_str not in users:
+            print(f"[ERROR] User {user_id_str} not found")
+            return False
+        
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Get current credits
+        current_credits = users[user_id_str].get("plan", {}).get("credits", "0")
+        if current_credits != "∞":
+            try:
+                current_credits = int(current_credits)
+                new_credits = current_credits + PLUS_CREDIT_BONUS
+            except:
+                new_credits = PLUS_CREDIT_BONUS
+        else:
+            new_credits = "∞"
+        
+        # Get current keyredeem
+        current_keyredeem = users[user_id_str].get("plan", {}).get("keyredeem", 0)
+        
+        # DIRECTLY update the user data
+        if "plan" not in users[user_id_str]:
+            users[user_id_str]["plan"] = {}
+        
+        # Set all plan fields
+        users[user_id_str]["plan"]["plan"] = "Plus"
+        users[user_id_str]["plan"]["activated_at"] = now
+        users[user_id_str]["plan"]["expires_at"] = expires_at
+        users[user_id_str]["plan"]["antispam"] = PLUS_ANTISPAM
+        users[user_id_str]["plan"]["badge"] = PLUS_BADGE
+        users[user_id_str]["plan"]["credits"] = str(new_credits)
+        users[user_id_str]["plan"]["private"] = PLUS_PRIVATE
+        users[user_id_str]["plan"]["mlimit"] = PLUS_MLIMIT
+        users[user_id_str]["plan"]["keyredeem"] = current_keyredeem + 1
+        
+        # Update role
+        users[user_id_str]["role"] = "Plus"
+        
+        # Write directly back to file
+        with open(USERS_FILE, 'w') as f:
+            json.dump(users, f, indent=4)
+        
+        print(f"[DEBUG] Successfully upgraded user {user_id_str} to Plus plan")
+        print(f"[DEBUG] New plan data: {users[user_id_str]['plan']}")
+        
+        # Verify the write
+        with open(USERS_FILE, 'r') as f:
+            verification = json.load(f)
+        
+        if user_id_str in verification:
+            saved_plan = verification[user_id_str].get("plan", {}).get("plan", "Unknown")
+            print(f"[DEBUG] Verification - saved plan: {saved_plan}")
+            return saved_plan == "Plus"
+        
+        return True
+        
+    except Exception as e:
+        print(f"[ERROR] in upgrade_user_direct: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
 
 @Client.on_message(filters.command("redeem"))
 @auth_and_free_restricted
@@ -341,19 +349,13 @@ async def redeem_code_command(client: Client, message: Message):
             )
             return
 
-        # Calculate days remaining
         days_remaining = (expiry_time - current_time).days
         hours_remaining = int((expiry_time - current_time).seconds / 3600)
-        if days_remaining < 0:
-            days_remaining = 0
-            hours_remaining = 0
     except Exception as e:
-        # If date parsing fails, assume code is valid but can't calculate days
         days_remaining = "Unknown"
         hours_remaining = "Unknown"
-        expiry_time = current_time + timedelta(days=30)  # Default fallback
 
-    # IMPORTANT: Check if user already has an active plan
+    # Check if user already has an active plan
     if has_active_plan(user_id):
         plan_info = get_active_plan_info(user_id)
         
@@ -364,13 +366,11 @@ async def redeem_code_command(client: Client, message: Message):
 ⟐ <b>Message</b>: You have a permanent {plan_info['plan']} plan.
 ⟐ <b>Current Plan</b>: <code>{plan_info['plan']}</code>
 ⟐ <b>Rule</b>: Permanent plan users cannot redeem gift codes
-━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Gift codes are for FREE users only</code>""",
+━━━━━━━━━━━━━""",
                 reply_to_message_id=message.id
             )
             return
         else:
-            # User has temporary plan - check if still active
             if plan_info['expires_at']:
                 try:
                     now = datetime.now()
@@ -388,54 +388,38 @@ async def redeem_code_command(client: Client, message: Message):
 ⟐ <b>Plan Expires</b>: <code>{plan_info['expires_at']}</code>
 ⟐ <b>Time Remaining</b>: <code>{days_left} days ({hours_left} hours)</code>
 ⟐ <b>Rule</b>: Wait for your current plan to expire before redeeming another code
-━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Users with active plans cannot redeem gift codes</code>""",
+━━━━━━━━━━━━━""",
                             reply_to_message_id=message.id
                         )
                         return
-                except Exception as e:
-                    print(f"[DEBUG] Error checking expiry: {e}")
+                except:
                     pass
 
-    # Upgrade user to Plus plan WITH expiry date
-    print(f"[DEBUG] Calling activate_plus_plan for user {user_id} with expiry {expires_at}")
-    result = activate_plus_plan(user_id, expires_at)
-    print(f"[DEBUG] activate_plus_plan result: {result}")
+    # DIRECTLY upgrade the user WITHOUT using plan1.py
+    print(f"[DEBUG] Attempting to directly upgrade user {user_id}")
+    upgrade_success = upgrade_user_direct(user_id, expires_at)
+    
+    if not upgrade_success:
+        await message.reply(
+            """<pre>❌ Upgrade Failed</pre>
+━━━━━━━━━━━━━
+⟐ <b>Message</b>: Failed to upgrade user. Please contact admin.
+━━━━━━━━━━━━━""",
+            reply_to_message_id=message.id
+        )
+        return
 
-    if result == "already_active":
-        await message.reply(
-            f"""<pre>⚠️ Already Active</pre>
-━━━━━━━━━━━━━
-⟐ <b>Message</b>: You already have an active Plus plan.
-⟐ <b>Expires At</b>: <code>{users[user_id]['plan'].get('expires_at', 'Unknown')}</code>
-⟐ <b>Rule</b>: Wait for your current plan to expire
-━━━━━━━━━━━━━""",
-            reply_to_message_id=message.id
-        )
-        return
-    elif result == "already_premium":
-        await message.reply(
-            """<pre>❌ Already Premium</pre>
-━━━━━━━━━━━━━
-⟐ <b>Message</b>: You already have a premium plan.
-⟐ <b>Rule</b>: Wait for your current plan to expire first
-━━━━━━━━━━━━━""",
-            reply_to_message_id=message.id
-        )
-        return
-    elif result == "already_premium_permanent":
-        await message.reply(
-            """<pre>❌ Permanent Plan User</pre>
-━━━━━━━━━━━━━
-⟐ <b>Message</b>: You have a permanent Plus plan.
-⟐ <b>Rule</b>: Permanent plan users cannot redeem gift codes
-━━━━━━━━━━━━━""",
-            reply_to_message_id=message.id
-        )
-        return
-    elif result:
-        # Successfully upgraded to Plus plan via gift code
-        response = f"""<pre>✅ Gift Code Redeemed Successfully!</pre>
+    # Mark code as used
+    code_data["used"] = True
+    code_data["used_by"] = user_id
+    code_data["used_at"] = current_time.strftime("%Y-%m-%d %H:%M:%S")
+    gift_codes[code] = code_data
+
+    # Save gift codes
+    save_gift_codes(gift_codes)
+
+    # Success message
+    response = f"""<pre>✅ Gift Code Redeemed Successfully!</pre>
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: Gift code <code>{code}</code> redeemed successfully!
 ⟐ <b>Status</b>: Upgraded to Plus Plan (Temporary)
@@ -457,39 +441,6 @@ async def redeem_code_command(client: Client, message: Message):
 • After expiry, you can redeem another code
 
 <b>~ Note:</b> <code>Enjoy your temporary Plus plan benefits!</code>"""
-    else:
-        await message.reply(
-            """<pre>❌ Redeem Failed</pre>
-━━━━━━━━━━━━━
-⟐ <b>Message</b>: Failed to redeem gift code.
-⟐ <b>Possible Reason</b>: User registration issue.
-━━━━━━━━━━━━━""",
-            reply_to_message_id=message.id
-        )
-        return
-
-    # Mark code as used
-    code_data["used"] = True
-    code_data["used_by"] = user_id
-    code_data["used_at"] = current_time.strftime("%Y-%m-%d %H:%M:%S")
-    gift_codes[code] = code_data
-
-    # Update keyredeem count
-    if user_id in users:
-        if "keyredeem" not in users[user_id]["plan"]:
-            users[user_id]["plan"]["keyredeem"] = 0
-        users[user_id]["plan"]["keyredeem"] = users[user_id]["plan"].get("keyredeem", 0) + 1
-
-    # Save data
-    save_users(users)
-    save_gift_codes(gift_codes)
-    
-    # Verify the save
-    verification = load_users()
-    if user_id in verification:
-        saved_plan = verification[user_id].get("plan", {}).get("plan", "Unknown")
-        saved_expiry = verification[user_id].get("plan", {}).get("expires_at")
-        print(f"[DEBUG] Verification after save - Plan: {saved_plan}, Expiry: {saved_expiry}")
 
     await message.reply(response, reply_to_message_id=message.id)
 
@@ -511,7 +462,12 @@ async def mycode_command(client: Client, message: Message):
 ━━━━━━━━━━━━━""")
         return
 
-    users = load_users()
+    try:
+        with open(USERS_FILE, 'r') as f:
+            users = json.load(f)
+    except:
+        users = {}
+
     user_id = str(message.from_user.id)
 
     if user_id not in users:
@@ -531,8 +487,7 @@ async def mycode_command(client: Client, message: Message):
     current_expiry = plan.get("expires_at", "Never (Permanent)" if plan.get("expires_at") is None else plan.get("expires_at"))
     
     # Check if user has any active plan
-    has_active = has_active_plan(user_id)
-    can_redeem = is_user_free(user_id)
+    can_redeem = not has_active_plan(user_id)
 
     # Check if user has redeemed any codes
     user_codes = get_user_redeemed_codes(user_id)
@@ -548,7 +503,7 @@ async def mycode_command(client: Client, message: Message):
 
     if user_codes:
         response += "\n<b>📋 Your Redeemed Codes:</b>\n"
-        for idx, code_info in enumerate(user_codes[:10], 1):  # Show max 10 codes
+        for idx, code_info in enumerate(user_codes[:10], 1):
             response += f"{idx}. <code>{code_info['code']}</code>\n"
             response += f"   └ Used: <code>{code_info['used_at']}</code>\n"
             response += f"   └ Expires: <code>{code_info['expires_at']}</code>\n"
@@ -749,7 +704,7 @@ async def allcodes_command(client: Client, message: Message):
                 else:
                     valid_codes.append((code, data))
             except:
-                valid_codes.append((code, data))  # Assume valid if date parsing fails
+                valid_codes.append((code, data))
 
     response = """<pre>📋 ALL GIFT CODES</pre>
 ━━━━━━━━━━━━━
@@ -764,7 +719,7 @@ async def allcodes_command(client: Client, message: Message):
 
     if valid_codes:
         response += "\n<b>✅ Valid Codes:</b>\n"
-        for code, data in valid_codes[:5]:  # Show first 5 only
+        for code, data in valid_codes[:5]:
             response += f"• <code>{code}</code>\n"
             response += f"  └ Expires: <code>{data['expires_at']}</code>\n"
         if len(valid_codes) > 5:
