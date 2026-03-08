@@ -289,7 +289,7 @@ def get_user_role(user_id):
 # ============ TOOL COMMANDS ============
 
 @Client.on_message(filters.command("status"))
-@auth_and_free_restricted  # Use the new combined decorator
+@auth_and_free_restricted
 async def status_command(client, message):
     # Check if command is disabled
     command_text = message.text.split()[0] if message.text else ""
@@ -341,7 +341,7 @@ async def status_command(client, message):
     await message.reply(response)
 
 @Client.on_message(filters.command("fake"))
-@auth_and_free_restricted  # Use the new combined decorator
+@auth_and_free_restricted
 async def fake_command(client, message):
     # Check if command is disabled
     command_text = message.text.split()[0] if message.text else ""
@@ -408,7 +408,7 @@ async def fake_command(client, message):
         await message.reply(f"<pre>❌ Failed to generate address for: {country_input}</pre>")
 
 @Client.on_message(filters.command("gen"))
-@auth_and_free_restricted  # Use the new combined decorator
+@auth_and_free_restricted
 async def gen_command(client, message):
     # Check if command is disabled
     command_text = message.text.split()[0] if message.text else ""
@@ -558,7 +558,7 @@ async def gen_command(client, message):
         await message.reply(f"<pre>❌ Failed to generate CCs. Error: {str(e)}</pre>")
 
 @Client.on_message(filters.command("bin"))
-@auth_and_free_restricted  # Use the new combined decorator
+@auth_and_free_restricted
 async def bin_command(client, message):
     # Check if command is disabled
     command_text = message.text.split()[0] if message.text else ""
@@ -642,7 +642,7 @@ async def bin_command(client, message):
         await message.reply(f"<pre>❌ Failed to parse BIN details. Error: {str(e)}</pre>")
 
 @Client.on_message(filters.command("sk"))
-@auth_and_free_restricted  # Use the new combined decorator
+@auth_and_free_restricted
 async def sk_command(client, message):
     # Check if command is disabled
     command_text = message.text.split()[0] if message.text else ""
@@ -1403,7 +1403,7 @@ def scan_website_enhanced(url):
         return None, None, None, None, None, None, None, None, None, f"Scanning failed: {str(e)}", "N/A"
 
 @Client.on_message(filters.command("gate"))
-@auth_and_free_restricted  # Use the new combined decorator
+@auth_and_free_restricted
 async def gate_command(client, message):
     # Check if command is disabled
     command_text = message.text.split()[0] if message.text else ""
@@ -1507,48 +1507,6 @@ async def gate_command(client, message):
     except Exception as e:
         error_msg = str(e) if str(e) else "Unknown error"
         await processing_msg.edit(f"<pre>❌ Unexpected error: {error_msg}</pre>")
-
-# ============ REDEEM COMMAND - HELP MENU ONLY ============
-# This just shows the help menu - actual redemption is handled by BOT/plans/redeem.py
-
-@Client.on_message(filters.command("redeem"))
-@auth_and_free_restricted
-async def redeem_command_help(client, message):
-    # Check if command is disabled
-    command_text = message.text.split()[0] if message.text else ""
-    if is_command_disabled(command_text):
-        await message.reply(get_command_offline_message(command_text))
-        return
-
-    # Check if user is restricted
-    if is_user_restricted_for_command(message.from_user.id, command_text):
-        await message.reply("""<pre>🚫 Access Restricted</pre>
-━━━━━━━━━━━━━
-⟐ <b>Message</b>: You are restricted from using this command.
-⟐ <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
-━━━━━━━━━━━━━""")
-        return
-
-    # This function ONLY shows the help menu
-    # The actual redemption is handled by the handler in BOT/plans/redeem.py
-    # We need to pass the message to that handler
-    
-    # Import the redeem handler from plans folder
-    try:
-        from BOT.plans.redeem import redeem_code_command
-        # Call the actual redeem handler
-        await redeem_code_command(client, message)
-    except ImportError:
-        # If import fails, show help menu as fallback
-        await message.reply("""
-<pre>#WAYNE 〔/redeem〕</pre>
-━━━━━━━━━━━━━
-<pre>Format: /redeem {gift_code}</pre>
-<pre>Example: /redeem WAYNE-DAD-ABCD-1234</pre>
-━━━━━━━━━━━━━
-<pre>Redeem gift codes to upgrade your plan</pre>
-<pre>Contact admin for gift codes</pre>
-━━━━━━━━━━━━━""")
 
 # Update the USERS_FILE path
 USERS_FILE = "DATA/users.json"
