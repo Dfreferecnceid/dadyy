@@ -126,10 +126,27 @@ def is_user_premium(user_id: str) -> bool:
         return False
 
     user_plan = user.get("plan", {}).get("plan", "Free")
-    return user_plan != "Free"
+    user_role = user.get("role", "Free")
+    
+    # Check if user has any non-Free plan
+    if user_plan != "Free" or user_role != "Free":
+        return True
+    
+    # Check if user has active temporary plan
+    expires_at = user.get("plan", {}).get("expires_at")
+    if expires_at:
+        try:
+            now = datetime.now()
+            expiry_dt = datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S")
+            if now <= expiry_dt:
+                return True  # Active temporary plan
+        except:
+            pass
+    
+    return False
 
 def is_user_free(user_id: str) -> bool:
-    """Check if user is currently on Free plan"""
+    """Check if user is currently on Free plan with no active plans"""
     users = load_users()
     user = users.get(user_id)
 
@@ -137,7 +154,72 @@ def is_user_free(user_id: str) -> bool:
         return False
 
     user_plan = user.get("plan", {}).get("plan", "Free")
-    return user_plan == "Free"
+    user_role = user.get("role", "Free")
+    
+    # If plan is not Free, user is not free
+    if user_plan != "Free" or user_role != "Free":
+        return False
+    
+    # Check if user has active temporary plan
+    expires_at = user.get("plan", {}).get("expires_at")
+    if expires_at:
+        try:
+            now = datetime.now()
+            expiry_dt = datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S")
+            if now <= expiry_dt:
+                return False  # Has active temporary plan
+        except:
+            pass
+    
+    return True
+
+def has_active_plan(user_id: str) -> bool:
+    """Check if user has any active plan (permanent or temporary not expired)"""
+    users = load_users()
+    user = users.get(user_id)
+
+    if not user:
+        return False
+
+    user_plan = user.get("plan", {}).get("plan", "Free")
+    user_role = user.get("role", "Free")
+    
+    # Check if user has permanent plan
+    if user_plan != "Free" or user_role != "Free":
+        return True
+    
+    # Check if user has active temporary plan
+    expires_at = user.get("plan", {}).get("expires_at")
+    if expires_at:
+        try:
+            now = datetime.now()
+            expiry_dt = datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S")
+            if now <= expiry_dt:
+                return True  # Active temporary plan
+        except:
+            pass
+    
+    return False
+
+def get_active_plan_info(user_id: str):
+    """Get information about user's active plan"""
+    users = load_users()
+    user = users.get(user_id)
+    
+    if not user:
+        return None
+    
+    plan_data = user.get("plan", {})
+    plan = plan_data.get("plan", "Free")
+    expires_at = plan_data.get("expires_at")
+    role = user.get("role", "Free")
+    
+    return {
+        "plan": plan,
+        "expires_at": expires_at,
+        "role": role,
+        "is_permanent": expires_at is None and plan != "Free"
+    }
 
 @Client.on_message(filters.command("redeem"))
 @auth_and_free_restricted
@@ -169,10 +251,11 @@ async def redeem_code_command(client: Client, message: Message):
 ⟐ <b>Example</b>: <code>/redeem WAYNE-DAD-ABCD-EFGH</code>
 ━━━━━━━━━━━━━
 <b>~ Rules:</b>
-Free users can redeem gift codes.
+• FREE users can redeem gift codes
+• Users with ACTIVE plans CANNOT redeem codes
+• Wait for current plan to expire before redeeming another
 
-<b>~ Note:</b> <code>Gift codes upgrade you to Plus plan for specified days</code>
-<b>~ Note:</b> <code>When gift code expires, you can redeem another one</code>""", reply_to_message_id=message.id)
+<b>~ Note:</b> <code>Gift codes upgrade you to Plus plan for specified days</code>""", reply_to_message_id=message.id)
         return
 
     code = message.command[1].strip().upper()
@@ -240,41 +323,38 @@ Free users can redeem gift codes.
         )
         return
 
-    # NEW LOGIC: Check if user is currently Free
-    if not is_user_free(user_id):
-        user = users[user_id]
-        current_plan = user.get("plan", {}).get("plan", "Free")
-        current_role = user.get("role", "Free")
-        current_expiry = user.get("plan", {}).get("expires_at")
+    # STRICT CHECK: User must be completely FREE with no active plans
+    if has_active_plan(user_id):
+        active_plan_info = get_active_plan_info(user_id)
+        plan_name = active_plan_info['plan']
+        expires_at = active_plan_info['expires_at']
         
-        if current_expiry is None:
-            # User has permanent plan (cannot redeem)
+        if expires_at:
+            # User has temporary plan
+            await message.reply(
+                f"""<pre>❌ Active Plan Detected</pre>
+━━━━━━━━━━━━━
+⟐ <b>Message</b>: You already have an active {plan_name} plan!
+⟐ <b>Current Plan</b>: <code>{plan_name}</code>
+⟐ <b>Plan Expires</b>: <code>{expires_at}</code>
+⟐ <b>Rule</b>: Wait for your current plan to expire before redeeming another code
+━━━━━━━━━━━━━
+<b>~ Note:</b> <code>Users with active plans cannot redeem gift codes</code>""",
+                reply_to_message_id=message.id
+            )
+        else:
+            # User has permanent plan
             await message.reply(
                 f"""<pre>❌ Permanent Plan User</pre>
 ━━━━━━━━━━━━━
-⟐ <b>Message</b>: You have a permanent {current_plan} plan.
-⟐ <b>Current Plan</b>: <code>{current_plan}</code>
-⟐ <b>Current Role</b>: <code>{current_role}</code>
+⟐ <b>Message</b>: You have a permanent {plan_name} plan.
+⟐ <b>Current Plan</b>: <code>{plan_name}</code>
+⟐ <b>Rule</b>: Permanent plan users cannot redeem gift codes
 ━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Premium users cannot redeem gift codes</code>
 <b>~ Note:</b> <code>Gift codes are for FREE users only</code>""",
                 reply_to_message_id=message.id
             )
-            return
-        else:
-            # User has temporary plan (expiry date exists)
-            await message.reply(
-                f"""<pre>❌ Already Have Active Plan</pre>
-━━━━━━━━━━━━━
-⟐ <b>Message</b>: You already have an active {current_plan} plan!
-⟐ <b>Current Plan</b>: <code>{current_plan}</code>
-⟐ <b>Plan Expires</b>: <code>{current_expiry}</code>
-⟐ <b>Current Role</b>: <code>{current_role}</code>
-━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Wait for your current plan to expire</code>""",
-                reply_to_message_id=message.id
-            )
-            return
+        return
 
     # Check if code is expired
     expires_at = code_data["expires_at"]
@@ -357,8 +437,12 @@ Free users can redeem gift codes.
 • Private Mode enabled
 • Mass Limit: 10 cards
 
-<b>~ Note:</b> <code>Enjoy your temporary Plus plan benefits!</code>
-<b>~ Note:</b> <code>Plan will expire on {expires_at}</code>"""
+<b>~ Important Rules:</b>
+• You CANNOT redeem another code until this plan expires
+• Plan will expire on {expires_at}
+• After expiry, you can redeem another code
+
+<b>~ Note:</b> <code>Enjoy your temporary Plus plan benefits!</code>"""
     else:
         await message.reply(
             """<pre>❌ Redeem Failed</pre>
@@ -375,6 +459,10 @@ Free users can redeem gift codes.
     code_data["used_by"] = user_id
     code_data["used_at"] = current_time.strftime("%Y-%m-%d %H:%M:%S")
     gift_codes[code] = code_data
+
+    # Update keyredeem count
+    if user_id in users:
+        users[user_id]["plan"]["keyredeem"] = users[user_id]["plan"].get("keyredeem", 0) + 1
 
     # Save data
     save_users(users)
@@ -419,8 +507,9 @@ async def mycode_command(client: Client, message: Message):
     current_plan = plan.get("plan", "Free")
     current_expiry = plan.get("expires_at", "Never (Permanent)" if plan.get("expires_at") is None else plan.get("expires_at"))
     
-    # Check if user is currently Free
-    is_free = is_user_free(user_id)
+    # Check if user has any active plan
+    has_active = has_active_plan(user_id)
+    can_redeem = is_user_free(user_id)
 
     # Check if user has redeemed any codes
     user_codes = get_user_redeemed_codes(user_id)
@@ -430,7 +519,7 @@ async def mycode_command(client: Client, message: Message):
 ⟐ <b>User ID</b>: <code>{user_id}</code>
 ⟐ <b>Current Plan</b>: <code>{current_plan}</code>
 ⟐ <b>Plan Expires</b>: <code>{current_expiry}</code>
-⟐ <b>Current Status</b>: <code>{'✅ Free (Can Redeem)' if is_free else '❌ Premium (Cannot Redeem)'}</code>
+⟐ <b>Redeem Status</b>: <code>{'✅ Can Redeem (Free User)' if can_redeem else '❌ Cannot Redeem (Has Active Plan)'}</code>
 ⟐ <b>Total Redeemed Codes</b>: <code>{len(user_codes)}</code>
 ━━━━━━━━━━━━━"""
 
@@ -439,7 +528,7 @@ async def mycode_command(client: Client, message: Message):
         for idx, code_info in enumerate(user_codes[:10], 1):  # Show max 10 codes
             response += f"{idx}. <code>{code_info['code']}</code>\n"
             response += f"   └ Used: <code>{code_info['used_at']}</code>\n"
-            response += f"   └ Expired: <code>{code_info['expires_at']}</code>\n"
+            response += f"   └ Expires: <code>{code_info['expires_at']}</code>\n"
             response += f"   └ Plan: <code>{code_info['plan']}</code>\n"
 
         if len(user_codes) > 10:
@@ -449,13 +538,15 @@ async def mycode_command(client: Client, message: Message):
         response += "<code>No gift codes redeemed yet.</code>\n"
 
     response += """━━━━━━━━━━━━━
-<b>~ New Rules:</b>
-• FREE users can redeem gift codes
-• Premium users cannot redeem codes
+<b>~ Important Rules:</b>
+• ONLY FREE users can redeem gift codes
+• Users with ACTIVE plans CANNOT redeem codes
+• Wait for current plan to expire before redeeming another
+• Each code gives Plus plan benefits
 
 <b>~ How to Get Codes:</b>
 • Use <code>/redeem CODE</code> to activate
-• Each code gives Plus plan benefits"""
+• Contact admin to purchase codes"""
 
     await message.reply(response, reply_to_message_id=message.id)
 
@@ -563,9 +654,9 @@ async def checkcode_command(client: Client, message: Message):
 • Private Mode Enabled
 • Mass Limit: 10 cards
 
-<b>~ Rules:</b>
-• Free users can redeem codes
-• Premium users cannot redeem
+<b>~ Important Rules:</b>
+• ONLY FREE users can redeem codes
+• Users with active plans CANNOT redeem
 • After expiration, user can redeem another code
 • Expires on date shown""",
             reply_to_message_id=message.id
