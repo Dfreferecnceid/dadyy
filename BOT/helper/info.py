@@ -1,240 +1,119 @@
-import json
-import asyncio
-import os
-from datetime import datetime, timedelta
 from pyrogram import Client, filters
-from BOT.helper.start import USERS_FILE, load_users, save_users, load_owner_id
+from pyrogram.types import Message
+from BOT.helper.start import load_users
+from datetime import datetime
+from pyrogram.enums import ChatMemberStatus
 
-PLAN_NAME = "Plus"
-PLAN_PRICE = "$1"
-PLAN_BADGE = "💠"
-DEFAULT_BADGE = "🧿"
-DEFAULT_ANTISPAM = 15
-DEFAULT_MLIMIT = 5
-PLUS_ANTISPAM = 13
-PLUS_CREDIT_BONUS = 200
-PLUS_MLIMIT = 10
-
-OWNER_ID = load_owner_id()
-
-def activate_plus_plan(user_id: str, expires_at: str = None):
-    """Activate Plus plan with optional expiry date
-    - If expires_at is None: Permanent plan (direct upgrade)
-    - If expires_at is provided: Temporary plan (gift code)"""
-    
+def calculate_expiry(expiry_time):
+    if not expiry_time:
+        return "∞"
     try:
-        users = load_users()
-        user_id_str = str(user_id)
-        
-        if user_id_str not in users:
-            print(f"[ERROR] User {user_id_str} not found in database")
-            return False
+        now = datetime.now()
+        expiry_dt = datetime.strptime(expiry_time, "%Y-%m-%d %H:%M:%S")
+        diff = expiry_dt - now
+        days = diff.days
+        hours = diff.seconds // 3600
+        if diff.total_seconds() <= 0:
+            return "Expired"
+        return f"{days}d, {hours}h left"
+    except:
+        return "Invalid Date"
 
-        user = users[user_id_str]
-        
-        # Get current plan info
-        plan = user.get("plan", {})
-        if not plan:
-            plan = {}
-            user["plan"] = plan
-            
-        current_plan = plan.get("plan", "Free")
-        current_expiry = plan.get("expires_at")
-        current_role = user.get("role", "Free")
-        
-        print(f"[DEBUG] Activating Plus for user {user_id_str}")
-        print(f"[DEBUG] Current plan: {current_plan}, Role: {current_role}, Expiry: {current_expiry}")
-        print(f"[DEBUG] New expiry: {expires_at}")
-        
-        # CRITICAL CHECK: If user already has an ACTIVE plan (not Free) and it's not expired
-        if current_plan != "Free" or current_role != "Free":
-            
-            # If this is a gift code redemption (expires_at is provided)
-            if expires_at is not None:
-                
-                # Check if user has permanent plan (no expiry)
-                if current_expiry is None:
-                    print(f"[DEBUG] User has permanent plan - cannot redeem")
-                    return "already_premium_permanent"
-                
-                # Check if user has active temporary plan
-                try:
-                    now = datetime.now()
-                    expiry_time = datetime.strptime(current_expiry, "%Y-%m-%d %H:%M:%S")
-                    
-                    if now < expiry_time:
-                        # Plan is still active
-                        print(f"[DEBUG] User has active temporary plan until {current_expiry}")
-                        return "already_active"
-                    else:
-                        # Plan has expired - allow redemption
-                        print(f"[DEBUG] User's plan expired on {current_expiry}, allowing redemption")
-                        # Continue with activation
-                        pass
-                except Exception as e:
-                    print(f"[DEBUG] Error checking expiry: {e}")
-                    # If expiry date is invalid, treat as expired and allow redemption
-                    pass
-        
-        # If we get here, user can be upgraded
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        # Add credits
-        current_credits = user.get("plan", {}).get("credits", "0")
-        if current_credits != "∞":
-            try:
-                current_credits = int(current_credits)
-                new_credits = current_credits + PLUS_CREDIT_BONUS
-            except:
-                new_credits = PLUS_CREDIT_BONUS
-        else:
-            new_credits = "∞"
-
-        # Update user data - CRITICAL: This must save properly
-        user["plan"].update({
-            "plan": PLAN_NAME,
-            "activated_at": now,
-            "expires_at": expires_at,  # Could be None (permanent) or date (temporary)
-            "antispam": PLUS_ANTISPAM,
-            "badge": PLAN_BADGE,
-            "credits": str(new_credits),
-            "private": "on",
-            "mlimit": PLUS_MLIMIT
-        })
-        user["role"] = PLAN_NAME
-        
-        # Increment keyredeem count
-        if "keyredeem" not in user["plan"]:
-            user["plan"]["keyredeem"] = 0
-        user["plan"]["keyredeem"] = user["plan"].get("keyredeem", 0) + 1
-        
-        # CRITICAL: Save users immediately
-        save_users(users)
-        
-        # Verify the save worked
-        verification = load_users()
-        if user_id_str in verification:
-            saved_plan = verification[user_id_str].get("plan", {}).get("plan", "Unknown")
-            saved_expiry = verification[user_id_str].get("plan", {}).get("expires_at")
-            print(f"[DEBUG] Verification - Saved plan: {saved_plan}, Expiry: {saved_expiry}")
-        
-        print(f"[DEBUG] Plus plan activated successfully for user {user_id_str}")
-        print(f"[DEBUG] New plan: {user['plan']['plan']}, Expiry: {user['plan']['expires_at']}")
-        
-        return True
-        
-    except Exception as e:
-        print(f"[ERROR] in activate_plus_plan: {e}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-def load_gift_codes():
-    """Load gift codes from GC_FILE - supports both txt and json formats"""
-    GC_FILE_TXT = "DATA/gift_codes.txt"
-    GC_FILE_JSON = "DATA/gift_codes.json"
-
-    gift_codes = {}
-
-    # First try to load from JSON file
-    if os.path.exists(GC_FILE_JSON):
+def get_plan_status(plan_data):
+    """Determine if user has active plan"""
+    plan = plan_data.get("plan", "Free")
+    expires_at = plan_data.get("expires_at")
+    
+    if plan == "Free":
+        return "Free"
+    elif expires_at:
         try:
-            with open(GC_FILE_JSON, 'r') as f:
-                gift_codes = json.load(f)
-            return gift_codes
-        except:
-            pass
-
-    # If JSON doesn't exist, try to load from txt and convert
-    if os.path.exists(GC_FILE_TXT):
-        try:
-            with open(GC_FILE_TXT, 'r') as f:
-                for line in f.read().splitlines():
-                    if '|' in line:
-                        code, expiration_date_str = line.split('|')
-                        gift_codes[code] = {
-                            "expires_at": expiration_date_str,
-                            "used": False,
-                            "used_by": None,
-                            "used_at": None,
-                            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            "days_valid": 0
-                        }
-
-            # Save as JSON for future use
-            save_gift_codes(gift_codes)
-            return gift_codes
-        except:
-            pass
-
-    return gift_codes
-
-def save_gift_codes(gift_codes):
-    """Save gift codes to JSON file"""
-    GC_FILE_JSON = "DATA/gift_codes.json"
-
-    # Ensure DATA directory exists
-    os.makedirs("DATA", exist_ok=True)
-
-    with open(GC_FILE_JSON, 'w') as f:
-        json.dump(gift_codes, f, indent=4)
-
-async def check_and_expire_plans(app: Client):
-    """Check and expire Plus plans (only for gift code ones with expiry)"""
-    while True:
-        try:
-            users = load_users()
             now = datetime.now()
-            changed = False
+            expiry_dt = datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S")
+            if now > expiry_dt:
+                return "Expired"
+            else:
+                return "Active"
+        except:
+            return "Active"
+    else:
+        return "Permanent"
 
-            for user_id, user in users.items():
-                plan = user.get("plan", {})
+@Client.on_message(filters.command(["info", ".info", "$info"]))
+async def info_command(client, message: Message):
+    db = load_users()
 
-                # Check if the plan is Plus and has an expiry time
-                if plan.get("plan") == PLAN_NAME and plan.get("expires_at"):
-                    expires_at = plan.get("expires_at")
+    # 1. Check for reply
+    if message.reply_to_message and message.reply_to_message.from_user:
+        target_user = message.reply_to_message.from_user
 
-                    if expires_at:
-                        try:
-                            expiry_time = datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S")
-                            if now >= expiry_time:
-                                # Revert to Free plan
-                                user["plan"].update({
-                                    "plan": "Free",
-                                    "activated_at": user.get("registered_at", plan.get("activated_at", now.strftime("%Y-%m-%d %H:%M:%S"))),
-                                    "expires_at": None,
-                                    "antispam": DEFAULT_ANTISPAM,
-                                    "mlimit": DEFAULT_MLIMIT,
-                                    "badge": DEFAULT_BADGE,
-                                    "credits": "100",
-                                    "private": "off"
-                                })
-                                user["role"] = "Free"
-                                user["last_credit_reset"] = now.strftime("%Y-%m-%d %H:%M:%S")
-                                changed = True
+    # 2. Check for command argument
+    elif len(message.command) > 1:
+        arg = message.command[1]
 
-                                # Notify the user
-                                try:
-                                    await app.send_message(
-                                        int(user_id),
-                                        """<pre>Notification ❗️</pre>
+        # Mentioned username
+        if arg.startswith("@"):
+            try:
+                target_user = await client.get_users(arg)
+            except Exception as e:
+                return await message.reply(f"❌ Unable to find user `{arg}`.")
+        # Numeric user ID
+        elif arg.isdigit():
+            try:
+                target_user = await client.get_users(int(arg))
+            except Exception as e:
+                return await message.reply(f"❌ Unable to find user `{arg}`.")
+        else:
+            return await message.reply("<b>❌ Invalid input.</b>\n Use /info @username or user_id or reply to a user.")
+    else:
+        # 3. Fallback to self
+        target_user = message.from_user
+
+    uid = str(target_user.id)
+    user_data = db.get(uid)
+
+    if not user_data:
+        return await message.reply("<pre>User not found in database ❌</pre>.")
+
+    fname = user_data.get("first_name", "N/A")
+    username = f"@{user_data['username']}" if user_data.get("username") else "N/A"
+    profile = f'<a href="tg://user?id={uid}">Profile</a>'
+
+    plan_data = user_data.get("plan", {})
+    plan = plan_data.get("plan", "Free")
+    credits = plan_data.get("credits", "0")
+    registered_at = user_data.get("registered_at", "N/A")
+    expiry = calculate_expiry(plan_data.get("expires_at"))
+    mlimit = plan_data.get("mlimit", "N/A")
+    keyredeemed = plan_data.get("keyredeem", 0)
+    
+    # Get plan status
+    plan_status = get_plan_status(plan_data)
+    
+    # Determine stats display
+    if plan_status == "Free":
+        stats = "Free"
+    elif plan_status == "Expired":
+        stats = "Expired"
+    elif plan_status == "Permanent":
+        stats = "Premium (Permanent)"
+    else:
+        stats = "Premium (Active)"
+
+    msg = f"""
+<pre>[{uid}] ~ WAYNE</pre>
 ━━━━━━━━━━━━━━
-<b>~ Your Gift Code Plan Has Expired</b>
-<b>~ You are now back to Free plan</b>
-<b>~ You can now redeem another gift code</b>
-<b>~ Contact Owner for new codes</b>
-━━━━━━━━━━━━━━"""
-                                    )
-                                except:
-                                    pass
-
-                        except Exception as e:
-                            print(f"Error checking expiry for user {user_id}: {e}")
-
-            if changed:
-                save_users(users)
-
-        except Exception as e:
-            print(f"[ERROR] in check_and_expire_plans: {e}")
-            
-        await asyncio.sleep(5)
+• <b>Firstname :</b> <code>{fname}</code>
+• <b>UserID :</b> <code>{uid}</code>
+• <b>Username :</b> <code>{username}</code>
+• <b>Profile :</b> {profile}
+━ ━ ━ ━ ━ ━━━ ━ ━ ━ ━ ━
+[ﾒ] <b>Status :</b> <code>{stats}</code>
+⚬ <b>Credits :</b> <code>{credits}</code>
+⚬ <b>Plan :</b> <code>{plan}</code>
+⚬ <b>Plan Expiry :</b> <code>{expiry}</code>
+⚬ <b>Mass Limit :</b> <code>{mlimit}</code>
+⚬ <b>Key Redeemed :</b> <code>{keyredeemed}</code>
+[ﾒ] <b>Registered At :</b> <code>{registered_at}</code>
+"""
+    await message.reply(msg, quote=True)
