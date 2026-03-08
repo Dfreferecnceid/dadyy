@@ -323,39 +323,6 @@ async def redeem_code_command(client: Client, message: Message):
         )
         return
 
-    # STRICT CHECK: User must be completely FREE with no active plans
-    if has_active_plan(user_id):
-        active_plan_info = get_active_plan_info(user_id)
-        plan_name = active_plan_info['plan']
-        expires_at = active_plan_info['expires_at']
-        
-        if expires_at:
-            # User has temporary plan
-            await message.reply(
-                f"""<pre>❌ Active Plan Detected</pre>
-━━━━━━━━━━━━━
-⟐ <b>Message</b>: You already have an active {plan_name} plan!
-⟐ <b>Current Plan</b>: <code>{plan_name}</code>
-⟐ <b>Plan Expires</b>: <code>{expires_at}</code>
-⟐ <b>Rule</b>: Wait for your current plan to expire before redeeming another code
-━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Users with active plans cannot redeem gift codes</code>""",
-                reply_to_message_id=message.id
-            )
-        else:
-            # User has permanent plan
-            await message.reply(
-                f"""<pre>❌ Permanent Plan User</pre>
-━━━━━━━━━━━━━
-⟐ <b>Message</b>: You have a permanent {plan_name} plan.
-⟐ <b>Current Plan</b>: <code>{plan_name}</code>
-⟐ <b>Rule</b>: Permanent plan users cannot redeem gift codes
-━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Gift codes are for FREE users only</code>""",
-                reply_to_message_id=message.id
-            )
-        return
-
     # Check if code is expired
     expires_at = code_data["expires_at"]
     current_time = datetime.now()
@@ -386,15 +353,79 @@ async def redeem_code_command(client: Client, message: Message):
         hours_remaining = "Unknown"
         expiry_time = current_time + timedelta(days=30)  # Default fallback
 
-    # IMPORTANT: Upgrade user to Plus plan WITH expiry date
+    # IMPORTANT: First check if user already has an active plan
+    user_data = users.get(user_id, {})
+    current_plan = user_data.get("plan", {}).get("plan", "Free")
+    current_expiry = user_data.get("plan", {}).get("expires_at")
+    current_role = user_data.get("role", "Free")
+    
+    # Debug prints
+    print(f"[DEBUG] User {user_id} attempting to redeem code")
+    print(f"[DEBUG] Current plan: {current_plan}, Role: {current_role}, Expiry: {current_expiry}")
+    
+    # Check if user already has an active plan (not Free)
+    if current_plan != "Free" or current_role != "Free":
+        # User has some plan
+        
+        if current_expiry is None:
+            # User has permanent plan - cannot redeem
+            await message.reply(
+                f"""<pre>❌ Permanent Plan User</pre>
+━━━━━━━━━━━━━
+⟐ <b>Message</b>: You have a permanent {current_plan} plan.
+⟐ <b>Current Plan</b>: <code>{current_plan}</code>
+⟐ <b>Rule</b>: Permanent plan users cannot redeem gift codes
+━━━━━━━━━━━━━
+<b>~ Note:</b> <code>Gift codes are for FREE users only</code>""",
+                reply_to_message_id=message.id
+            )
+            return
+        else:
+            # User has temporary plan - check if it's still active
+            try:
+                now = datetime.now()
+                expiry_dt = datetime.strptime(current_expiry, "%Y-%m-%d %H:%M:%S")
+                
+                if now <= expiry_dt:
+                    # Plan is still active
+                    days_left = (expiry_dt - now).days
+                    hours_left = int((expiry_dt - now).seconds / 3600)
+                    
+                    await message.reply(
+                        f"""<pre>❌ Active Plan Detected</pre>
+━━━━━━━━━━━━━
+⟐ <b>Message</b>: You already have an active {current_plan} plan!
+⟐ <b>Current Plan</b>: <code>{current_plan}</code>
+⟐ <b>Plan Expires</b>: <code>{current_expiry}</code>
+⟐ <b>Time Remaining</b>: <code>{days_left} days ({hours_left} hours)</code>
+⟐ <b>Rule</b>: Wait for your current plan to expire before redeeming another code
+━━━━━━━━━━━━━
+<b>~ Note:</b> <code>Users with active plans cannot redeem gift codes</code>""",
+                        reply_to_message_id=message.id
+                    )
+                    return
+                else:
+                    # Plan has expired - allow redemption
+                    print(f"[DEBUG] User's plan expired, allowing redemption")
+                    # Continue with activation
+                    pass
+            except Exception as e:
+                print(f"[DEBUG] Error checking expiry: {e}")
+                # If expiry date is invalid, treat as expired and allow redemption
+                pass
+
+    # Upgrade user to Plus plan WITH expiry date
     result = activate_plus_plan(user_id, expires_at)
+    
+    print(f"[DEBUG] activate_plus_plan result: {result}")
 
     if result == "already_active":
         await message.reply(
             f"""<pre>⚠️ Already Active</pre>
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: You already have an active Plus plan.
-⟐ <b>Expires At</b>: <code>{expires_at}</code>
+⟐ <b>Expires At</b>: <code>{current_expiry}</code>
+⟐ <b>Rule</b>: Wait for your current plan to expire
 ━━━━━━━━━━━━━""",
             reply_to_message_id=message.id
         )
@@ -459,10 +490,6 @@ async def redeem_code_command(client: Client, message: Message):
     code_data["used_by"] = user_id
     code_data["used_at"] = current_time.strftime("%Y-%m-%d %H:%M:%S")
     gift_codes[code] = code_data
-
-    # Update keyredeem count
-    if user_id in users:
-        users[user_id]["plan"]["keyredeem"] = users[user_id]["plan"].get("keyredeem", 0) + 1
 
     # Save data
     save_users(users)
