@@ -2428,7 +2428,7 @@ async def handle_shopify_kauffman(client: Client, message: Message):
 <b>[#Shopify Charge 2.00$] | WAYNE</b> ✦
 ━━━━━━━━━━━━━━━
 <b>[•] Card</b>- <code>{cc}|{mes}|{ano}|{cvv}</code>
-<b>[•] Gateway</b> - <b>Shopify Charge 2.00$ (Direct)</b>
+<b>[•] Gateway</b> - <b>Shopify Charge 2.00$</b>
 <b>[•] Status</b>- <code>Processing...</code>
 <b>[•] Response</b>- <code>Initiating...</code>
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
@@ -2499,3 +2499,4 @@ async def handle_shopify_kauffman(client: Client, message: Message):
 🠪 <b>Error</b>: <code>{error_msg}</code>
 🠪 <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
 ━━━━━━━━━━━━━""")
+
