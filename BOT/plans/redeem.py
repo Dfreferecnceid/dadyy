@@ -422,7 +422,7 @@ async def redeem_code_command(client: Client, message: Message):
     response = f"""<pre>✅ Gift Code Redeemed Successfully!</pre>
 ━━━━━━━━━━━━━
 ⟐ <b>Message</b>: Gift code <code>{code}</code> redeemed successfully!
-⟐ <b>Status</b>: Upgraded to Plus Plan (Temporary)
+⟐ <b>Status</b>: Upgraded to Plus Plan
 ⟐ <b>Expires At</b>: <code>{expires_at}</code>
 ⟐ <b>Days Remaining</b>: <code>{days_remaining} days ({hours_remaining} hours)</code>
 ⟐ <b>Bonus</b>: 200 credits added
@@ -436,11 +436,9 @@ async def redeem_code_command(client: Client, message: Message):
 • Mass Limit: 10 cards
 
 <b>~ Important Rules:</b>
-• You CANNOT redeem another code until this plan expires
 • Plan will expire on {expires_at}
-• After expiry, you can redeem another code
 
-<b>~ Note:</b> <code>Enjoy your temporary Plus plan benefits!</code>"""
+<b>~ Note:</b> <code>Enjoy your Plus plan benefits!</code>"""
 
     await message.reply(response, reply_to_message_id=message.id)
 
@@ -633,9 +631,7 @@ async def checkcode_command(client: Client, message: Message):
 • Mass Limit: 10 cards
 
 <b>~ Important Rules:</b>
-• ONLY FREE users can redeem codes
 • Users with active plans CANNOT redeem
-• After expiration, user can redeem another code
 • Expires on date shown""",
             reply_to_message_id=message.id
         )
