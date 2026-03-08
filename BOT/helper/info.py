@@ -19,25 +19,27 @@ def calculate_expiry(expiry_time):
     except:
         return "Invalid Date"
 
-def get_plan_status(plan_data):
-    """Determine if user has active plan"""
+def get_plan_display(plan_data):
+    """Get the actual plan name and status for display"""
     plan = plan_data.get("plan", "Free")
     expires_at = plan_data.get("expires_at")
     
     if plan == "Free":
-        return "Free"
+        return "Free", "🧿"
     elif expires_at:
         try:
             now = datetime.now()
             expiry_dt = datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S")
             if now > expiry_dt:
-                return "Expired"
+                return f"{plan} (Expired)", "❌"
             else:
-                return "Active"
+                # Plan is active - show actual plan name
+                return f"{plan}", "✅"
         except:
-            return "Active"
+            return f"{plan}", "✅"
     else:
-        return "Permanent"
+        # Permanent plan
+        return f"{plan} (Permanent)", "💎"
 
 @Client.on_message(filters.command(["info", ".info", "$info"]))
 async def info_command(client, message: Message):
@@ -80,25 +82,30 @@ async def info_command(client, message: Message):
     profile = f'<a href="tg://user?id={uid}">Profile</a>'
 
     plan_data = user_data.get("plan", {})
-    plan = plan_data.get("plan", "Free")
+    plan_name = plan_data.get("plan", "Free")
     credits = plan_data.get("credits", "0")
     registered_at = user_data.get("registered_at", "N/A")
     expiry = calculate_expiry(plan_data.get("expires_at"))
     mlimit = plan_data.get("mlimit", "N/A")
     keyredeemed = plan_data.get("keyredeem", 0)
     
-    # Get plan status
-    plan_status = get_plan_status(plan_data)
+    # Get the actual plan display with emoji
+    plan_display, plan_emoji = get_plan_display(plan_data)
     
-    # Determine stats display
-    if plan_status == "Free":
-        stats = "Free"
-    elif plan_status == "Expired":
-        stats = "Expired"
-    elif plan_status == "Permanent":
-        stats = "Premium (Permanent)"
-    else:
-        stats = "Premium (Active)"
+    # Get badge based on plan
+    badge = plan_data.get("badge", "🧿")
+    
+    # Determine if plan is active
+    expires_at = plan_data.get("expires_at")
+    is_active = True
+    if expires_at:
+        try:
+            now = datetime.now()
+            expiry_dt = datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S")
+            if now > expiry_dt:
+                is_active = False
+        except:
+            pass
 
     msg = f"""
 <pre>[{uid}] ~ WAYNE</pre>
@@ -108,9 +115,9 @@ async def info_command(client, message: Message):
 • <b>Username :</b> <code>{username}</code>
 • <b>Profile :</b> {profile}
 ━ ━ ━ ━ ━ ━━━ ━ ━ ━ ━ ━
-[ﾒ] <b>Status :</b> <code>{stats}</code>
+[ﾒ] <b>Status :</b> <code>{plan_display}</code> {badge}
 ⚬ <b>Credits :</b> <code>{credits}</code>
-⚬ <b>Plan :</b> <code>{plan}</code>
+⚬ <b>Plan :</b> <code>{plan_name}</code>
 ⚬ <b>Plan Expiry :</b> <code>{expiry}</code>
 ⚬ <b>Mass Limit :</b> <code>{mlimit}</code>
 ⚬ <b>Key Redeemed :</b> <code>{keyredeemed}</code>
