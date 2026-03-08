@@ -1484,7 +1484,7 @@ async def gate_command(client, message):
 
         # Format the response with the requested UI
         response = f"""<b>━━━━━━━ 𝓢𝓲𝓽𝓮 𝓢𝓽𝓪𝓽𝓾𝓼 ━━━━━━━</b>
-<b>𝘐𝘗 𝘈𝘥𝘥𝘳𝘦𝘴𝘴</b> : <code>{ip_address}</code>
+<b>𝘐𝘱 𝘈𝘥𝘥𝘳𝘦𝘴𝘴</b> : <code>{ip_address}</code>
 <b>𝘚𝘪𝘵𝘦</b>       : <code>{normalized_url}</code>
 <b>𝘏𝘛𝘛𝘗 𝘚𝘵𝘢𝘵𝘶𝘴</b> : <code>{status_text}</code>
 <pre>─────────┈∘◦┄┄┄┄┄∘◦┈────────</pre>
@@ -1508,11 +1508,12 @@ async def gate_command(client, message):
         error_msg = str(e) if str(e) else "Unknown error"
         await processing_msg.edit(f"<pre>❌ Unexpected error: {error_msg}</pre>")
 
-# ============ REDEEM COMMAND ============
+# ============ REDEEM COMMAND - HELP MENU ONLY ============
+# This just shows the help menu - actual redemption is handled by BOT/plans/redeem.py
 
 @Client.on_message(filters.command("redeem"))
-@auth_and_free_restricted  # Use the new combined decorator
-async def redeem_command(client, message):
+@auth_and_free_restricted
+async def redeem_command_help(client, message):
     # Check if command is disabled
     command_text = message.text.split()[0] if message.text else ""
     if is_command_disabled(command_text):
@@ -1528,15 +1529,17 @@ async def redeem_command(client, message):
 ━━━━━━━━━━━━━""")
         return
 
-    user_id = message.from_user.id
-
-    if not is_user_registered(user_id):
-        await message.reply("<pre>🔒 You need to register first! Use /register command.</pre>")
-        return
-
-    text = get_message_text(message)
-    args = text.split()
-    if len(args) < 2:
+    # This function ONLY shows the help menu
+    # The actual redemption is handled by the handler in BOT/plans/redeem.py
+    # We need to pass the message to that handler
+    
+    # Import the redeem handler from plans folder
+    try:
+        from BOT.plans.redeem import redeem_code_command
+        # Call the actual redeem handler
+        await redeem_code_command(client, message)
+    except ImportError:
+        # If import fails, show help menu as fallback
         await message.reply("""
 <pre>#WAYNE 〔/redeem〕</pre>
 ━━━━━━━━━━━━━
@@ -1546,72 +1549,6 @@ async def redeem_command(client, message):
 <pre>Redeem gift codes to upgrade your plan</pre>
 <pre>Contact admin for gift codes</pre>
 ━━━━━━━━━━━━━""")
-        return
-
-    gift_code = args[1]
-
-    # Check if gift code file exists
-    GC_FILE = "DATA/gift_codes.json"
-    if not os.path.exists(GC_FILE):
-        await message.reply("<pre>❌ No gift codes available.</pre>")
-        return
-
-    try:
-        with open(GC_FILE, "r") as f:
-            gift_codes = json.load(f)
-    except:
-        await message.reply("<pre>❌ Error loading gift codes.</pre>")
-        return
-
-    if gift_code in gift_codes:
-        code_data = gift_codes[gift_code]
-
-        # Check if code is expired
-        expiration_date = datetime.datetime.strptime(code_data["expires_at"], "%Y-%m-%d %H:%M:%S")
-        if datetime.datetime.now() > expiration_date:
-            await message.reply("<pre>❌ This gift code has expired.</pre>")
-            return
-
-        # Check if code is already redeemed
-        if code_data.get("redeemed", False):
-            await message.reply("<pre>❌ This gift code has already been redeemed.</pre>")
-            return
-
-        # Upgrade user's plan
-        users = load_users()
-        user_id_str = str(user_id)
-
-        if user_id_str in users:
-            users[user_id_str]["plan"]["plan"] = code_data.get("plan", "PLUS")
-            users[user_id_str]["plan"]["credits"] = code_data.get("credits", 500)
-            users[user_id_str]["role"] = code_data.get("plan", "PLUS")
-
-            # Mark code as redeemed
-            gift_codes[gift_code]["redeemed"] = True
-            gift_codes[gift_code]["redeemed_by"] = user_id_str
-            gift_codes[gift_code]["redeemed_at"] = get_ist_time()
-
-            # Save both files
-            with open(USERS_FILE, "w") as f:
-                json.dump(users, f, indent=4)
-
-            with open(GC_FILE, "w") as f:
-                json.dump(gift_codes, f, indent=4)
-
-            await message.reply(f"""
-<pre>🎉 Gift Code Redeemed Successfully!</pre>
-━━━━━━━━━━━━━
-<pre>Code: {gift_code}</pre>
-<pre>Plan: {code_data.get('plan', 'PLUS')}</pre>
-<pre>Credits: {code_data.get('credits', 500)}</pre>
-<pre>Expires: {expiration_date.strftime('%Y-%m-%d %H:%M:%S')}</pre>
-━━━━━━━━━━━━━
-<pre>Your account has been upgraded! 🚀</pre>
-━━━━━━━━━━━━━""")
-        else:
-            await message.reply("<pre>❌ User not found in database.</pre>")
-    else:
-        await message.reply("<pre>❌ Invalid gift code.</pre>")
 
 # Update the USERS_FILE path
 USERS_FILE = "DATA/users.json"
