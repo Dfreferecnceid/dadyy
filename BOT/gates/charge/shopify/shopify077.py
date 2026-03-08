@@ -677,7 +677,10 @@ class ShopifyMiddleEasternCheckout:
         self.user_id = user_id
         self.base_url = "https://shopmiddleeastern.com"
         self.product_handle = "el-mordjene-vanille-10-g"
-        self.product_url = f"{self.base_url}/products/{self.product_handle}"
+        self.variant_id = "39312450584663"  # Product variant ID from captured data
+        
+        # Direct checkout URL that bypasses cart and goes straight to checkout
+        self.direct_checkout_url = f"{self.base_url}/cart/{self.variant_id}:1"
         
         # Proxy management
         self.proxy_url = None
@@ -710,7 +713,6 @@ class ShopifyMiddleEasternCheckout:
         self.session_token = None
         self.graphql_session_token = None
         self.receipt_id = None
-        self.variant_id = "39312450584663"  # Product variant ID from captured data
         self.product_id = "6564222206039"    # Product ID from captured data
         self.stable_id = None
         self.queue_token = None
@@ -817,106 +819,22 @@ class ShopifyMiddleEasternCheckout:
         timestamp = self.generate_timestamp()
         return f"{self.checkout_token}-{timestamp}"
 
-    async def get_product_page(self):
-        """Step 1: Get product page to get initial cookies"""
-        self.step(1, "GET PRODUCT PAGE", f"Loading El Mordjene Vanille product page")
+    async def direct_to_checkout(self):
+        """Step 1: Direct checkout link to get checkout token (bypasses cart)"""
+        self.step(1, "DIRECT CHECKOUT", f"Using direct checkout link to bypass cart")
         
-        try:
-            resp = await self.client.get(self.product_url, headers=self.headers, timeout=25, follow_redirects=True)
-            
-            if resp.status_code != 200:
-                self.logger.error_log("PRODUCT_PAGE", f"Failed: {resp.status_code}")
-                return False, f"Failed to load product page: {resp.status_code}"
-            
-            # Extract cookies from response
-            self.logger.data_extracted("Cookies", "Session cookies set", "Response headers")
-            
-            return True, resp.text
-            
-        except httpx.ProxyError as e:
-            self.logger.error_log("PROXY", f"Proxy error on product page: {str(e)}")
-            mark_proxy_failed(self.proxy_url)
-            self.proxy_status = "Dead 🚫"
-            return False, "PROXY_DEAD"
-        except httpx.TimeoutException as e:
-            self.logger.error_log("TIMEOUT", f"Timeout on product page after 25s: {str(e)}")
-            return False, "TIMEOUT"
-        except Exception as e:
-            self.logger.error_log("PRODUCT_PAGE", str(e))
-            return False, f"Product page error: {str(e)[:50]}"
-
-    async def add_to_cart(self):
-        """Step 2: Add product to cart"""
-        self.step(2, "ADD TO CART", "Adding El Mordjene Vanille to cart (0.75$)")
-        
-        cart_headers = {
+        direct_headers = {
             **self.headers,
-            'referer': self.product_url,
-            'content-type': 'application/x-www-form-urlencoded',
-            'origin': self.base_url,
-            'sec-fetch-site': 'same-origin'
-        }
-        
-        # Add to cart with quantity 1
-        cart_data = {
-            'id': self.variant_id,
-            'quantity': '1'
+            'sec-fetch-site': 'none'
         }
         
         try:
-            resp = await self.client.post(
-                f"{self.base_url}/cart/add.js",
-                headers=cart_headers,
-                data=cart_data,
+            # Direct checkout URL adds product directly to cart and redirects to checkout
+            resp = await self.client.get(
+                self.direct_checkout_url,
+                headers=direct_headers,
                 timeout=25,
                 follow_redirects=True
-            )
-            
-            if resp.status_code != 200:
-                return False, f"Add to cart failed: {resp.status_code}"
-            
-            self.logger.data_extracted("Cart", "1 x El Mordjene Vanille added", "Success")
-            return True, resp.text
-            
-        except httpx.ProxyError as e:
-            self.logger.error_log("PROXY", f"Proxy error on add to cart: {str(e)}")
-            mark_proxy_failed(self.proxy_url)
-            self.proxy_status = "Dead 🚫"
-            return False, "PROXY_DEAD"
-        except httpx.TimeoutException as e:
-            self.logger.error_log("TIMEOUT", f"Timeout on add to cart after 25s: {str(e)}")
-            return False, "TIMEOUT"
-        except Exception as e:
-            self.logger.error_log("ADD_TO_CART", str(e))
-            return False, f"Add to cart error: {str(e)[:50]}"
-
-    async def proceed_to_checkout(self):
-        """Step 3: Proceed to checkout to get checkout token"""
-        self.step(3, "PROCEED TO CHECKOUT", "Initiating checkout process")
-        
-        checkout_headers = {
-            **self.headers,
-            'referer': self.product_url,
-            'sec-fetch-site': 'same-origin'
-        }
-        
-        try:
-            # First get cart page to get the cart token
-            cart_response = await self.client.get(
-                f"{self.base_url}/cart",
-                headers=checkout_headers,
-                follow_redirects=True,
-                timeout=25
-            )
-            
-            # Now proceed to checkout
-            checkout_url = f"{self.base_url}/checkout"
-            
-            resp = await self.client.get(
-                checkout_url,
-                headers=checkout_headers,
-                follow_redirects=True,
-                timeout=25
             )
             
             # Get final URL from redirects which contains the checkout token
@@ -930,7 +848,7 @@ class ShopifyMiddleEasternCheckout:
                     self.checkout_token = body_token
             
             if self.checkout_token:
-                self.logger.data_extracted("Checkout Token", self.checkout_token, "Checkout URL")
+                self.logger.data_extracted("Checkout Token", self.checkout_token, "Direct Checkout URL")
                 
                 # Construct GraphQL session token
                 self.graphql_session_token = self.construct_graphql_session_token()
@@ -942,24 +860,24 @@ class ShopifyMiddleEasternCheckout:
                 return False, "CHECKOUT_TOKEN_ERROR"
                 
         except httpx.ProxyError as e:
-            self.logger.error_log("PROXY", f"Proxy error on checkout: {str(e)}")
+            self.logger.error_log("PROXY", f"Proxy error on direct checkout: {str(e)}")
             mark_proxy_failed(self.proxy_url)
             self.proxy_status = "Dead 🚫"
             return False, "PROXY_DEAD"
         except httpx.TimeoutException as e:
-            self.logger.error_log("TIMEOUT", f"Timeout on checkout after 25s: {str(e)}")
+            self.logger.error_log("TIMEOUT", f"Timeout on direct checkout after 25s: {str(e)}")
             return False, "TIMEOUT"
         except Exception as e:
-            self.logger.error_log("CHECKOUT_TOKEN", str(e))
-            return False, f"Checkout error: {str(e)[:50]}"
+            self.logger.error_log("DIRECT_CHECKOUT", str(e))
+            return False, f"Direct checkout error: {str(e)[:50]}"
 
     async def get_checkout_page(self):
-        """Step 4: Get the checkout page to extract session token"""
-        self.step(4, "GET CHECKOUT PAGE", "Loading checkout page")
+        """Step 2: Get the checkout page to extract session token"""
+        self.step(2, "GET CHECKOUT PAGE", "Loading checkout page")
         
         checkout_headers = {
             **self.headers,
-            'referer': self.product_url,
+            'referer': self.direct_checkout_url,
             'sec-fetch-site': 'same-origin'
         }
         
@@ -996,8 +914,8 @@ class ShopifyMiddleEasternCheckout:
             return False, f"Checkout page error: {str(e)[:50]}"
 
     async def submit_initial_proposal(self):
-        """Step 5: Submit initial proposal with email"""
-        self.step(5, "SUBMIT INITIAL PROPOSAL", f"Setting email: {self.email}")
+        """Step 3: Submit initial proposal with email"""
+        self.step(3, "SUBMIT INITIAL PROPOSAL", f"Setting email: {self.email}")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
         
@@ -1212,8 +1130,8 @@ class ShopifyMiddleEasternCheckout:
             return False, f"Proposal error: {str(e)[:50]}"
 
     async def select_pickup_delivery(self):
-        """Step 6: Select pickup delivery method (Middle Eastern Market)"""
-        self.step(6, "SELECT PICKUP", "Choosing Middle Eastern Market pickup location")
+        """Step 4: Select pickup delivery method (Middle Eastern Market)"""
+        self.step(4, "SELECT PICKUP", "Choosing Middle Eastern Market pickup location")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
         
@@ -1390,8 +1308,8 @@ class ShopifyMiddleEasternCheckout:
             return False, f"Pickup selection error: {str(e)[:50]}"
 
     async def create_payment_session(self, cc, mes, ano, cvv):
-        """Step 7: Create payment session with PCI"""
-        self.step(7, "CREATE PAYMENT SESSION", "Creating payment session with PCI")
+        """Step 5: Create payment session with PCI"""
+        self.step(5, "CREATE PAYMENT SESSION", "Creating payment session with PCI")
         
         pci_headers = {
             'authority': 'checkout.pci.shopifyinc.com',
@@ -1482,8 +1400,8 @@ class ShopifyMiddleEasternCheckout:
             return False, "PCI_ERROR"
 
     async def update_billing_address(self, payment_session_id):
-        """Step 8: Update billing address with pickup location address"""
-        self.step(8, "UPDATE BILLING", f"Setting billing address: {self.address['address1']}, {self.address['city']}, {self.address['provinceCode']} {self.address['zip']}")
+        """Step 6: Update billing address with pickup location address"""
+        self.step(6, "UPDATE BILLING", f"Setting billing address: {self.address['address1']}, {self.address['city']}, {self.address['provinceCode']} {self.address['zip']}")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
         
@@ -1706,8 +1624,8 @@ class ShopifyMiddleEasternCheckout:
             return False, f"Billing update error: {str(e)[:50]}"
 
     async def submit_for_completion(self, payment_session_id):
-        """Step 9: Submit for completion - final payment"""
-        self.step(9, "SUBMIT PAYMENT", "Finalizing payment of 0.77$")
+        """Step 7: Submit for completion - final payment"""
+        self.step(7, "SUBMIT PAYMENT", "Finalizing payment of 0.77$")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
         
@@ -1941,7 +1859,7 @@ class ShopifyMiddleEasternCheckout:
                 
                 if receipt_type == 'ProcessingReceipt':
                     poll_delay = receipt.get('pollDelay', 500) / 1000
-                    self.step(10, "POLL RECEIPT", f"Waiting {poll_delay}s", f"Delay: {poll_delay}s", "WAIT")
+                    self.step(8, "POLL RECEIPT", f"Waiting {poll_delay}s", f"Delay: {poll_delay}s", "WAIT")
                     await asyncio.sleep(poll_delay)
                     return await self.poll_receipt(graphql_headers)
                     
@@ -1972,8 +1890,8 @@ class ShopifyMiddleEasternCheckout:
             return False, f"Submit error: {str(e)[:50]}"
 
     async def poll_receipt(self, headers, max_polls=5):
-        """Step 10: Poll for receipt status"""
-        self.step(10, "POLL RECEIPT", "Polling for payment status")
+        """Step 8: Poll for receipt status"""
+        self.step(8, "POLL RECEIPT", "Polling for payment status")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
         poll_attempts = 0
@@ -2019,7 +1937,7 @@ class ShopifyMiddleEasternCheckout:
                 
                 if resp.status_code != 200:
                     if poll_attempts < max_attempts:
-                        self.logger.step(10, "POLL RECEIPT RETRY", f"Attempt {poll_attempts} failed, retrying...", f"Status: {resp.status_code}", "WAIT")
+                        self.logger.step(8, "POLL RECEIPT RETRY", f"Attempt {poll_attempts} failed, retrying...", f"Status: {resp.status_code}", "WAIT")
                         await asyncio.sleep(base_delay * poll_attempts)
                         continue
                     return False, f"Poll failed after {max_attempts} attempts"
@@ -2043,7 +1961,7 @@ class ShopifyMiddleEasternCheckout:
                         if poll_attempts < max_attempts:
                             poll_delay = receipt_data.get('pollDelay', 500) / 1000
                             wait_time = max(poll_delay, base_delay * poll_attempts)
-                            self.step(10, "POLL RECEIPT", f"Still processing, attempt {poll_attempts}/{max_attempts}", f"Waiting {wait_time:.1f}s", "WAIT")
+                            self.step(8, "POLL RECEIPT", f"Still processing, attempt {poll_attempts}/{max_attempts}", f"Waiting {wait_time:.1f}s", "WAIT")
                             await asyncio.sleep(wait_time)
                             continue
                         else:
@@ -2058,14 +1976,14 @@ class ShopifyMiddleEasternCheckout:
                         
                 except Exception as e:
                     if poll_attempts < max_attempts:
-                        self.logger.step(10, "POLL RECEIPT RETRY", f"Parse error, retrying...", str(e)[:50], "WAIT")
+                        self.logger.step(8, "POLL RECEIPT RETRY", f"Parse error, retrying...", str(e)[:50], "WAIT")
                         await asyncio.sleep(base_delay)
                         continue
                     return False, f"Failed to parse poll response: {str(e)[:50]}"
                     
             except httpx.TimeoutException as e:
                 if poll_attempts < max_attempts:
-                    self.logger.step(10, "POLL RECEIPT RETRY", f"Timeout on attempt {poll_attempts}, retrying...", "", "WAIT")
+                    self.logger.step(8, "POLL RECEIPT RETRY", f"Timeout on attempt {poll_attempts}, retrying...", "", "WAIT")
                     await asyncio.sleep(base_delay)
                     continue
                 self.logger.error_log("TIMEOUT", f"Timeout on poll after {max_attempts} attempts")
@@ -2073,7 +1991,7 @@ class ShopifyMiddleEasternCheckout:
                 
             except Exception as e:
                 if poll_attempts < max_attempts:
-                    self.logger.step(10, "POLL RECEIPT RETRY", f"Error on attempt {poll_attempts}, retrying...", str(e)[:50], "WAIT")
+                    self.logger.step(8, "POLL RECEIPT RETRY", f"Error on attempt {poll_attempts}, retrying...", str(e)[:50], "WAIT")
                     await asyncio.sleep(base_delay)
                     continue
                 return False, f"Poll error: {str(e)[:50]}"
@@ -2100,55 +2018,43 @@ class ShopifyMiddleEasternCheckout:
                 self.proxy_status = "No Proxy"
                 self.client = httpx.AsyncClient(timeout=25, follow_redirects=True)
             
-            # Step 1: Get product page
-            success, result = await self.get_product_page()
+            # Step 1: Direct checkout link (bypasses cart)
+            success, result = await self.direct_to_checkout()
             if not success:
                 return False, result
             await self.random_delay(0.3, 0.5)
             
-            # Step 2: Add to cart
-            success, result = await self.add_to_cart()
-            if not success:
-                return False, result
-            await self.random_delay(0.3, 0.5)
-            
-            # Step 3: Proceed to checkout
-            success, result = await self.proceed_to_checkout()
-            if not success:
-                return False, result
-            await self.random_delay(0.3, 0.5)
-            
-            # Step 4: Get checkout page
+            # Step 2: Get checkout page
             success, result = await self.get_checkout_page()
             if not success:
                 return False, result
             await self.random_delay(0.3, 0.5)
             
-            # Step 5: Submit initial proposal with email
+            # Step 3: Submit initial proposal with email
             success, result = await self.submit_initial_proposal()
             if not success:
                 return False, result
             await self.random_delay(0.3, 0.5)
             
-            # Step 6: Select pickup delivery
+            # Step 4: Select pickup delivery
             success, result = await self.select_pickup_delivery()
             if not success:
                 return False, result
             await self.random_delay(0.3, 0.5)
             
-            # Step 7: Create payment session
+            # Step 5: Create payment session
             success, payment_session_id = await self.create_payment_session(cc, mes, ano, cvv)
             if not success:
                 return False, payment_session_id
             await self.random_delay(0.3, 0.5)
             
-            # Step 8: Update billing address
+            # Step 6: Update billing address
             success, result = await self.update_billing_address(payment_session_id)
             if not success:
                 return False, result
             await self.random_delay(0.3, 0.5)
             
-            # Step 9: Submit for completion
+            # Step 7: Submit for completion
             success, result = await self.submit_for_completion(payment_session_id)
             
             return success, result
@@ -2381,4 +2287,3 @@ async def handle_shopify_middle_eastern(client: Client, message: Message):
 🠪 <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
 
 ━━━━━━━━━━━━━""")
-
