@@ -491,6 +491,12 @@ async def redeem_code_command(client: Client, message: Message):
     code_data["used_at"] = current_time.strftime("%Y-%m-%d %H:%M:%S")
     gift_codes[code] = code_data
 
+    # Update keyredeem count
+    if user_id in users:
+        if "keyredeem" not in users[user_id]["plan"]:
+            users[user_id]["plan"]["keyredeem"] = 0
+        users[user_id]["plan"]["keyredeem"] = users[user_id]["plan"].get("keyredeem", 0) + 1
+
     # Save data
     save_users(users)
     save_gift_codes(gift_codes)
