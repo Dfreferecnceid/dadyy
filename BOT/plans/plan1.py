@@ -16,72 +16,101 @@ PLUS_CREDIT_BONUS = 200
 
 OWNER_ID = load_owner_id()
 
-def activate_plus_plan(user_id: str, expires_at: str = None) -> bool:
+def activate_plus_plan(user_id: str, expires_at: str = None):
     """Activate Plus plan with optional expiry date
     - If expires_at is None: Permanent plan (direct upgrade)
     - If expires_at is provided: Temporary plan (gift code)"""
-
-    users = load_users()
-    user = users.get(user_id)
-    if not user:
-        return False
-
-    # Check current plan
-    plan = user.get("plan", {})
-    current_plan = plan.get("plan", "Free")
-    current_expiry = plan.get("expires_at")
     
-    # NEW LOGIC: User can redeem new gift code if currently Free
-    # or if trying to extend existing temporary Plus plan
-    if current_plan == PLAN_NAME and expires_at is not None:
-        # User already has Plus plan and trying to add gift code
+    try:
+        users = load_users()
+        user = users.get(user_id)
+        if not user:
+            return False
+
+        # Check current plan
+        plan = user.get("plan", {})
+        current_plan = plan.get("plan", "Free")
+        current_expiry = plan.get("expires_at")
+        current_role = user.get("role", "Free")
         
-        if current_expiry is None:
-            # User has permanent Plus plan (cannot redeem gift codes)
-            return "already_premium_permanent"
-        elif current_expiry is not None:
-            # User has temporary Plus plan
-            # Check if this is extending an existing plan
-            try:
-                current_expiry_date = datetime.strptime(current_expiry, "%Y-%m-%d %H:%M:%S")
-                new_expiry_date = datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S")
-                if new_expiry_date > current_expiry_date:
-                    expires_at = new_expiry_date.strftime("%Y-%m-%d %H:%M:%S")
+        # DEBUG PRINT
+        print(f"[DEBUG] Activating Plus for user {user_id}")
+        print(f"[DEBUG] Current plan: {current_plan}, Role: {current_role}, Expiry: {current_expiry}")
+        print(f"[DEBUG] New expiry: {expires_at}")
+        
+        # Check if user already has an ACTIVE plan (not Free)
+        if current_plan != "Free" or current_role != "Free":
+            # User has some plan
+            
+            if expires_at is not None:
+                # This is a gift code redemption attempt
+                if current_expiry is None:
+                    # User has permanent plan - cannot redeem
+                    print(f"[DEBUG] User has permanent plan - cannot redeem")
+                    return "already_premium_permanent"
                 else:
-                    expires_at = current_expiry  # Keep existing later expiry
+                    # User has temporary plan - check if it's active
+                    try:
+                        now = datetime.now()
+                        expiry_time = datetime.strptime(current_expiry, "%Y-%m-%d %H:%M:%S")
+                        
+                        if now <= expiry_time:
+                            # Plan is still active - cannot redeem
+                            print(f"[DEBUG] User has active temporary plan - cannot redeem")
+                            return "already_active"
+                        else:
+                            # Plan has expired - allow redemption
+                            print(f"[DEBUG] User's plan expired - allowing redemption")
+                            # Continue with activation
+                            pass
+                    except Exception as e:
+                        print(f"[DEBUG] Error checking expiry: {e}")
+                        # If expiry date is invalid, treat as expired and allow redemption
+                        pass
+        
+        # If we get here, user can be upgraded
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        # Add credits
+        current_credits = user.get("plan", {}).get("credits", "0")
+        if current_credits != "∞":
+            try:
+                current_credits = int(current_credits)
+                new_credits = current_credits + PLUS_CREDIT_BONUS
             except:
-                pass
-            return "already_active"
-    
-    # Check if user is already premium (not Free)
-    if current_plan != "Free" and expires_at is not None:
-        return "already_premium"
+                new_credits = PLUS_CREDIT_BONUS
+        else:
+            new_credits = "∞"
 
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    # Add credits
-    current_credits = user["plan"]["credits"]
-    if current_credits != "∞":
-        try:
-            current_credits = int(current_credits)
-            new_credits = current_credits + PLUS_CREDIT_BONUS
-        except:
-            new_credits = PLUS_CREDIT_BONUS
-    else:
-        new_credits = "∞"
-
-    user["plan"].update({
-        "plan": PLAN_NAME,
-        "activated_at": now,
-        "expires_at": expires_at,  # Could be None (permanent) or date (temporary)
-        "antispam": PLUS_ANTISPAM,
-        "badge": PLAN_BADGE,
-        "credits": new_credits,
-        "private": "on"
-    })
-    user["role"] = PLAN_NAME
-    save_users(users)
-    return True
+        # Update user data
+        user["plan"].update({
+            "plan": PLAN_NAME,
+            "activated_at": now,
+            "expires_at": expires_at,  # Could be None (permanent) or date (temporary)
+            "antispam": PLUS_ANTISPAM,
+            "badge": PLAN_BADGE,
+            "credits": str(new_credits),
+            "private": "on",
+            "mlimit": 10  # Plus plan gets 10 mass limit
+        })
+        user["role"] = PLAN_NAME
+        
+        # Increment keyredeem count
+        if "keyredeem" not in user["plan"]:
+            user["plan"]["keyredeem"] = 0
+        user["plan"]["keyredeem"] = user["plan"]["keyredeem"] + 1
+        
+        # Save users
+        save_users(users)
+        
+        print(f"[DEBUG] Plus plan activated successfully for user {user_id}")
+        print(f"[DEBUG] New plan: {user['plan']['plan']}, Expiry: {user['plan']['expires_at']}")
+        
+        return True
+        
+    except Exception as e:
+        print(f"[ERROR] in activate_plus_plan: {e}")
+        return False
 
 def load_gift_codes():
     """Load gift codes from GC_FILE - supports both txt and json formats"""
@@ -136,53 +165,61 @@ def save_gift_codes(gift_codes):
 async def check_and_expire_plans(app: Client):
     """Check and expire Plus plans (only for gift code ones with expiry)"""
     while True:
-        users = load_users()
-        now = datetime.now()
-        changed = False
+        try:
+            users = load_users()
+            now = datetime.now()
+            changed = False
 
-        for user_id, user in users.items():
-            plan = user.get("plan", {})
+            for user_id, user in users.items():
+                plan = user.get("plan", {})
 
-            # Check if the plan is Plus and has an expiry time
-            # Only expire if expires_at is not None (temporary plans)
-            if plan.get("plan") == PLAN_NAME and plan.get("expires_at"):
-                expires_at = plan.get("expires_at")
+                # Check if the plan is Plus and has an expiry time
+                # Only expire if expires_at is not None (temporary plans)
+                if plan.get("plan") == PLAN_NAME and plan.get("expires_at"):
+                    expires_at = plan.get("expires_at")
 
-                # Process the expiration
-                if expires_at:
-                    try:
-                        expiry_time = datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S")
-                        if now >= expiry_time:
-                            # Revert to Free plan
-                            user["plan"].update({
-                                "plan": "Free",
-                                "activated_at": user.get("registered_at", plan["activated_at"]),
-                                "expires_at": None,
-                                "antispam": DEFAULT_ANTISPAM,
-                                "mlimit": DEFAULT_MLIMIT,
-                                "badge": DEFAULT_BADGE,
-                                "private": "off"
-                            })
-                            user["role"] = "Free"
-                            changed = True
+                    # Process the expiration
+                    if expires_at:
+                        try:
+                            expiry_time = datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S")
+                            if now >= expiry_time:
+                                # Revert to Free plan
+                                user["plan"].update({
+                                    "plan": "Free",
+                                    "activated_at": user.get("registered_at", plan.get("activated_at", now.strftime("%Y-%m-%d %H:%M:%S"))),
+                                    "expires_at": None,
+                                    "antispam": DEFAULT_ANTISPAM,
+                                    "mlimit": DEFAULT_MLIMIT,
+                                    "badge": DEFAULT_BADGE,
+                                    "credits": "100",  # Reset to free credits
+                                    "private": "off"
+                                })
+                                user["role"] = "Free"
+                                user["last_credit_reset"] = now.strftime("%Y-%m-%d %H:%M:%S")
+                                changed = True
 
-                            # Notify the user that the plan expired
-                            try:
-                                await app.send_message(
-                                    int(user_id),
-                                    """<pre>Notification ❗️</pre>
-<b>~ Your Gift Code Plan Is Expired</b>
+                                # Notify the user that the plan expired
+                                try:
+                                    await app.send_message(
+                                        int(user_id),
+                                        """<pre>Notification ❗️</pre>
+━━━━━━━━━━━━━━
+<b>~ Your Gift Code Plan Has Expired</b>
 <b>~ You are now back to Free plan</b>
 <b>~ You can now redeem another gift code</b>
-<b>~ Contact to Owner at @SyncBlastBot</b>
-                               """)
-                            except Exception as e:
-                                print(f"Error sending expiration message: {e}")
+<b>~ Contact Owner for new codes</b>
+━━━━━━━━━━━━━━"""
+                                    )
+                                except Exception as e:
+                                    print(f"Error sending expiration message: {e}")
 
-                    except Exception as e:
-                        print(f"Error checking expiry for user {user_id}: {e}")
+                        except Exception as e:
+                            print(f"Error checking expiry for user {user_id}: {e}")
 
-        if changed:
-            save_users(users)
+            if changed:
+                save_users(users)
 
+        except Exception as e:
+            print(f"[ERROR] in check_and_expire_plans: {e}")
+            
         await asyncio.sleep(5)  # Check every 5 seconds
