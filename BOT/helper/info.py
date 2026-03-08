@@ -7,12 +7,35 @@ from pyrogram.enums import ChatMemberStatus
 def calculate_expiry(expiry_time):
     if not expiry_time:
         return "∞"
-    now = datetime.now()
-    expiry_dt = datetime.strptime(expiry_time, "%Y-%m-%d %H:%M:%S")
-    diff = expiry_dt - now
-    days = diff.days
-    hours = diff.seconds // 3600
-    return f"{days}d, {hours}h left" if diff.total_seconds() > 0 else "Expired"
+    try:
+        now = datetime.now()
+        expiry_dt = datetime.strptime(expiry_time, "%Y-%m-%d %H:%M:%S")
+        diff = expiry_dt - now
+        days = diff.days
+        hours = diff.seconds // 3600
+        return f"{days}d, {hours}h left" if diff.total_seconds() > 0 else "Expired"
+    except:
+        return "Invalid Date"
+
+def get_plan_status(plan_data):
+    """Determine if user has active plan"""
+    plan = plan_data.get("plan", "Free")
+    expires_at = plan_data.get("expires_at")
+    
+    if plan == "Free":
+        return "Free"
+    elif expires_at:
+        try:
+            now = datetime.now()
+            expiry_dt = datetime.strptime(expires_at, "%Y-%m-%d %H:%M:%S")
+            if now > expiry_dt:
+                return "Expired"
+            else:
+                return "Active"
+        except:
+            return "Active"
+    else:
+        return "Permanent"
 
 @Client.on_message(filters.command(["info", ".info", "$info"]))
 async def info_command(client, message: Message):
@@ -61,13 +84,19 @@ async def info_command(client, message: Message):
     expiry = calculate_expiry(plan_data.get("expires_at"))
     mlimit = plan_data.get("mlimit", "N/A")
     keyredeemed = plan_data.get("keyredeem", 0)
-
-    if plan.lower() == "free":
+    
+    # Get plan status
+    plan_status = get_plan_status(plan_data)
+    
+    # Determine stats display
+    if plan_status == "Free":
         stats = "Free"
-    elif plan.lower() == "redeem code":
-        stats = "Premium"
+    elif plan_status == "Expired":
+        stats = "Expired"
+    elif plan_status == "Permanent":
+        stats = "Premium (Permanent)"
     else:
-        stats = "Paid"
+        stats = "Premium (Active)"
 
     msg = f"""
 <pre>[{uid}] ~ WAYNE</pre>
