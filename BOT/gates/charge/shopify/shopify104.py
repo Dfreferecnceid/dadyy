@@ -643,13 +643,23 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
     return result
 
 
-# ========== ROUTE CHARGE CHECKOUT CLASS (OPTIMIZED FOR SPEED) ==========
+# ========== ROUTE CHARGE CHECKOUT CLASS (OPTIMIZED FOR DIRECT CHECKOUT) ==========
 class RouteChargeCheckout:
     def __init__(self, user_id=None):
         self.user_id = user_id
         self.base_url = "https://zero936.com"
         self.product_handle = "routeins"
-        self.product_url = f"{self.base_url}/products/{self.product_handle}"
+        
+        # Direct checkout URL (skipping product page and add-to-cart)
+        self.variant_id = "51087094219071"
+        self.checkout_url = f"{self.base_url}/checkout/{self.variant_id}:1"
+        
+        # Alternative checkout URLs to try
+        self.checkout_urls = [
+            f"{self.base_url}/checkout/{self.variant_id}:1",
+            f"{self.base_url}/checkout?add=1&id={self.variant_id}",
+            f"{self.base_url}/cart/add.js?items[0][id]={self.variant_id}&items[0][quantity]=1",
+        ]
         
         # Proxy management
         self.proxy_url = None
@@ -682,7 +692,6 @@ class RouteChargeCheckout:
         self.session_token = None
         self.graphql_session_token = None
         self.receipt_id = None
-        self.variant_id = "51087094219071"
         self.product_id = "10024843247935"
 
         # Store extracted schema info
@@ -768,134 +777,92 @@ class RouteChargeCheckout:
         timestamp = self.generate_timestamp()
         return f"{self.checkout_token}-{timestamp}"
 
-    async def get_product_page(self):
-        """Step 1: Get product page to get initial cookies (FAST) - INCREASED TIMEOUT TO 30 SECONDS"""
-        self.step(1, "GET PRODUCT PAGE", f"Loading product page")
-        
-        try:
-            # Use HEAD request first to get cookies faster
-            resp = await self.client.head(self.product_url, headers=self.headers, timeout=30, follow_redirects=True)
-            
-            # Then GET for actual content if needed
-            resp = await self.client.get(self.product_url, headers=self.headers, timeout=30, follow_redirects=True)
-            
-            if resp.status_code != 200:
-                self.logger.error_log("PRODUCT_PAGE", f"Failed: {resp.status_code}")
-                return False, f"Failed to load product page: {resp.status_code}"
-            
-            return True, resp.text
-            
-        except httpx.ProxyError as e:
-            self.logger.error_log("PROXY", f"Proxy error on product page: {str(e)}")
-            mark_proxy_failed(self.proxy_url)
-            self.proxy_status = "Dead 🚫"
-            return False, "PROXY_DEAD"
-        except httpx.TimeoutException as e:
-            self.logger.error_log("TIMEOUT", f"Timeout on product page: {str(e)}")
-            return False, "TIMEOUT"
-        except Exception as e:
-            self.logger.error_log("PRODUCT_PAGE", str(e))
-            return False, f"Product page error: {str(e)[:50]}"
-
-    async def get_checkout_token(self):
-        """Step 2: Get checkout token with multiple fallback methods - INCREASED TIMEOUT TO 30 SECONDS"""
-        self.step(2, "GET CHECKOUT TOKEN", "Obtaining checkout token")
-        
-        # Try multiple variant IDs in case the product variant changes
-        variant_ids_to_try = [
-            self.variant_id,  # Current: "51087094219071"
-            "51087094219071",  # Primary
-            "51087094219072",  # Alternate 1
-            "51087094219073",  # Alternate 2
-            "39330960277567",  # Common Shopify test variant
-        ]
+    async def get_checkout_token_direct(self):
+        """
+        Step 1: Go directly to checkout page and extract token
+        This replaces get_product_page and get_checkout_token
+        """
+        self.step(1, "DIRECT CHECKOUT ACCESS", "Going directly to checkout page")
         
         checkout_headers = {
             **self.headers,
-            'referer': self.product_url,
+            'referer': self.base_url,
             'sec-fetch-site': 'same-origin'
         }
         
-        # Try different methods to get checkout token
-        methods = [
-            "direct_checkout",
-            "cart_add",
-            "ajax_cart"
-        ]
-        
-        for variant_id in variant_ids_to_try[:3]:  # Try first 3 variants
-            for method in methods:
-                try:
-                    if method == "direct_checkout":
-                        checkout_url = f"{self.base_url}/checkout?add=1&id={variant_id}"
-                    elif method == "cart_add":
-                        checkout_url = f"{self.base_url}/cart/add.js?items[0][id]={variant_id}&items[0][quantity]=1"
-                    else:  # ajax_cart
-                        checkout_url = f"{self.base_url}/cart/{variant_id}:1"
+        # Try different checkout URL formats
+        for idx, checkout_url in enumerate(self.checkout_urls):
+            try:
+                self.logger.step(1, "DIRECT CHECKOUT ACCESS", f"Trying checkout URL {idx+1}: {checkout_url}", "", "INFO")
+                
+                # Use GET request to access checkout page
+                resp = await self.client.get(
+                    checkout_url,
+                    headers=checkout_headers,
+                    follow_redirects=True,
+                    timeout=30
+                )
+                
+                # Get final URL after redirects
+                final_url = str(resp.url)
+                self.logger.data_extracted("Final URL", final_url, "After redirects")
+                
+                # Extract checkout token from URL
+                self.checkout_token = self.extract_checkout_token(final_url)
+                
+                # If not in URL, try to extract from response body
+                if not self.checkout_token and resp.text:
+                    # Look for checkout token in the HTML/JS
+                    token_patterns = [
+                        r'checkout_token["\']?\s*[:=]\s*["\']([^"\']+)["\']',
+                        r'token["\']?\s*[:=]\s*["\']([^"\']+)["\']',
+                        r'checkout%5Btoken%5D=([^&\s]+)',
+                        r'"token":"([^"]+)"',
+                    ]
+                    for pattern in token_patterns:
+                        match = re.search(pattern, resp.text)
+                        if match:
+                            self.checkout_token = match.group(1)
+                            break
+                
+                if self.checkout_token:
+                    self.logger.data_extracted("Checkout Token", self.checkout_token[:15] + "...", f"Checkout URL {idx+1}")
                     
-                    self.logger.step(2, "GET CHECKOUT TOKEN", f"Trying {method} with variant {variant_id}", "", "INFO")
+                    # Try to extract session token from cookies
+                    for cookie in self.client.cookies.jar:
+                        if cookie.name == '_shopify_s':
+                            self.session_token = cookie.value
+                            self.logger.data_extracted("Session Token", self.session_token[:15] + "...", "Cookie")
+                            break
                     
-                    # Try HEAD first to follow redirects quickly
-                    resp = await self.client.head(
-                        checkout_url,
-                        headers=checkout_headers,
-                        follow_redirects=True,
-                        timeout=30
-                    )
+                    # Construct GraphQL session token
+                    self.graphql_session_token = self.construct_graphql_session_token()
+                    self.logger.data_extracted("GraphQL Session Token", self.graphql_session_token, "Constructed")
                     
-                    # Get final URL from redirects
-                    current_url = str(resp.url)
-                    self.checkout_token = self.extract_checkout_token(current_url)
+                    return True, final_url
+                else:
+                    self.logger.step(1, "DIRECT CHECKOUT ACCESS", f"Failed with URL {idx+1}", "No token found", "WARNING")
+                    await asyncio.sleep(0.2)
                     
-                    if not self.checkout_token:
-                        # If HEAD didn't work, do GET
-                        resp = await self.client.get(
-                            checkout_url,
-                            headers=checkout_headers,
-                            follow_redirects=True,
-                            timeout=30
-                        )
-                        current_url = str(resp.url)
-                        self.checkout_token = self.extract_checkout_token(current_url)
-                        
-                        # Also check response body for token
-                        if not self.checkout_token and resp.text:
-                            body_token = self.extract_checkout_token(resp.text)
-                            if body_token:
-                                self.checkout_token = body_token
-                    
-                    if self.checkout_token:
-                        self.logger.data_extracted("Checkout Token", self.checkout_token[:15] + "...", f"{method} with variant {variant_id}")
-                        self.logger.data_extracted("Method Used", f"{method} (variant: {variant_id})", "Success")
-                        
-                        # Construct GraphQL session token
-                        self.graphql_session_token = self.construct_graphql_session_token()
-                        self.logger.data_extracted("GraphQL Session Token", self.graphql_session_token, "Constructed")
-                        
-                        return True, current_url
-                    else:
-                        self.logger.step(2, "GET CHECKOUT TOKEN", f"Failed with {method} variant {variant_id}", "Trying next...", "WARNING")
-                        await asyncio.sleep(0.3)
-                        
-                except httpx.ProxyError as e:
-                    self.logger.error_log("PROXY", f"Proxy error on checkout token: {str(e)}")
-                    mark_proxy_failed(self.proxy_url)
-                    self.proxy_status = "Dead 🚫"
-                    return False, "PROXY_DEAD"
-                except httpx.TimeoutException as e:
-                    self.logger.error_log("TIMEOUT", f"Timeout on checkout token with {method}", step="GET CHECKOUT TOKEN")
-                    continue
-                except Exception as e:
-                    self.logger.error_log("CHECKOUT_TOKEN", f"Error with {method}: {str(e)[:50]}")
-                    continue
+            except httpx.ProxyError as e:
+                self.logger.error_log("PROXY", f"Proxy error on checkout access: {str(e)}")
+                mark_proxy_failed(self.proxy_url)
+                self.proxy_status = "Dead 🚫"
+                return False, "PROXY_DEAD"
+            except httpx.TimeoutException as e:
+                self.logger.error_log("TIMEOUT", f"Timeout on checkout access with URL {idx+1}", step="DIRECT CHECKOUT")
+                continue
+            except Exception as e:
+                self.logger.error_log("CHECKOUT_ACCESS", f"Error with URL {idx+1}: {str(e)[:50]}")
+                continue
         
         # If we get here, all attempts failed
-        self.logger.error_log("CHECKOUT_TOKEN", "All variant and method attempts failed")
+        self.logger.error_log("CHECKOUT_TOKEN", "All checkout URL attempts failed")
         return False, "CHECKOUT_TOKEN_ERROR"
 
     async def accelerated_checkout(self):
-        """Step 3: Send accelerated checkout request (FAST) - INCREASED TIMEOUT TO 30 SECONDS"""
-        self.step(3, "ACCELERATED CHECKOUT", "Sending request")
+        """Step 2: Send accelerated checkout request (FAST) - INCREASED TIMEOUT TO 30 SECONDS"""
+        self.step(2, "ACCELERATED CHECKOUT", "Sending request")
         
         accel_headers = {
             'authority': 'zero936.com',
@@ -903,7 +870,7 @@ class RouteChargeCheckout:
             'accept-language': 'en-GB,en-US;q=0.9,en;q=0.8',
             'content-type': 'application/json',
             'origin': self.base_url,
-            'referer': f'{self.base_url}/products/{self.product_handle}',
+            'referer': f'{self.base_url}/checkouts/cn/{self.checkout_token}',
             'sec-ch-ua': '"Not:A-Brand";v="99", "Google Chrome";v="145", "Chromium";v="145"',
             'sec-ch-ua-mobile': '?0',
             'sec-ch-ua-platform': '"Windows"',
@@ -948,8 +915,8 @@ class RouteChargeCheckout:
             return False, f"Accelerated checkout error: {str(e)[:50]}"
 
     async def get_address_coordinates(self):
-        """Step 4: Get address coordinates (FAST with cache)"""
-        self.step(4, "GET ADDRESS", "Getting coordinates")
+        """Step 3: Get address coordinates (FAST with cache)"""
+        self.step(3, "GET ADDRESS", "Getting coordinates")
         
         # Cached coordinates - always use same address for speed
         return {
@@ -962,8 +929,8 @@ class RouteChargeCheckout:
         }
 
     async def submit_proposal(self, stable_id, coordinates):
-        """Step 5: Submit proposal (FAST) - INCREASED TIMEOUT TO 30 SECONDS"""
-        self.step(5, "SUBMIT PROPOSAL", "Submitting proposal")
+        """Step 4: Submit proposal (FAST) - INCREASED TIMEOUT TO 30 SECONDS"""
+        self.step(4, "SUBMIT PROPOSAL", "Submitting proposal")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
         
@@ -1184,8 +1151,8 @@ class RouteChargeCheckout:
             return False, f"Proposal error: {str(e)[:50]}"
 
     async def create_payment_session(self, cc, mes, ano, cvv):
-        """Step 6: Create payment session with PCI (FAST) - INCREASED TIMEOUT TO 30 SECONDS"""
-        self.step(6, "CREATE PAYMENT", "Creating payment session")
+        """Step 5: Create payment session with PCI (FAST) - INCREASED TIMEOUT TO 30 SECONDS"""
+        self.step(5, "CREATE PAYMENT", "Creating payment session")
         
         pci_headers = {
             'authority': 'checkout.pci.shopifyinc.com',
@@ -1276,8 +1243,8 @@ class RouteChargeCheckout:
             return False, "PCI_ERROR"
 
     async def submit_for_completion(self, stable_id, queue_token, payment_session_id, coordinates):
-        """Step 7: Submit for completion (FAST) - INCREASED TIMEOUT TO 30 SECONDS"""
-        self.step(7, "SUBMIT PAYMENT", "Submitting payment")
+        """Step 6: Submit for completion (FAST) - INCREASED TIMEOUT TO 30 SECONDS"""
+        self.step(6, "SUBMIT PAYMENT", "Submitting payment")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
         
@@ -1537,7 +1504,7 @@ class RouteChargeCheckout:
                 
                 if receipt_type == 'ProcessingReceipt':
                     poll_delay = receipt.get('pollDelay', 500) / 1000
-                    self.step(8, "POLL RECEIPT", f"Waiting {poll_delay}s", f"Delay: {poll_delay}s", "WAIT")
+                    self.step(7, "POLL RECEIPT", f"Waiting {poll_delay}s", f"Delay: {poll_delay}s", "WAIT")
                     await asyncio.sleep(poll_delay)
                     return await self.poll_receipt(graphql_headers)
                     
@@ -1568,8 +1535,8 @@ class RouteChargeCheckout:
             return False, f"Submit error: {str(e)[:50]}"
 
     async def poll_receipt(self, headers, max_polls=5):
-        """Step 9: Poll for receipt status with improved retry logic - INCREASED TIMEOUT TO 30 SECONDS"""
-        self.step(9, "POLL RECEIPT", "Polling for status")
+        """Step 7: Poll for receipt status with improved retry logic - INCREASED TIMEOUT TO 30 SECONDS"""
+        self.step(7, "POLL RECEIPT", "Polling for status")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
         poll_attempts = 0
@@ -1611,7 +1578,7 @@ class RouteChargeCheckout:
                 
                 if resp.status_code != 200:
                     if poll_attempts < max_attempts:
-                        self.logger.step(9, "POLL RECEIPT RETRY", f"Attempt {poll_attempts} failed, retrying...", f"Status: {resp.status_code}", "WAIT")
+                        self.logger.step(7, "POLL RECEIPT RETRY", f"Attempt {poll_attempts} failed, retrying...", f"Status: {resp.status_code}", "WAIT")
                         await asyncio.sleep(base_delay * poll_attempts)  # Exponential backoff
                         continue
                     return False, f"Poll failed after {max_attempts} attempts"
@@ -1637,7 +1604,7 @@ class RouteChargeCheckout:
                             poll_delay = receipt_data.get('pollDelay', 500) / 1000
                             # Use increasing delay for later attempts
                             wait_time = max(poll_delay, base_delay * poll_attempts)
-                            self.step(9, "POLL RECEIPT", f"Still processing, attempt {poll_attempts}/{max_attempts}", f"Waiting {wait_time:.1f}s", "WAIT")
+                            self.step(7, "POLL RECEIPT", f"Still processing, attempt {poll_attempts}/{max_attempts}", f"Waiting {wait_time:.1f}s", "WAIT")
                             await asyncio.sleep(wait_time)
                             continue
                         else:
@@ -1652,14 +1619,14 @@ class RouteChargeCheckout:
                         
                 except Exception as e:
                     if poll_attempts < max_attempts:
-                        self.logger.step(9, "POLL RECEIPT RETRY", f"Parse error, retrying...", str(e)[:50], "WAIT")
+                        self.logger.step(7, "POLL RECEIPT RETRY", f"Parse error, retrying...", str(e)[:50], "WAIT")
                         await asyncio.sleep(base_delay)
                         continue
                     return False, f"Failed to parse poll response: {str(e)[:50]}"
                     
             except httpx.TimeoutException as e:
                 if poll_attempts < max_attempts:
-                    self.logger.step(9, "POLL RECEIPT RETRY", f"Timeout on attempt {poll_attempts}, retrying...", "", "WAIT")
+                    self.logger.step(7, "POLL RECEIPT RETRY", f"Timeout on attempt {poll_attempts}, retrying...", "", "WAIT")
                     await asyncio.sleep(base_delay)
                     continue
                 self.logger.error_log("TIMEOUT", f"Timeout on poll after {max_attempts} attempts")
@@ -1667,7 +1634,7 @@ class RouteChargeCheckout:
                 
             except Exception as e:
                 if poll_attempts < max_attempts:
-                    self.logger.step(9, "POLL RECEIPT RETRY", f"Error on attempt {poll_attempts}, retrying...", str(e)[:50], "WAIT")
+                    self.logger.step(7, "POLL RECEIPT RETRY", f"Error on attempt {poll_attempts}, retrying...", str(e)[:50], "WAIT")
                     await asyncio.sleep(base_delay)
                     continue
                 return False, f"Poll error: {str(e)[:50]}"
@@ -1713,7 +1680,7 @@ class RouteChargeCheckout:
             return False, "DECLINED - TIMEOUT"
 
     async def execute_checkout(self, cc, mes, ano, cvv):
-        """Main checkout execution flow - OPTIMIZED FOR SPEED"""
+        """Main checkout execution flow - OPTIMIZED FOR DIRECT CHECKOUT"""
         try:
             # Step 0: Get proxy
             self.step(0, "GET PROXY", "Getting proxy")
@@ -1733,43 +1700,37 @@ class RouteChargeCheckout:
                 self.proxy_status = "No Proxy"
                 self.client = httpx.AsyncClient(timeout=30)
             
-            # Step 1: Get product page (fast)
-            success, result = await self.get_product_page()
+            # Step 1: Direct checkout access (gets token in one step)
+            success, result = await self.get_checkout_token_direct()
             if not success:
                 return False, result
             await self.random_delay(0.1, 0.2)
             
-            # Step 2: Get checkout token (fast)
-            success, result = await self.get_checkout_token()
-            if not success:
-                return False, result
-            await self.random_delay(0.1, 0.2)
-            
-            # Step 3: Accelerated checkout (fast)
+            # Step 2: Accelerated checkout (fast)
             success, result = await self.accelerated_checkout()
             if not success:
                 return False, result
             await self.random_delay(0.1, 0.2)
             
-            # Step 4: Get address coordinates (cached - instant)
+            # Step 3: Get address coordinates (cached - instant)
             coordinates = await self.get_address_coordinates()
             
-            # Step 5: Generate stable ID
+            # Step 4: Generate stable ID
             stable_id = self.generate_uuid()
             
-            # Step 6: Submit proposal (fast)
+            # Step 5: Submit proposal (fast)
             success, queue_token = await self.submit_proposal(stable_id, coordinates)
             if not success:
                 return False, queue_token
             await self.random_delay(0.1, 0.2)
             
-            # Step 7: Create payment session (fast)
+            # Step 6: Create payment session (fast)
             success, payment_session_id = await self.create_payment_session(cc, mes, ano, cvv)
             if not success:
                 return False, payment_session_id
             await self.random_delay(0.1, 0.2)
             
-            # Step 8: Submit for completion (fast)
+            # Step 7: Submit for completion (fast)
             success, result = await self.submit_for_completion(stable_id, queue_token, payment_session_id, coordinates)
             
             return success, result
@@ -2012,4 +1973,3 @@ async def handle_shopify_route_charge(client: Client, message: Message):
 🠪 <b>Error</b>: <code>{error_msg}</code>
 🠪 <b>Contact</b>: <code>@D_A_DYY</code> for assistance.
 ━━━━━━━━━━━━━""")
-
