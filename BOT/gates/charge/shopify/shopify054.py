@@ -54,6 +54,7 @@ try:
 except ImportError as e:
     print(f"❌ Filter import error: {e}")
     FILTER_AVAILABLE = False
+    # Fallback basic parser if filter.py not available
     def extract_cards(text):
         cards = []
         for line in text.splitlines():
@@ -482,6 +483,8 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
             response_display = "PAYMENT_AMOUNT_ERROR"
         elif "PROCESSING_TIMEOUT" in raw_response:
             response_display = "PROCESSING_TIMEOUT"
+        elif "ACTIONREQUIREDRECEIPT" in raw_response.upper():
+            response_display = "3D_SECURE"
         else:
             if ":" in raw_response:
                 response_display = raw_response.split(":")[0].strip()
@@ -737,13 +740,10 @@ class ShopifyTaffyCheckout:
 
     def extract_persisted_query_ids(self, checkout_page_html):
         """Extract persisted query IDs from the checkout page HTML/JS"""
-        # Try to find the build manifest or query IDs in script tags
-        # Pattern for persisted query IDs (64 char hex strings)
         pattern = r'id["\s:]+["\']([a-f0-9]{64})["\']'
         matches = re.findall(pattern, checkout_page_html, re.IGNORECASE)
         
         if len(matches) >= 3:
-            # Try to match specific operation names
             proposal_pattern = r'(?:Proposal|proposal).*?id["\s:]+["\']([a-f0-9]{64})["\']'
             submit_pattern = r'(?:SubmitForCompletion|submitForCompletion).*?id["\s:]+["\']([a-f0-9]{64})["\']'
             poll_pattern = r'(?:PollForReceipt|pollForReceipt).*?id["\s:]+["\']([a-f0-9]{64})["\']'
@@ -771,10 +771,7 @@ class ShopifyTaffyCheckout:
 
     def extract_session_token_from_cookies(self, response):
         """Extract session token from response headers/cookies"""
-        # Look for x-checkout-one-session-token in response
-        # This is typically extracted from the checkout page HTML
         if hasattr(response, 'text'):
-            # Pattern from captured traffic
             patterns = [
                 r'"sessionToken"\s*:\s*"([^"]+)"',
                 r'sessionToken["\']\s*:\s*["\']([^"\']+)',
@@ -829,7 +826,6 @@ class ShopifyTaffyCheckout:
             
             for line in available_lines:
                 payment_method = line.get('paymentMethod', {})
-                # Look for shopify_payments
                 if payment_method.get('name') == 'shopify_payments':
                     identifier = payment_method.get('paymentMethodIdentifier')
                     if identifier:
@@ -2096,6 +2092,10 @@ class ShopifyTaffyCheckout:
                 elif receipt_type == 'ProcessedReceipt':
                     return True, "ORDER_PLACED"
                     
+                elif receipt_type == 'ActionRequiredReceipt':
+                    # 3DS or additional authentication required
+                    return False, "ACTIONREQUIREDRECEIPT"
+                    
                 elif receipt_type == 'FailedReceipt':
                     error_info = receipt.get('processingError', {})
                     error_code = error_info.get('code', 'GENERIC_ERROR')
@@ -2185,6 +2185,10 @@ class ShopifyTaffyCheckout:
                     elif receipt_type == 'ProcessedReceipt':
                         self.logger.success_log("Payment processed successfully", f"After {poll_attempts} attempts")
                         return True, "ORDER_PLACED"
+                        
+                    elif receipt_type == 'ActionRequiredReceipt':
+                        # 3DS or additional authentication required during polling
+                        return False, "ACTIONREQUIREDRECEIPT"
                         
                     elif receipt_type == 'ProcessingReceipt':
                         if poll_attempts < max_attempts:
