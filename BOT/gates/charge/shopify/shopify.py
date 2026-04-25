@@ -1652,13 +1652,14 @@ class ShopifyHTTPCheckout:
                     try:
                         submit_resp = resp.json()
 
-                        if 'errors' in submit_resp and submit_resp['errors']:
+                            if 'errors' in submit_resp and submit_resp['errors']:
                             error_msg = submit_resp['errors'][0].get('message', 'Unknown error')
                             if ":" in error_msg:
                                 error_msg = error_msg.split(":")[0].strip()
                             if proxy_attempts < max_attempts:
                                 await self.random_delay(1, 2)
-                                continue                            return False, f"Submit error: {error_msg}"
+                                continue
+                            return False, f"Submit error: {error_msg}"
 
                         data = submit_resp.get('data', {}).get('submitForCompletion', {})
                         receipt = data.get('receipt', {})
