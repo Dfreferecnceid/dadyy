@@ -299,6 +299,7 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
 
     raw_response = str(raw_response) if raw_response else "-"
     
+    # Extract clean error message
     if "DECLINED - " in raw_response:
         response_display = raw_response.split("DECLINED - ")[-1]
         if ":" in response_display:
@@ -324,7 +325,7 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
     elif "CAPTCHA" in raw_response.upper():
         response_display = "CAPTCHA"
     elif "3D" in raw_response.upper() or "3DS" in raw_response.upper():
-        response_display = "3D_SECURE"
+        response_display = "3DSECURE"
     elif "INSUFFICIENT" in raw_response.upper():
         response_display = "INSUFFICIENT_FUNDS"
     elif "INVALID" in raw_response.upper():
@@ -695,7 +696,6 @@ class ShopifyHTTPCheckout:
         """Dynamically extract GraphQL operation IDs from checkout page"""
         found_operations = {}
         
-        # Pattern for persisted query URLs in the page
         persisted_pattern = r'/persisted\?operationName=([A-Za-z]+)[^&]*&id=([a-f0-9]{64})'
         matches = re.findall(persisted_pattern, html_content, re.IGNORECASE)
         for op_name, op_id in matches:
@@ -714,7 +714,6 @@ class ShopifyHTTPCheckout:
             if op_name in found_operations:
                 setattr(self, attr_name, found_operations[op_name])
                 self.logger.data_extracted(f"{op_name} ID (Dynamic)", found_operations[op_name][:20] + "...", "Page HTML")
-                self.logger.success_log(f"Using dynamic {op_name} ID: {found_operations[op_name][:20]}...")
         
         return found_operations
 
@@ -877,7 +876,6 @@ class ShopifyHTTPCheckout:
                     self.logger.data_extracted("Final Session Token", self.session_token[:50] + "...", "Success")
                     self.logger.data_extracted("GraphQL Session Token", self.graphql_session_token, "Constructed")
                     
-                    # Try to extract dynamic IDs from page
                     self.extract_dynamic_ids_from_page(page_content)
                     
                     if not self.delivery_strategy_handle:
@@ -1256,7 +1254,7 @@ class ShopifyHTTPCheckout:
                         resp_keys = list(proposal_resp.keys())
                         self.logger.data_extracted("PROPOSAL RESPONSE KEYS", str(resp_keys), "DEBUG")
                         
-                        # Check for GraphQL errors first (top-level errors = bad)
+                        # Check for GraphQL errors first (top-level errors = fatal)
                         if 'errors' in proposal_resp and proposal_resp['errors']:
                             error_msg = str(proposal_resp['errors'][0].get('message', 'Unknown error'))
                             self.logger.error_log("PROPOSAL_GRAPHQL_ERROR", error_msg[:200])
@@ -1289,21 +1287,17 @@ class ShopifyHTTPCheckout:
                             if not self.payment_method_identifier:
                                 self.payment_method_identifier = self.shopify_payments_identifier
                         
-                        # Check for negotiation errors (these are non-fatal, just warnings)
+                        # Negotiate-level errors are non-fatal if we have queueToken
                         errors = negotiate.get('errors', []) if isinstance(negotiate, dict) else []
-                        
-                        # Log all errors for debugging
                         if errors:
                             error_codes = [e.get('code', 'UNKNOWN') for e in errors]
-                            self.logger.data_extracted("PROPOSAL ERRORS", json.dumps(error_codes), "Non-fatal warnings")
+                            self.logger.data_extracted("PROPOSAL WARNINGS", json.dumps(error_codes), "Non-fatal warnings")
                         
-                        # FIX: All errors from negotiate.ERRORS are NON-FATAL if we got a queueToken
-                        # The real fatal errors come from top-level 'errors' key (checked above)
                         if self.proposal_queue_token:
-                            self.logger.success_log("Got queueToken from Proposal - proceeding to PCI step")
+                            self.logger.success_log("Got queueToken - proceeding to PCI step")
                         else:
                             resp_str = json.dumps(proposal_resp)[:800]
-                            self.logger.error_log("PROPOSAL_NO_TOKEN", f"No queueToken found. Response: {resp_str}")
+                            self.logger.error_log("PROPOSAL_NO_TOKEN", f"No queueToken. Response: {resp_str}")
                             if proxy_attempts < max_attempts:
                                 await self.random_delay(1, 2)
                                 continue
@@ -1664,8 +1658,7 @@ class ShopifyHTTPCheckout:
                                 error_msg = error_msg.split(":")[0].strip()
                             if proxy_attempts < max_attempts:
                                 await self.random_delay(1, 2)
-                                continue
-                            return False, f"Submit error: {error_msg}"
+                                continue                            return False, f"Submit error: {error_msg}"
 
                         data = submit_resp.get('data', {}).get('submitForCompletion', {})
                         receipt = data.get('receipt', {})
