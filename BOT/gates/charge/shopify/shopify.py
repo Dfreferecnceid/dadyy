@@ -638,10 +638,7 @@ class ShopifyHTTPCheckout:
         self.submit_id = None
         self.delivery_strategy_handle = None
         
-        # NEW: Store queueToken from Proposal response for Submit
         self.proposal_queue_token = None
-        
-        # NEW: Store paymentMethodIdentifier from Proposal seller response
         self.payment_method_identifier = None
 
         self.logger = ShopifyLogger(user_id)
@@ -794,7 +791,7 @@ class ShopifyHTTPCheckout:
             return None
 
     async def add_to_cart_and_get_checkout(self, max_retries=3):
-        """ORIGINAL WORKING FLOW - kept exactly as original"""
+        """ORIGINAL WORKING FLOW"""
         for attempt in range(max_retries):
             try:
                 self.step(2 if attempt == 0 else 2 + attempt, "ADD TO CART", 
@@ -998,12 +995,9 @@ class ShopifyHTTPCheckout:
         return False, error_msg
 
     async def execute_checkout(self, cc, mes, ano, cvv):
-        """Execute checkout - original flow with minimal fixes"""
+        """Execute checkout - with DEBUG logging for Proposal response"""
         proxy_attempts = 0
         max_attempts = 3
-        
-        # Store credit card bin (first 8 digits)
-        credit_card_bin = cc[:8]
         
         while proxy_attempts < max_attempts:
             proxy_attempts += 1
@@ -1078,7 +1072,6 @@ class ShopifyHTTPCheckout:
                             self.logger.error_log("BLOCKED", f"Proxy blocked by Shopify (Status: {resp.status_code})")
                             await self.client.aclose()
                             if proxy_attempts < max_attempts:
-                                self.logger.step(1, "PROXY BLOCKED", "Trying different proxy...", f"Status: {resp.status_code}", "BLOCKED")
                                 await self.random_delay(1, 2)
                                 continue
                             return False, "PROXY_BLOCKED"
@@ -1125,7 +1118,7 @@ class ShopifyHTTPCheckout:
 
                 await self.random_delay(2, 3)
 
-                # ============ PROPOSAL STEP ============
+                # ============ PROPOSAL STEP - WITH DEBUG ============
                 self.step(4, "SUBMIT PROPOSAL", "Submitting checkout proposal with proxy", self.email)
 
                 graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
@@ -1319,6 +1312,7 @@ class ShopifyHTTPCheckout:
                     )
 
                     if resp.status_code != 200:
+                        self.logger.error_log("PROPOSAL_STATUS", f"Proposal returned status: {resp.status_code}")
                         if proxy_attempts < max_attempts:
                             await self.random_delay(1, 2)
                             continue
@@ -1327,15 +1321,36 @@ class ShopifyHTTPCheckout:
                     try:
                         proposal_resp = resp.json()
                         
-                        # FIX: Extract queueToken from response for Submit step
-                        result_data = proposal_resp.get('data', {}).get('session', {}).get('negotiate', {}).get('result', {})
+                        # DEBUG: Log the full Proposal response structure
+                        resp_str = json.dumps(proposal_resp)
+                        self.logger.data_extracted("PROPOSAL RAW RESPONSE", resp_str[:500], "DEBUG")
+                        
+                        # FIX: Try multiple paths to find queueToken
+                        result_data = None
+                        
+                        # Path 1: data.session.negotiate.result
+                        negotiate = proposal_resp.get('data', {}).get('session', {}).get('negotiate', {})
+                        result_data = negotiate.get('result', {})
+                        
+                        # Path 2: data.session.negotiate (direct)
+                        if not result_data:
+                            result_data = negotiate
+                        
+                        # Path 3: data directly
+                        if not result_data:
+                            result_data = proposal_resp.get('data', {})
+                        
                         if result_data:
                             self.proposal_queue_token = result_data.get('queueToken')
                             if self.proposal_queue_token:
                                 self.logger.data_extracted("Queue Token (from Proposal)", self.proposal_queue_token[:30] + "...", "Proposal Response")
                             
-                            # FIX: Extract paymentMethodIdentifier
+                            # Try to extract paymentMethodIdentifier
                             seller_proposal = result_data.get('sellerProposal', {})
+                            if not seller_proposal:
+                                # Try nested path
+                                seller_proposal = result_data.get('buyerProposal', {}) if not result_data.get('sellerProposal') else result_data.get('sellerProposal', {})
+                            
                             payment_data = seller_proposal.get('payment', {})
                             available_lines = payment_data.get('availablePaymentLines', [])
                             for line in available_lines:
@@ -1348,25 +1363,41 @@ class ShopifyHTTPCheckout:
                             if not self.payment_method_identifier:
                                 self.payment_method_identifier = "ca4f484d341716df9c8b4c59632eb0e7"
                         
-                        # Check only for FATAL errors (exclude PAYMENTS_UNACCEPTABLE_PAYMENT_AMOUNT)
-                        errors = proposal_resp.get('data', {}).get('session', {}).get('negotiate', {}).get('errors', [])
+                        # Check for errors but DON'T block on non-fatal ones
+                        errors = negotiate.get('errors', []) if isinstance(negotiate, dict) else []
                         fatal_errors = [e for e in errors if e.get('code') not in ['PAYMENTS_UNACCEPTABLE_PAYMENT_AMOUNT']]
+                        
                         if fatal_errors:
-                            error_msg = fatal_errors[0].get('message', 'Unknown error')
+                            error_msg = fatal_errors[0].get('message', fatal_errors[0].get('localizedMessage', 'Unknown error'))
                             if ":" in error_msg:
                                 error_msg = error_msg.split(":")[0].strip()
+                            self.logger.error_log("PROPOSAL_FATAL", f"Fatal proposal error: {error_msg}")
                             if proxy_attempts < max_attempts:
                                 await self.random_delay(1, 2)
                                 continue
                             return False, f"Proposal error: {error_msg[:50]}"
                         
-                        if not self.proposal_queue_token:
+                        # If we have queueToken, proceed
+                        if self.proposal_queue_token:
+                            self.logger.success_log("Got queueToken from Proposal, proceeding to PCI step")
+                        else:
+                            # No queueToken found anywhere - log full response for debugging
+                            self.logger.error_log("PROPOSAL_NO_TOKEN", f"No queueToken found. Response keys: {list(proposal_resp.keys())}")
+                            self.logger.data_extracted("FULL PROPOSAL RESPONSE", resp_str[:1000], "ERROR DEBUG")
                             if proxy_attempts < max_attempts:
                                 await self.random_delay(1, 2)
                                 continue
                             return False, "No queue token in proposal response"
                             
+                    except json.JSONDecodeError as e:
+                        self.logger.error_log("PROPOSAL_PARSE", f"JSON decode error: {str(e)}")
+                        self.logger.data_extracted("RAW RESPONSE TEXT", resp.text[:500], "ERROR")
+                        if proxy_attempts < max_attempts:
+                            await self.random_delay(1, 2)
+                            continue
+                        return False, f"Failed to parse Proposal response: {str(e)[:50]}"
                     except Exception as e:
+                        self.logger.error_log("PROPOSAL_PARSE", f"Parse error: {str(e)}")
                         if proxy_attempts < max_attempts:
                             await self.random_delay(1, 2)
                             continue
@@ -1484,9 +1515,7 @@ class ShopifyHTTPCheckout:
 
                 attempt_token = f"{self.checkout_token}-{self.generate_random_string(12)}"
 
-                # FIX: Use queueToken from Proposal response
                 submit_queue_token = self.proposal_queue_token
-                # FIX: Use paymentMethodIdentifier from Proposal response, fallback to PCI response
                 submit_payment_method_identifier = self.payment_method_identifier or payment_method_identifier_pci or "ca4f484d341716df9c8b4c59632eb0e7"
 
                 submit_variables = {
@@ -1800,7 +1829,7 @@ class ShopifyHTTPCheckout:
         return False, "PROXY_DEAD - All proxy attempts failed"
 
     async def poll_receipt(self, headers):
-        """Poll for receipt status - ORIGINAL FLOW"""
+        """Poll for receipt status"""
         try:
             graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
 
@@ -1841,7 +1870,6 @@ class ShopifyHTTPCheckout:
                     if receipt_type == 'FailedReceipt':
                         error_info = receipt_data.get('processingError', {})
                         error_code = error_info.get('code', 'UNKNOWN')
-                        error_msg = error_info.get('messageUntranslated', 'Payment failed')
                         return False, f"DECLINED - {error_code}"
 
                     elif receipt_type == 'ProcessedReceipt':
