@@ -299,7 +299,6 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
 
     raw_response = str(raw_response) if raw_response else "-"
     
-    # Extract clean error message
     if "DECLINED - " in raw_response:
         response_display = raw_response.split("DECLINED - ")[-1]
         if ":" in response_display:
@@ -589,7 +588,6 @@ class ShopifyHTTPCheckout:
         self.variant_id = "43207284392098"
         self.product_id = "7890988171426"
 
-        # Dynamic IDs - with fallbacks from captured data
         self.proposal_id = "e65ffeb18d0b5e7cc746231c07befb63f4bc2e69c060d4067ca9115a923ae427"
         self.submit_id = "7cc51969cc21c5f45bc518e0650abe94c2ff3ffa378fb7d0b72212b44ff36470"
         self.poll_id = "42b5051ef09da17cd5cb5789121ab3adab0ca8c9ec7547a4d431bb17060e757f"
@@ -693,7 +691,6 @@ class ShopifyHTTPCheckout:
         return None
 
     def extract_dynamic_ids_from_page(self, html_content):
-        """Dynamically extract GraphQL operation IDs from checkout page"""
         found_operations = {}
         
         persisted_pattern = r'/persisted\?operationName=([A-Za-z]+)[^&]*&id=([a-f0-9]{64})'
@@ -735,7 +732,6 @@ class ShopifyHTTPCheckout:
             return None
 
     async def add_to_cart_and_get_checkout(self, max_retries=2):
-        """Add to cart and get checkout page"""
         for attempt in range(max_retries):
             try:
                 self.step(2 if attempt == 0 else 2 + attempt, "ADD TO CART", 
@@ -921,7 +917,6 @@ class ShopifyHTTPCheckout:
         return False, error_msg
 
     async def execute_checkout(self, cc, mes, ano, cvv):
-        """Execute checkout"""
         proxy_attempts = 0
         max_attempts = 3
         
@@ -1652,7 +1647,7 @@ class ShopifyHTTPCheckout:
                     try:
                         submit_resp = resp.json()
 
-                            if 'errors' in submit_resp and submit_resp['errors']:
+                        if 'errors' in submit_resp and submit_resp['errors']:
                             error_msg = submit_resp['errors'][0].get('message', 'Unknown error')
                             if ":" in error_msg:
                                 error_msg = error_msg.split(":")[0].strip()
@@ -1727,7 +1722,6 @@ class ShopifyHTTPCheckout:
         return False, "PROXY_DEAD - All proxy attempts failed"
 
     async def poll_receipt(self, headers):
-        """Poll for receipt status"""
         try:
             graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
 
