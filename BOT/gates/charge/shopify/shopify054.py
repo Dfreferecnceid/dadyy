@@ -650,8 +650,8 @@ class ShopifyTaffyCheckout:
         self.last_name = random.choice(self.last_names)
         self.full_name = f"{self.first_name} {self.last_name}"
         self.email = f"{self.first_name.lower()}{self.last_name.lower()}{random.randint(10,999)}@gmail.com"
-        # FIXED: Valid US phone format +1XXXXXXXXXX
-        self.phone = f"+1{random.randint(200,999)}{random.randint(200,999)}{random.randint(1000,9999)}"
+        # Valid US phone for pickup (store phone from captured data)
+        self.phone = "5152744692"
 
         self.address = {
             "address1": "211 5th Street",
@@ -1135,7 +1135,7 @@ class ShopifyTaffyCheckout:
             return False, "PCI_ERROR"
 
     async def submit_for_completion(self, payment_session_id, cc):
-        self.step(7, "SUBMIT PAYMENT", "Finalizing payment with complete payload")
+        self.step(7, "SUBMIT PAYMENT", "Finalizing payment with PICK_UP delivery")
         
         graphql_url = f"{self.base_url}/checkouts/unstable/graphql"
         
@@ -1167,12 +1167,28 @@ class ShopifyTaffyCheckout:
         card_clean = cc.replace(" ", "").replace("-", "")
         credit_card_bin = card_clean[:8] if len(card_clean) >= 8 else card_clean[:6]
         
-        # Build delivery expectation lines from signed handles (empty if none)
         delivery_expectation_lines = []
         if self.signed_handles:
             delivery_expectation_lines = [{"signedHandle": sh} for sh in self.signed_handles]
         
-        # FIXED: Don't send phone in SMS consent - use empty or skip SMS
+        # Use deliveryStrategyByHandle if available, otherwise use matching conditions
+        if self.delivery_strategy_handle:
+            delivery_strategy = {
+                "deliveryStrategyByHandle": {
+                    "handle": self.delivery_strategy_handle,
+                    "customDeliveryRate": False
+                },
+                "options": {}
+            }
+        else:
+            delivery_strategy = {
+                "deliveryStrategyMatchingConditions": {
+                    "estimatedTimeInTransit": {"any": True},
+                    "shipments": {"any": True}
+                },
+                "options": {}
+            }
+        
         variables = {
             "input": {
                 "checkpointData": None,
@@ -1187,32 +1203,19 @@ class ShopifyTaffyCheckout:
                 "delivery": {
                     "deliveryLines": [{
                         "destination": {
-                            "streetAddress": {
-                                "address1": self.address["address1"],
-                                "address2": self.address["address2"],
-                                "city": self.address["city"],
-                                "countryCode": self.address["countryCode"],
-                                "postalCode": self.address["zip"],
-                                "company": "",
-                                "firstName": self.first_name,
-                                "lastName": self.last_name,
-                                "zoneCode": self.address["provinceCode"],
-                                "phone": "",
-                                "oneTimeUse": False
+                            "geolocation": {
+                                "coordinates": self.coordinates,
+                                "countryCode": "US"
                             }
                         },
-                        "selectedDeliveryStrategy": {
-                            "deliveryStrategyMatchingConditions": {
-                                "estimatedTimeInTransit": {"any": True},
-                                "shipments": {"any": True}
-                            },
-                            "options": {"phone": ""}
-                        },
+                        "selectedDeliveryStrategy": delivery_strategy,
                         "targetMerchandiseLines": {
                             "lines": [{"stableId": self.stable_id}]
                         },
-                        "deliveryMethodTypes": ["SHIPPING"],
-                        "expectedTotalPrice": {"any": True},
+                        "deliveryMethodTypes": ["PICK_UP"],
+                        "expectedTotalPrice": {
+                            "value": {"amount": "0.00", "currencyCode": "USD"}
+                        },
                         "destinationChanged": True
                     }],
                     "noDeliveryRequired": [],
@@ -1236,7 +1239,9 @@ class ShopifyTaffyCheckout:
                             }
                         },
                         "quantity": {"items": {"value": 5}},
-                        "expectedTotalPrice": {"any": True},
+                        "expectedTotalPrice": {
+                            "value": {"amount": "0.50", "currencyCode": "USD"}
+                        },
                         "lineComponentsSource": None,
                         "lineComponents": []
                     }]
@@ -1281,7 +1286,12 @@ class ShopifyTaffyCheckout:
                             "paypalBillingAgreementPaymentMethod": None,
                             "remotePaymentInstrument": None
                         },
-                        "amount": {"any": True}
+                        "amount": {
+                            "value": {
+                                "amount": "0.54",
+                                "currencyCode": "USD"
+                            }
+                        }
                     }],
                     "billingAddress": {
                         "streetAddress": {
@@ -1317,14 +1327,17 @@ class ShopifyTaffyCheckout:
                 "tip": {"tipLines": []},
                 "taxes": {
                     "proposedAllocations": None,
-                    "proposedTotalAmount": {"any": True},
+                    "proposedTotalAmount": {"value": {"amount": "0.04", "currencyCode": "USD"}},
                     "proposedTotalIncludedAmount": None,
                     "proposedMixedStateTotalAmount": None,
                     "proposedExemptions": []
                 },
                 "note": {
                     "message": None,
-                    "customAttributes": []
+                    "customAttributes": [
+                        {"key": "DDM Delivery Type", "value": "Shipping"},
+                        {"key": "No-contact Delivery", "value": "No"}
+                    ]
                 },
                 "localizationExtension": {"fields": []},
                 "shopPayArtifact": {
