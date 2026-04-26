@@ -430,27 +430,38 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
         # Determine response_display
         if "DECLINED - " in raw_response:
             response_display = raw_response.split("DECLINED - ")[-1]
-            if ":" in response_display:
-                response_display = response_display.split(":")[0].strip()
+            # Take first line only
             response_display = response_display.split('\n')[0].strip()
-            response_display = response_display.rstrip(' -')
+            # Only remove trailing dashes/spaces if there's real content
+            response_display = response_display.strip()
+            # Remove trailing dash ONLY if it's isolated (not part of a word like CARD_DECLINED)
+            if response_display.endswith(' -'):
+                response_display = response_display[:-2].strip()
+            elif response_display.endswith('-'):
+                response_display = response_display.rstrip('-').strip()
+            # If we got nothing useful, try extracting error code
+            if not response_display or len(response_display) < 2:
+                match = re.search(r'(?:DECLINED|FAILED|ERROR)[\s-]+([A-Z_]+)', raw_response, re.IGNORECASE)
+                if match:
+                    response_display = match.group(1)
+            if not response_display or len(response_display) < 2:
+                response_display = "GENERIC_ERROR"
             if len(response_display) > 30:
                 response_display = response_display[:27] + "..."
         elif "ORDER_PLACED" in raw_response.upper() or "PROCESSEDRECEIPT" in raw_response:
             response_display = "ORDER_PLACED"
         elif "APPROVED - " in raw_response:
             response_display = "APPROVED"
-        elif "GENERIC_ERROR" in raw_response:
-            if ":" in raw_response:
-                response_display = raw_response.split(":")[0].strip()
-            else:
-                response_display = "GENERIC_ERROR"
+        elif "GENERIC_ERROR" in raw_response and ":" not in raw_response:
+            response_display = "GENERIC_ERROR"
         elif "PROXY_DEAD" in raw_response:
             response_display = "PROXY_DEAD"
         elif "NO_PROXY_AVAILABLE" in raw_response:
             response_display = "NO_PROXY_AVAILABLE"
         elif "CAPTCHA" in raw_response.upper():
             response_display = "CAPTCHA"
+        elif "CARD_DECLINED" in raw_response.upper():
+            response_display = "CARD_DECLINED"
         elif "3D" in raw_response.upper() or "3DS" in raw_response.upper():
             response_display = "3D_SECURE"
         elif "ACTIONREQUIREDRECEIPT" in raw_response.upper():
@@ -474,15 +485,15 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
         elif "PHONE_NUMBER" in raw_response.upper():
             response_display = "ERR_PHONE_FORMAT"
         else:
-            if ":" in raw_response:
-                response_display = raw_response.split(":")[0].strip()
-                response_display = response_display.rstrip(' -')
-                if len(response_display) > 30:
-                    response_display = response_display[:27] + "..."
-            else:
-                response_display = raw_response.strip().rstrip(' -')
-                if len(response_display) > 30:
-                    response_display = response_display[:27] + "..."
+            # Try to extract meaningful error code
+            response_display = raw_response.strip()
+            response_display = response_display.split('\n')[0].strip()
+            if response_display.endswith('-'):
+                response_display = response_display.rstrip('-').strip()
+            if not response_display or len(response_display) < 2:
+                response_display = "GENERIC_ERROR"
+            if len(response_display) > 30:
+                response_display = response_display[:27] + "..."
 
         raw_response_upper = raw_response.upper()
 
@@ -528,6 +539,9 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
         elif any(keyword in raw_response_upper for keyword in [
             "INSUFFICIENT FUNDS", "INSUFFICIENT_FUNDS", "FUNDS", "NOT ENOUGH MONEY"
         ]):
+            status_flag = "Declined ❌"
+        # Check CARD_DECLINED
+        elif "CARD_DECLINED" in raw_response_upper:
             status_flag = "Declined ❌"
         # Check incorrect zip
         elif "INCORRECT_ZIP" in raw_response_upper:
