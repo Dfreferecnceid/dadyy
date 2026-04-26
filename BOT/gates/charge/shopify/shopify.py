@@ -732,10 +732,10 @@ class ShopifyHTTPCheckout:
             return None
 
     async def add_to_cart_and_get_checkout(self, max_retries=2):
-        """Add to cart and get checkout page - with proper cookie building"""
+        """Add to cart and get checkout page"""
         for attempt in range(max_retries):
             try:
-                # FIX: Step 2.0 - First get /cart.js to establish proper cookies
+                # STEP: Get /cart.js first to establish cookies
                 self.step(2 if attempt == 0 else 2 + attempt, "BUILD COOKIES", 
                          f"Getting cart.js to establish session cookies (Attempt {attempt + 1}/{max_retries})")
                 
@@ -760,7 +760,7 @@ class ShopifyHTTPCheckout:
                 
                 await self.random_delay(1, 2)
                 
-                # Step 2.1: Add to cart
+                # STEP: Add to cart
                 self.step(3 if attempt == 0 else 3 + attempt, "ADD TO CART", 
                          f"Adding product to cart (Attempt {attempt + 1}/{max_retries})", 
                          f"Variant: {self.variant_id}")
@@ -841,7 +841,7 @@ class ShopifyHTTPCheckout:
 
                 await self.random_delay(1, 2)
 
-                # FIX: Step 2.15 - Refresh cart.js to update cookies after adding
+                # Refresh cart.js after adding
                 try:
                     await self.client.get(
                         f"{self.base_url}/cart.js",
@@ -1363,35 +1363,46 @@ class ShopifyHTTPCheckout:
 
                 await self.random_delay(1, 2)
 
-                # ============ PCI STEP ============
+                # ============ PCI STEP - WITH TELEMETRY ============
                 self.step(6, "CREATE PAYMENT", "Creating payment session with PCI and proxy")
 
-                # FIX: Send telemetry before vaulting card
+                # FIX: Send vaultCard telemetry BEFORE PCI session
                 try:
                     telemetry_url = "https://us-central1-shopify-instrumentat-ff788286.cloudfunctions.net/telemetry"
+                    telemetry_body = {
+                        "service": "hosted-fields",
+                        "metrics": [
+                            {
+                                "type": "counter",
+                                "value": 1,
+                                "name": "HostedFields_CardFields_vaultCard_called",
+                                "tags": {}
+                            }
+                        ]
+                    }
                     telemetry_headers = {
                         'accept': '*/*',
                         'accept-language': 'en-US,en;q=0.9',
                         'content-type': 'application/json',
                         'origin': 'https://checkout.pci.shopifyinc.com',
                         'referer': 'https://checkout.pci.shopifyinc.com/',
+                        'sec-ch-ua': self.headers.get('sec-ch-ua', ''),
+                        'sec-ch-ua-mobile': '?0',
+                        'sec-ch-ua-platform': self.headers.get('sec-ch-ua-platform', '"Windows"'),
+                        'sec-fetch-dest': 'empty',
+                        'sec-fetch-mode': 'cors',
+                        'sec-fetch-site': 'cross-site',
                         'user-agent': self.headers.get('user-agent', ''),
                         'priority': 'u=1, i'
-                    }
-                    telemetry_body = {
-                        "service": "hosted-fields",
-                        "metrics": [{
-                            "type": "counter",
-                            "value": 1,
-                            "name": "HostedFields_CardFields_vaultCard_called",
-                            "tags": {}
-                        }]
                     }
                     tc = httpx.AsyncClient(timeout=5)
                     await tc.post(telemetry_url, json=telemetry_body, headers=telemetry_headers)
                     await tc.aclose()
-                except:
-                    pass
+                    self.logger.data_extracted("PCI Telemetry", "vaultCard_called sent", "Telemetry")
+                except Exception as e:
+                    self.logger.data_extracted("PCI Telemetry", f"Failed: {str(e)[:50]}", "Telemetry")
+
+                await self.random_delay(0.5, 1)
 
                 pci_headers = {
                     'authority': 'checkout.pci.shopifyinc.com',
@@ -1795,59 +1806,78 @@ class ShopifyHTTPCheckout:
                 'id': self.poll_id
             }
 
-            try:
-                resp = await self.client.get(
-                    graphql_url,
-                    headers={**headers, 'accept': 'application/json'},
-                    params=poll_params,
-                    timeout=30
-                )
-
-                if resp.status_code != 200:
-                    poll_payload = {
-                        "operationName": "PollForReceipt",
-                        "variables": {
-                            "receiptId": self.receipt_id,
-                            "sessionToken": self.graphql_session_token
-                        },
-                        "id": self.poll_id
-                    }
-                    resp = await self.client.post(graphql_url, headers=headers, json=poll_payload, timeout=30)
-
-                if resp.status_code != 200:
-                    return False, f"Poll failed: {resp.status_code}"
-
+            for poll_attempt in range(15):
                 try:
-                    poll_resp = resp.json()
-                    receipt_data = poll_resp.get('data', {}).get('receipt', {})
+                    resp = await self.client.get(
+                        graphql_url,
+                        headers={**headers, 'accept': 'application/json'},
+                        params=poll_params,
+                        timeout=30
+                    )
 
-                    receipt_type = receipt_data.get('__typename', '')
+                    if resp.status_code != 200:
+                        poll_payload = {
+                            "operationName": "PollForReceipt",
+                            "variables": {
+                                "receiptId": self.receipt_id,
+                                "sessionToken": self.graphql_session_token
+                            },
+                            "id": self.poll_id
+                        }
+                        resp = await self.client.post(graphql_url, headers=headers, json=poll_payload, timeout=30)
 
-                    if receipt_type == 'FailedReceipt':
-                        error_info = receipt_data.get('processingError', {})
-                        error_code = error_info.get('code', 'UNKNOWN')
-                        return False, f"DECLINED - {error_code}"
+                    if resp.status_code != 200:
+                        await asyncio.sleep(2)
+                        continue
 
-                    elif receipt_type == 'ProcessedReceipt':
-                        return True, "ORDER_PLACED"
+                    try:
+                        poll_resp = resp.json()
+                        
+                        # DEBUG: Log poll response
+                        resp_str = json.dumps(poll_resp)[:500]
+                        self.logger.data_extracted(f"POLL RESPONSE [{poll_attempt+1}]", resp_str, "DEBUG")
+                        
+                        receipt_data = poll_resp.get('data', {}).get('receipt', {})
 
-                    elif receipt_type == 'ProcessingReceipt':
-                        await asyncio.sleep(0.5)
-                        return await self.poll_receipt(headers)
+                        receipt_type = receipt_data.get('__typename', '')
 
-                    else:
-                        return False, f"Unknown receipt status: {receipt_type}"
+                        if receipt_type == 'FailedReceipt':
+                            error_info = receipt_data.get('processingError', {})
+                            error_code = error_info.get('code', 'UNKNOWN')
+                            error_msg = error_info.get('messageUntranslated', '')
+                            # Return the REAL error code from Shopify
+                            return False, f"DECLINED - {error_code}"
 
+                        elif receipt_type == 'ProcessedReceipt':
+                            return True, "ORDER_PLACED"
+
+                        elif receipt_type == 'ActionRequiredReceipt':
+                            # 3DS required
+                            return False, "DECLINED - 3DS_REQUIRED"
+
+                        elif receipt_type == 'ProcessingReceipt':
+                            poll_delay = receipt_data.get('pollDelay', 1000)
+                            await asyncio.sleep(poll_delay / 1000.0)
+                            continue
+
+                        else:
+                            await asyncio.sleep(2)
+                            continue
+
+                    except Exception as e:
+                        await asyncio.sleep(2)
+                        continue
+
+                except httpx.ProxyError as e:
+                    self.logger.error_log("PROXY", f"Proxy error on poll: {str(e)}")
+                    mark_proxy_failed(self.proxy_url)
+                    self.proxy_status = "Dead 🚫"
+                    return False, "PROXY_DEAD"
                 except Exception as e:
-                    return False, f"Failed to parse poll response: {str(e)[:50]}"
+                    await asyncio.sleep(2)
+                    continue
 
-            except httpx.ProxyError as e:
-                self.logger.error_log("PROXY", f"Proxy error on poll: {str(e)}")
-                mark_proxy_failed(self.proxy_url)
-                self.proxy_status = "Dead 🚫"
-                return False, "PROXY_DEAD"
-            except Exception as e:
-                return False, f"Poll error: {str(e)[:50]}"
+            return False, "Polling timed out"
 
         except Exception as e:
             return False, f"Poll error: {str(e)[:50]}"
