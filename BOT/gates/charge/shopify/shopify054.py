@@ -405,7 +405,7 @@ def parse_card_input(card_input):
     return None
 
 
-# ========== FORMAT RESPONSE FUNCTION ==========
+# ========== FORMAT RESPONSE FUNCTION (FIXED) ==========
 def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, user_data, proxy_status="Dead 🚫"):
     fullcc = f"{cc}|{mes}|{ano}|{cvv}"
 
@@ -427,11 +427,13 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
         status_flag = "Error❗️"
         response_display = "Try again ♻️"
     else:
+        # Determine response_display
         if "DECLINED - " in raw_response:
             response_display = raw_response.split("DECLINED - ")[-1]
             if ":" in response_display:
                 response_display = response_display.split(":")[0].strip()
-            response_display = response_display.split('\n')[0]
+            response_display = response_display.split('\n')[0].strip()
+            response_display = response_display.rstrip(' -')
             if len(response_display) > 30:
                 response_display = response_display[:27] + "..."
         elif "ORDER_PLACED" in raw_response.upper() or "PROCESSEDRECEIPT" in raw_response:
@@ -451,8 +453,12 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
             response_display = "CAPTCHA"
         elif "3D" in raw_response.upper() or "3DS" in raw_response.upper():
             response_display = "3D_SECURE"
+        elif "ACTIONREQUIREDRECEIPT" in raw_response.upper():
+            response_display = "3D_SECURE"
         elif "INSUFFICIENT" in raw_response.upper():
             response_display = "INSUFFICIENT_FUNDS"
+        elif "INCORRECT_ZIP" in raw_response.upper():
+            response_display = "INCORRECT_ZIP"
         elif "INVALID" in raw_response.upper():
             response_display = "INVALID_CARD"
         elif "EXPIRED" in raw_response.upper():
@@ -465,21 +471,41 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
             response_display = "PAYMENT_AMOUNT_ERROR"
         elif "PROCESSING_TIMEOUT" in raw_response:
             response_display = "PROCESSING_TIMEOUT"
-        elif "ACTIONREQUIREDRECEIPT" in raw_response.upper():
-            response_display = "3D_SECURE"
         elif "PHONE_NUMBER" in raw_response.upper():
             response_display = "ERR_PHONE_FORMAT"
         else:
             if ":" in raw_response:
                 response_display = raw_response.split(":")[0].strip()
+                response_display = response_display.rstrip(' -')
                 if len(response_display) > 30:
                     response_display = response_display[:27] + "..."
             else:
-                response_display = raw_response[:30] + "..." if len(raw_response) > 30 else raw_response
+                response_display = raw_response.strip().rstrip(' -')
+                if len(response_display) > 30:
+                    response_display = response_display[:27] + "..."
 
         raw_response_upper = raw_response.upper()
 
-        if "NO RECEIPT ID" in raw_response_upper:
+        # CHECK 3DS / ACTION REQUIRED FIRST (before success keywords)
+        if any(keyword in raw_response_upper for keyword in [
+            "3D", "AUTHENTICATION", "OTP", "VERIFICATION", "CVV-MATCH-OTP", 
+            "3DS", "PENDING", "SECURE REQUIRED", "SECURE_CODE", "AUTH_REQUIRED",
+            "3DS REQUIRED", "AUTHENTICATION_FAILED", "COMPLETEPAYMENTCHALLENGE",
+            "ACTIONREQUIREDRECEIPT", "ADDITIONAL_VERIFICATION_NEEDED",
+            "VERIFICATION_REQUIRED", "CARD_VERIFICATION", "AUTHENTICATE"
+        ]):
+            status_flag = "Approved ❎"
+        # Check CAPTCHA
+        elif any(keyword in raw_response_upper for keyword in [
+            "CAPTCHA", "SOLVE THE CAPTCHA", "CAPTCHA_METADATA_MISSING", 
+            "CAPTCHA DETECTED", "CAPTCHA_REQUIRED", "CAPTCHA_VALIDATION_FAILED", 
+            "CAPTCHA_ERROR", "BOT_DETECTED", "HUMAN_VERIFICATION", "SECURITY_CHECK",
+            "HCAPTCHA", "CLOUDFLARE", "ENTER PAYMENT INFORMATION AND SOLVE",
+            "RECAPTCHA", "I'M NOT A ROBOT", "PLEASE VERIFY"
+        ]):
+            status_flag = "Captcha ⚠️"
+        # Check success/charged
+        elif "NO RECEIPT ID" in raw_response_upper:
             status_flag = "Declined ❌"
         elif any(keyword in raw_response_upper for keyword in [
             "ORDER_PLACED", "SUBMITSUCCESS", "SUCCESSFUL", "APPROVED", "RECEIPT",
@@ -490,14 +516,7 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
             "PROCESSINGRECEIPT", "AUTHORIZED", "YOUR ORDER IS CONFIRMED"
         ]):
             status_flag = "Charged ✅"
-        elif any(keyword in raw_response_upper for keyword in [
-            "CAPTCHA", "SOLVE THE CAPTCHA", "CAPTCHA_METADATA_MISSING", 
-            "CAPTCHA DETECTED", "CAPTCHA_REQUIRED", "CAPTCHA_VALIDATION_FAILED", 
-            "CAPTCHA_ERROR", "BOT_DETECTED", "HUMAN_VERIFICATION", "SECURITY_CHECK",
-            "HCAPTCHA", "CLOUDFLARE", "ENTER PAYMENT INFORMATION AND SOLVE",
-            "RECAPTCHA", "I'M NOT A ROBOT", "PLEASE VERIFY"
-        ]):
-            status_flag = "Captcha ⚠️"
+        # Check payment errors
         elif any(keyword in raw_response_upper for keyword in [
             "THERE WAS AN ISSUE PROCESSING YOUR PAYMENT", "PAYMENT ISSUE",
             "ISSUE PROCESSING", "PAYMENT ERROR", "PAYMENT PROBLEM",
@@ -505,35 +524,36 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
             "YOUR PAYMENT COULDN'T BE PROCESSED", "PAYMENT FAILED"
         ]):
             status_flag = "Declined ❌"
+        # Check insufficient funds
         elif any(keyword in raw_response_upper for keyword in [
             "INSUFFICIENT FUNDS", "INSUFFICIENT_FUNDS", "FUNDS", "NOT ENOUGH MONEY"
         ]):
             status_flag = "Declined ❌"
+        # Check incorrect zip
+        elif "INCORRECT_ZIP" in raw_response_upper:
+            status_flag = "Declined ❌"
+        # Check invalid card
         elif any(keyword in raw_response_upper for keyword in [
             "INVALID CARD", "CARD IS INVALID", "CARD_INVALID", "CARD NUMBER IS INVALID"
         ]):
             status_flag = "Declined ❌"
+        # Check expired card
         elif any(keyword in raw_response_upper for keyword in [
             "EXPIRED", "CARD HAS EXPIRED", "CARD_EXPIRED", "EXPIRATION DATE"
         ]):
             status_flag = "Declined ❌"
-        elif any(keyword in raw_response_upper for keyword in [
-            "3D", "AUTHENTICATION", "OTP", "VERIFICATION", "CVV-MATCH-OTP", 
-            "3DS", "PENDING", "SECURE REQUIRED", "SECURE_CODE", "AUTH_REQUIRED",
-            "3DS REQUIRED", "AUTHENTICATION_FAILED", "COMPLETEPAYMENTCHALLENGE",
-            "ACTIONREQUIREDRECEIPT", "ADDITIONAL_VERIFICATION_NEEDED",
-            "VERIFICATION_REQUIRED", "CARD_VERIFICATION", "AUTHENTICATE"
-        ]):
-            status_flag = "Approved ❎"
+        # Check invalid CVC
         elif any(keyword in raw_response_upper for keyword in [
             "INVALID CVC", "INCORRECT CVC", "CVC_INVALID", "CVV", "SECURITY CODE"
         ]):
             status_flag = "Declined ❌"
+        # Check fraud
         elif any(keyword in raw_response_upper for keyword in [
             "FRAUD", "FRAUD_SUSPECTED", "SUSPECTED_FRAUD", "FRAUDULENT",
             "RISKY", "HIGH_RISK", "SECURITY_VIOLATION", "SUSPICIOUS"
         ]):
             status_flag = "Fraud ⚠️"
+        # Check proxy errors
         elif "NO_PROXY_AVAILABLE" in raw_response_upper or "PROXY_DEAD" in raw_response_upper:
             status_flag = "Proxy Error 🚫"
         elif "PHONE_NUMBER" in raw_response_upper:
@@ -650,7 +670,6 @@ class ShopifyTaffyCheckout:
         self.last_name = random.choice(self.last_names)
         self.full_name = f"{self.first_name} {self.last_name}"
         self.email = f"{self.first_name.lower()}{self.last_name.lower()}{random.randint(10,999)}@gmail.com"
-        # Valid US phone for pickup (store phone from captured data)
         self.phone = "5152744692"
 
         self.address = {
@@ -1171,7 +1190,6 @@ class ShopifyTaffyCheckout:
         if self.signed_handles:
             delivery_expectation_lines = [{"signedHandle": sh} for sh in self.signed_handles]
         
-        # Use deliveryStrategyByHandle if available, otherwise use matching conditions
         if self.delivery_strategy_handle:
             delivery_strategy = {
                 "deliveryStrategyByHandle": {
