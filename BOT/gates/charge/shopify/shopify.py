@@ -732,10 +732,37 @@ class ShopifyHTTPCheckout:
             return None
 
     async def add_to_cart_and_get_checkout(self, max_retries=2):
+        """Add to cart and get checkout page - with proper cookie building"""
         for attempt in range(max_retries):
             try:
-                self.step(2 if attempt == 0 else 2 + attempt, "ADD TO CART", 
-                         f"Adding product to cart and getting checkout (Attempt {attempt + 1}/{max_retries})", 
+                # FIX: Step 2.0 - First get /cart.js to establish proper cookies
+                self.step(2 if attempt == 0 else 2 + attempt, "BUILD COOKIES", 
+                         f"Getting cart.js to establish session cookies (Attempt {attempt + 1}/{max_retries})")
+                
+                cart_js_headers = {
+                    **self.headers,
+                    'accept': '*/*',
+                    'referer': self.base_url,
+                    'sec-fetch-dest': 'empty',
+                    'sec-fetch-mode': 'cors',
+                    'sec-fetch-site': 'same-origin',
+                }
+                
+                try:
+                    resp = await self.client.get(
+                        f"{self.base_url}/cart.js",
+                        headers=cart_js_headers,
+                        timeout=30
+                    )
+                    self.logger.data_extracted("Cart.js Status", str(resp.status_code), "Cookie Builder")
+                except:
+                    pass
+                
+                await self.random_delay(1, 2)
+                
+                # Step 2.1: Add to cart
+                self.step(3 if attempt == 0 else 3 + attempt, "ADD TO CART", 
+                         f"Adding product to cart (Attempt {attempt + 1}/{max_retries})", 
                          f"Variant: {self.variant_id}")
 
                 cart_headers = {
@@ -814,13 +841,25 @@ class ShopifyHTTPCheckout:
 
                 await self.random_delay(1, 2)
 
-                self.step(3, "START CHECKOUT", "Initiating checkout process")
+                # FIX: Step 2.15 - Refresh cart.js to update cookies after adding
+                try:
+                    await self.client.get(
+                        f"{self.base_url}/cart.js",
+                        headers=cart_js_headers,
+                        timeout=30
+                    )
+                except:
+                    pass
+                
+                await self.random_delay(1, 2)
+
+                self.step(4, "START CHECKOUT", "Initiating checkout process")
 
                 checkout_start_headers = {
                     **self.headers,
                     'content-type': 'application/x-www-form-urlencoded',
                     'origin': self.base_url,
-                    'referer': self.product_url,
+                    'referer': f"{self.base_url}/cart",
                     'sec-fetch-site': 'same-origin'
                 }
 
@@ -917,6 +956,7 @@ class ShopifyHTTPCheckout:
         return False, error_msg
 
     async def execute_checkout(self, cc, mes, ano, cvv):
+        """Execute checkout"""
         proxy_attempts = 0
         max_attempts = 3
         
@@ -1042,7 +1082,7 @@ class ShopifyHTTPCheckout:
                 await self.random_delay(2, 3)
 
                 # ============ PROPOSAL STEP ============
-                self.step(4, "SUBMIT PROPOSAL", "Submitting checkout proposal with proxy", f"ID: {self.proposal_id[:20]}...")
+                self.step(5, "SUBMIT PROPOSAL", "Submitting checkout proposal with proxy", f"ID: {self.proposal_id[:20]}...")
 
                 graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
 
@@ -1249,7 +1289,6 @@ class ShopifyHTTPCheckout:
                         resp_keys = list(proposal_resp.keys())
                         self.logger.data_extracted("PROPOSAL RESPONSE KEYS", str(resp_keys), "DEBUG")
                         
-                        # Check for GraphQL errors first (top-level errors = fatal)
                         if 'errors' in proposal_resp and proposal_resp['errors']:
                             error_msg = str(proposal_resp['errors'][0].get('message', 'Unknown error'))
                             self.logger.error_log("PROPOSAL_GRAPHQL_ERROR", error_msg[:200])
@@ -1258,7 +1297,6 @@ class ShopifyHTTPCheckout:
                                 continue
                             return False, f"Proposal error: {error_msg[:50]}"
                         
-                        # Get negotiate result
                         negotiate = proposal_resp.get('data', {}).get('session', {}).get('negotiate', {})
                         result_data = negotiate.get('result', {})
                         
@@ -1267,7 +1305,6 @@ class ShopifyHTTPCheckout:
                             if self.proposal_queue_token:
                                 self.logger.data_extracted("Queue Token (from Proposal)", self.proposal_queue_token[:30] + "...", "Proposal Response")
                             
-                            # Extract paymentMethodIdentifier
                             seller_proposal = result_data.get('sellerProposal', {})
                             payment_data = seller_proposal.get('payment', {})
                             available_lines = payment_data.get('availablePaymentLines', [])
@@ -1282,7 +1319,6 @@ class ShopifyHTTPCheckout:
                             if not self.payment_method_identifier:
                                 self.payment_method_identifier = self.shopify_payments_identifier
                         
-                        # Negotiate-level errors are non-fatal if we have queueToken
                         errors = negotiate.get('errors', []) if isinstance(negotiate, dict) else []
                         if errors:
                             error_codes = [e.get('code', 'UNKNOWN') for e in errors]
@@ -1328,7 +1364,34 @@ class ShopifyHTTPCheckout:
                 await self.random_delay(1, 2)
 
                 # ============ PCI STEP ============
-                self.step(5, "CREATE PAYMENT", "Creating payment session with PCI and proxy")
+                self.step(6, "CREATE PAYMENT", "Creating payment session with PCI and proxy")
+
+                # FIX: Send telemetry before vaulting card
+                try:
+                    telemetry_url = "https://us-central1-shopify-instrumentat-ff788286.cloudfunctions.net/telemetry"
+                    telemetry_headers = {
+                        'accept': '*/*',
+                        'accept-language': 'en-US,en;q=0.9',
+                        'content-type': 'application/json',
+                        'origin': 'https://checkout.pci.shopifyinc.com',
+                        'referer': 'https://checkout.pci.shopifyinc.com/',
+                        'user-agent': self.headers.get('user-agent', ''),
+                        'priority': 'u=1, i'
+                    }
+                    telemetry_body = {
+                        "service": "hosted-fields",
+                        "metrics": [{
+                            "type": "counter",
+                            "value": 1,
+                            "name": "HostedFields_CardFields_vaultCard_called",
+                            "tags": {}
+                        }]
+                    }
+                    tc = httpx.AsyncClient(timeout=5)
+                    await tc.post(telemetry_url, json=telemetry_body, headers=telemetry_headers)
+                    await tc.aclose()
+                except:
+                    pass
 
                 pci_headers = {
                     'authority': 'checkout.pci.shopifyinc.com',
@@ -1418,7 +1481,7 @@ class ShopifyHTTPCheckout:
                 await self.random_delay(1, 2)
 
                 # ============ SUBMIT STEP ============
-                self.step(6, "SUBMIT PAYMENT", "Submitting payment for processing with proxy", f"Submit ID: {self.submit_id[:20]}...")
+                self.step(7, "SUBMIT PAYMENT", "Submitting payment for processing with proxy", f"Submit ID: {self.submit_id[:20]}...")
 
                 attempt_token = f"{self.checkout_token}-{self.generate_random_string(12)}"
                 submit_queue_token = self.proposal_queue_token
@@ -1670,7 +1733,7 @@ class ShopifyHTTPCheckout:
 
                         if receipt.get('__typename') == 'ProcessingReceipt':
                             poll_delay = receipt.get('pollDelay', 500) / 1000
-                            self.step(7, "POLL RECEIPT", f"Waiting {poll_delay}s then polling for result")
+                            self.step(8, "POLL RECEIPT", f"Waiting {poll_delay}s then polling for result")
                             await asyncio.sleep(poll_delay)
                             return await self.poll_receipt(proposal_headers)
                         else:
@@ -1722,6 +1785,7 @@ class ShopifyHTTPCheckout:
         return False, "PROXY_DEAD - All proxy attempts failed"
 
     async def poll_receipt(self, headers):
+        """Poll for receipt status"""
         try:
             graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
 
